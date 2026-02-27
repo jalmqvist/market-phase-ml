@@ -10,11 +10,8 @@ from src.strategies import (
     Backtester,
     TradeResult
 )
-from src.visualization import (
-    PhaseVisualizer,
-    plot_backtest_results,
-    plot_phase_performance
-)
+from src.models import PhaseMLExperiment
+from src.visualization import PhaseVisualizer
 
 __all__ = [
     'MarketDataPipeline',
@@ -25,7 +22,6 @@ __all__ = [
     'PhaseAwareStrategy',
     'Backtester',
     'TradeResult',
+    'PhaseMLExperiment',
     'PhaseVisualizer',
-    'plot_backtest_results',
-    'plot_phase_performance'
 ]

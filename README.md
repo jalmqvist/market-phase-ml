@@ -7,64 +7,128 @@
 
 ## Overview
 
-This project investigates whether **market phase detection 
-enables better trading strategy selection**, leading to 
-improved trading performance compared to single-strategy 
-approaches.
+This project investigates whether **market phase detection
+enables better trading strategy selection**, leading to
+improved risk-adjusted trading performance compared to
+single-strategy approaches.
 
-The core insight is that financial markets behave 
-fundamentally differently depending on their current 
-phase. Rather than using one strategy for all conditions, 
-we select the optimal strategy based on detected phase:
+The core insight is that financial markets behave
+fundamentally differently depending on their current
+phase. Rather than using one strategy for all conditions,
+we select the optimal strategy based on the detected phase:
 
-| Phase | Volatility | Trend | Strategy | Position Size |
-|-------|-----------|-------|----------|---------------|
-| LV_Trend_Up/Down | Low | Yes | Trend Following | +50% |
-| HV_Consolidation | High | No | Mean Reversion | +50% |
-| HV_Trend_Up/Down | High | Yes | Trend Following | -50% |
-| LV_Consolidation | Low | No | No Trade | 0% |
-| Pullback phases | Any | Yes* | Mean Reversion | Variable |
-| Rangebound | Any | Yes | Reduced TF | -50% |
+| Phase      | Volatility | Trend | Strategy        | Position Size |
+| ---------- | ---------- | ----- | --------------- | ------------- |
+| LV_Trend   | Low        | Yes   | Trend Following | Large         |
+| HV_Trend   | High       | Yes   | Trend Following | Small         |
+| LV_Ranging | Low        | No    | Mean Reversion  | Medium        |
+| HV_Ranging | High       | No    | Mean Reversion  | Small         |
 
 ## Key Hypothesis
 
-> Market phase detection does not directly improve 
-> prediction accuracy. Instead, it enables optimal 
-> **strategy selection**: trend-following methods work 
-> best in low-volatility trending conditions, while 
-> mean-reversion methods work best in high-volatility 
-> consolidating conditions.
+> Market phase detection enables optimal **strategy selection**:
+> trend-following methods work best in trending conditions,
+> while mean-reversion methods work best in ranging conditions.
+> Furthermore, phase-aware routing improves **risk-adjusted**
+> performance even when raw returns are comparable to
+> single-strategy approaches.
+
+## Key Finding
+
+> **PhaseAware_TF4_MR42 is the best performing strategy
+> combination on both major and minor forex pairs.**
+>
+> Critically, PhaseAware_TF4_MR42 outperforms MR42 standalone
+> not on raw return, but on **risk-adjusted return**:
+>
+> | Strategy            | Total Return | Sharpe | Max Drawdown | Win Rate | Profit Factor |
+> | ------------------- | ------------ | ------ | ------------ | -------- | ------------- |
+> | PhaseAware_TF4_MR42 | +37.88%      | 0.217  | -27.43%      | 62.44%   | 1.130         |
+> | MR42 (standalone)   | +38.26%      | 0.123  | -42.12%      | 68.00%   | 1.056         |
+> | TF4 (standalone)    | +7.09%       | 0.035  | -22.02%      | 52.10%   | 1.047         |
+>
+> PhaseAware achieves a **77% higher Sharpe ratio** and
+> **35% lower max drawdown** than MR42 standalone, while
+> maintaining comparable total return. This is meaningful
+> evidence that phase-aware strategy routing adds value
+> beyond simply running the best individual strategy.
+>
+> Results based on 14 forex pairs (7 majors, 7 minors),
+> daily D1 data, hardcoded position sizing.
 
 ## Phase Detection Method
 
-Markets are classified using two dimensions:
+Markets are classified into four phases using two dimensions:
 
-### 1. Relative Volatility (ATR Ratio)
-RV = ATR(10) / ATR(100) RV >= 1.0 → High Volatility RV < 1.0 → Low Volatility
+### 1. Volatility (ATR%)
+
+Current ATR expressed as a percentage of price, compared
+to its rolling median:
+
+- **High Volatility**: ATR% > rolling median ATR%
+- **Low Volatility**:  ATR% ≤ rolling median ATR%
+
+### 2. Trend Strength (ADX)
+
+- **Trending**: ADX(14) > 20
+- **Ranging**:  ADX(14) ≤ 20
+
+This gives four phases: HV_Trend, LV_Trend, HV_Ranging, LV_Ranging.
 
 Reference: Kaufman, "Trading Systems and Methods" (pg 854)
 
-### 2. Trend Detection
-For D1 timeframe: Trending: ADX(14) > 20 Direction: +DI > -DI → Uptrend -DI > +DI → Downtrend Consolidation: ADX(14) <= 20
+## Strategies
 
-For shorter timeframes: Trending: Close > MA(200) → Uptrend Close < MA(200) → Downtrend Pullback: Uptrend but -DI > +DI (or vice versa)
+### Trend Following Suite (TF1–TF5)
 
-## Strategies Compared
+| Strategy | Entry Logic                                    | Exit Logic                        |
+| -------- | ---------------------------------------------- | --------------------------------- |
+| TF1      | Close outside LWMA ± σ×StdDev band             | Close crosses back inside band    |
+| TF2      | Donchian channel breakout (new N-day high/low) | Trailing channel exit             |
+| TF3      | SMA(9) crosses SMA(26)                         | Opposite crossover                |
+| TF4      | LWMA(40) direction + Stochastic(5,3,1) extreme | Trailing stochastic exit          |
+| TF5      | Close outside Bollinger Band (σ=1.0, 20 bars)  | Close crosses back through center |
 
-### Baseline A: Always Trend Following
-- Entry: +DI crosses above -DI (long)
-- Entry: -DI crosses above +DI (short)
-- Exit: Opposing DI cross or ADX drops below threshold
+### Mean Reversion Suite (MR1–MR5)
 
-### Baseline B: Always Mean Reversion
-- Entry: RSI < 30 (long - oversold)
-- Entry: RSI > 70 (short - overbought)
-- Exit: RSI crosses 50
+| Strategy | Entry Logic                                   | Exit Logic                  |
+| -------- | --------------------------------------------- | --------------------------- |
+| MR1      | Close outside LWMA ± σ×StdDev band            | 2% SL / 2% TP               |
+| MR2      | Stochastic(2,3,1) < 15 rising OR > 85 falling | Stochastic crosses 50       |
+| MR3      | RSI(14) crosses above 25 or below 75          | 1% SL / 3% TP               |
+| MR32     | RSI(14) extreme + price above/below MA(200)   | RSI crosses 60/40 + 2.5% SL |
+| MR42     | BB(20,2) breakout + ADX(14) < 20 filter       | 2.5% SL / 1.25% TP          |
+| MR5      | BB(20,2) breakout (no ADX filter)             | 2% SL / 2% TP               |
 
-### Phase-Aware Strategy Selection
-- Selects TF or MR based on current market phase
-- Adjusts position size based on phase quality
-- Avoids trading in unfavorable conditions
+### Phase-Aware Strategy (PhaseAware)
+
+Routes each bar to either a TF or MR strategy based on
+the detected market phase, with position sizing scaled
+by phase risk profile. All 30 TF×MR combinations are
+tested automatically.
+
+## Machine Learning Component
+
+A supervised ML model (`models.py`) is trained to
+**predict the next bar's market phase** using features
+derived from price action and technical indicators.
+
+Rather than labeling the current bar's phase (which is
+already known), the model learns to anticipate **regime
+transitions** — for example, recognizing early signs that
+a trending market is about to transition into a ranging one.
+
+**How it helps:**
+- Enter trend-following trades *earlier* in a new trend
+- Avoid deploying mean-reversion strategies into the tail
+  end of a ranging phase that is about to break out
+- Reduce whipsaw trades caused by late phase detection
+
+The ML model's predicted phases are used by PhaseAwareStrategy
+to route signals, making it straightforward to measure whether
+ML-predicted phases outperform rule-based phase classification.
+
+
 
 
 ## Project Structure
@@ -136,7 +200,6 @@ seaborn>=0.12.0
 jupyter>=1.0.0
 notebook>=6.5.0
 ipykernel>=6.0.0
-dataclasses>=0.6
 ```
 ## Background & Motivation
 
@@ -153,8 +216,7 @@ Key observations from live trading:
 
 **Jonas Almqvist**
 PhD in Chemistry | Data Scientist | ML Engineer
-15+ years experience in computational analysis
-🔗 LinkedIn
+15+ years experience in computational analysis 🔗 LinkedIn 🐙 [GitHub](https://github.com/jalmqvist/market-phase-ml)
 
 ## License
 
@@ -164,3 +226,6 @@ MIT License - feel free to use and adapt this code.
 
 - Kaufman, P.J. (2013). *Trading Systems and Methods* (5th ed.). Wiley Trading.
 - Wilder, J.W. (1978). *New Concepts in Technical Trading Systems*. Trend Research.
+- Connors, L. & Raschke, L. (1995). *Street Smarts*. M. Gordon Publishing.
+- Katz, J.O. & McCormick, D.L. (2000). *The Encyclopedia of Trading Strategies*. McGraw-Hill.
+- Weissman, R.L. (2005). *Mechanical Trading Systems*. Wiley Trading.
