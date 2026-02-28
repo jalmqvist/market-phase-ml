@@ -216,7 +216,7 @@ Key observations from live trading:
 
 **Jonas Almqvist**
 PhD in Chemistry | Data Scientist | ML Engineer
-15+ years experience in computational analysis 🔗 LinkedIn 🐙 [GitHub](https://github.com/jalmqvist/market-phase-ml)
+15+ years experience in computational analysis 🔗 [LinkedIn](https://www.linkedin.com/in/jalmqvist/) 🐙 [GitHub](https://github.com/jalmqvist/market-phase-ml)
 
 ## License
 

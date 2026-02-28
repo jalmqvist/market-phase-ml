@@ -1,9 +1,8 @@
 # src/visualization.py
-
+import matplotlib
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import seaborn as sns
 from pathlib import Path
 
@@ -19,11 +18,54 @@ PHASE_COLORS = {
     'Unknown': '#AAAAAA',  # Gray
 }
 
+# Strategy color scheme
+# TF strategies  — blue family
+# MR strategies  — orange/red family
+# PhaseAware     — green family
+# Special        — distinct colors for key comparison figure
+
 STRATEGY_COLORS = {
-    'TrendFollowing': '#1f77b4',  # Blue
-    'MeanReversion': '#d62728',  # Red
-    'PhaseAware': '#2ca02c',  # Green
+    # TF strategies — blue family
+    'TF1': '#1f77b4',
+    'TF2': '#4a90d9',
+    'TF3': '#7eb8e8',
+    'TF4': '#0a4f8c',
+    'TF5': '#a8c8f0',
+
+    # MR strategies — orange/red family
+    'MR1':  '#d62728',
+    'MR2':  '#e8703a',
+    'MR32': '#c0392b',
+    'MR42': '#e74c3c',
+    'MR5':  '#f0a500',
+
+    # PhaseAware — green family
+    # Best combo gets a distinct bright green
+    'PhaseAware_TF4_MR42': '#2ca02c',
+    'PhaseAware_TF4_MR5':  '#5cb85c',
+    'PhaseAware_TF5_MR42': '#3d9970',
+    'PhaseAware_TF2_MR42': '#27ae60',
+    'PhaseAware_TF1_MR42': '#82c982',
+    'PhaseAware_TF3_MR42': '#a8d8a8',
+
+    # Fallback for remaining PhaseAware combos
+    # (generated dynamically below)
 }
+
+# Dynamically add remaining PhaseAware combinations
+# so nothing falls back to gray
+_tf_names = ['TF1', 'TF2', 'TF3', 'TF4', 'TF5']
+_mr_names = ['MR1', 'MR2', 'MR3', 'MR32', 'MR42', 'MR5']
+_pa_green_shades = plt.cm.Greens(np.linspace(0.3, 0.9, 30))
+_pa_idx = 0
+for _tf in _tf_names:
+    for _mr in _mr_names:
+        _key = f'PhaseAware_{_tf}_{_mr}'
+        if _key not in STRATEGY_COLORS:
+            STRATEGY_COLORS[_key] = matplotlib.colors.to_hex(
+                _pa_green_shades[_pa_idx]
+            )
+            _pa_idx += 1
 
 FIGURES_DIR = Path('figures')
 
@@ -60,6 +102,21 @@ class PhaseVisualizer:
                                  figsize=(16, 14),
                                  sharex=True)
 
+        fig.suptitle(
+            'Market Phase Overview',
+            fontsize=16,
+            fontweight='bold',
+            y=1.01
+        )
+        fig.text(
+            0.5, 0.99,
+            f'Data: {ticker} — Daily (D1) — Representative example',
+            ha='center',
+            fontsize=11,
+            style='italic',
+            color='black'
+        )
+
         # --- Panel 1: Price colored by phase ---
         ax1 = axes[0]
         for phase, color in self.phase_colors.items():
@@ -67,7 +124,7 @@ class PhaseVisualizer:
             if mask.sum() > 0:
                 ax1.scatter(
                     df.index[mask],
-                    df['Close'][mask],
+                    df['Close'] [mask],
                     c=color,
                     s=2,
                     label=phase,
@@ -76,15 +133,17 @@ class PhaseVisualizer:
 
         ax1.set_title(
             f'{ticker} — Price Colored by Market Phase',
-            fontsize=12
+            fontsize=13
         )
-        ax1.set_ylabel('Price')
+        ax1.set_ylabel('Price', fontsize=13)
+        ax1.tick_params(axis='y', labelsize=11)
         ax1.legend(
             loc='upper left',
-            fontsize=8,
+            fontsize=10,
             ncol=2,
             markerscale=3
         )
+        ax1.grid(True, alpha=0.3)
 
         # --- Panel 2: ATR% with rolling median ---
         ax2 = axes[1]
@@ -94,7 +153,6 @@ class PhaseVisualizer:
             label='ATR%'
         )
 
-        # Rolling median (the HV/LV split line)
         if len(df) >= 126:
             rolling_med = df['atr_pct'].rolling(
                 window=252, min_periods=126
@@ -115,9 +173,14 @@ class PhaseVisualizer:
                 alpha=0.25, color='blue', label='Low Volatility'
             )
 
-        ax2.set_title('ATR% (Normalized Volatility)', fontsize=12)
-        ax2.set_ylabel('ATR / Close (%)')
-        ax2.legend(loc='upper right', fontsize=8)
+        ax2.set_title(
+            'ATR% — Normalised Volatility',
+            fontsize=13
+        )
+        ax2.set_ylabel('ATR / Close (%)', fontsize=13)
+        ax2.tick_params(axis='y', labelsize=11)
+        ax2.legend(loc='upper right', fontsize=10)
+        ax2.grid(True, alpha=0.3)
 
         # --- Panel 3: ADX with threshold ---
         ax3 = axes[2]
@@ -137,14 +200,19 @@ class PhaseVisualizer:
             25, color='orange', linestyle='--',
             linewidth=1, label='Trend threshold (25)'
         )
-        ax3.set_title('ADX and Directional Indicators', fontsize=12)
-        ax3.set_ylabel('ADX Value')
-        ax3.legend(loc='upper right', fontsize=8)
+        ax3.set_title(
+            'ADX and Directional Indicators',
+            fontsize=13
+        )
+        ax3.set_ylabel('ADX Value', fontsize=13)
+        ax3.tick_params(axis='y', labelsize=11)
+        ax3.legend(loc='upper right', fontsize=10)
+        ax3.grid(True, alpha=0.3)
 
         # --- Panel 4: Phase timeline ---
         ax4 = axes[3]
-        phase_list = list(self.phase_colors.keys())
-        phase_to_num = {p: i for i, p in enumerate(phase_list)}
+        phase_list    = list(self.phase_colors.keys())
+        phase_to_num  = {p: i for i, p in enumerate(phase_list)}
         phase_numeric = df['phase'].map(phase_to_num).fillna(0)
 
         ax4.scatter(
@@ -154,9 +222,11 @@ class PhaseVisualizer:
             s=2, alpha=0.8
         )
         ax4.set_yticks(range(len(phase_list)))
-        ax4.set_yticklabels(phase_list, fontsize=8)
-        ax4.set_title('Market Phase Over Time', fontsize=12)
-        ax4.set_xlabel('Date')
+        ax4.set_yticklabels(phase_list, fontsize=11)
+        ax4.set_title('Market Phase Over Time', fontsize=13)
+        ax4.set_xlabel('Date', fontsize=13)
+        ax4.tick_params(axis='x', labelsize=11)
+        ax4.grid(True, alpha=0.3)
 
         plt.tight_layout()
         out_path = FIGURES_DIR / 'phases_overview.png'
@@ -164,125 +234,275 @@ class PhaseVisualizer:
         plt.close()
         print(f'✓ Saved {out_path}')
 
-    def plot_phase_statistics(self, df: pd.DataFrame) -> None:
+    def plot_phase_statistics(self, df: pd.DataFrame,
+                              ticker: str = 'EURUSD') -> None:
         """
-        4-panel statistical summary for the 4-phase scheme.
+        Statistical summary for the 4-phase scheme.
 
         Panels:
-            1. Phase frequency distribution
-            2. Average next-day return per phase
-            3. Directional accuracy per phase
-            4. ATR% distribution per phase (violin)
+            1. Phase frequency distribution (with baseline)
+            2. Directional accuracy per phase (with 50% baseline)
+            3. Combined: Average next-day return + ATR% by phase
+               (Phase on y-axis, both metrics on x-axis)
+
+        All panels include baseline comparisons.
+        Data source annotated in figure subtitle.
         """
         _ensure_figures_dir()
-        fig, axes = plt.subplots(2, 2, figsize=self.figsize)
 
-        # --- 1. Phase frequency ---
-        ax1 = axes[0, 0]
-        phase_counts = df['phase'].value_counts()
-        colors = [self.phase_colors.get(p, '#AAAAAA')
-                  for p in phase_counts.index]
-        bars = ax1.bar(
-            range(len(phase_counts)),
-            phase_counts.values,
-            color=colors
+        # 3-panel layout: freq | accuracy | combined return+ATR
+        fig, axes = plt.subplots(
+            1, 3,
+            figsize=(20, 8)
         )
-        ax1.set_xticks(range(len(phase_counts)))
-        ax1.set_xticklabels(
-            phase_counts.index, rotation=30,
-            ha='right', fontsize=9
-        )
-        ax1.set_title('Phase Frequency Distribution')
-        ax1.set_ylabel('Count')
 
-        total = len(df)
+        fig.suptitle(
+            'Market Phase Statistics',
+            fontsize=16,
+            fontweight='bold',
+            y=1.02
+        )
+        fig.text(
+            0.5, 0.98,
+            f'Data: {ticker} — Daily (D1) — Representative example',
+            ha='center',
+            fontsize=11,
+            style='italic',
+            color='#555555'
+        )
+
+        phases_ordered = ['HV_Trend', 'LV_Trend', 'HV_Ranging', 'LV_Ranging']
+        phases_present = [p for p in phases_ordered if p in df['phase'].unique()]
+        colors         = [self.phase_colors.get(p, '#AAAAAA')
+                          for p in phases_present]
+
+        # ── Panel 1: Phase frequency ──────────────────────────────────────
+        ax1    = axes[0]
+        total  = len(df)
+
+        phase_counts = df['phase'].value_counts().reindex(
+            phases_present
+        ).fillna(0)
+
+        baseline_pct = 100.0 / len(phases_present)
+
+        bars = ax1.barh(
+            range(len(phases_present)),
+            phase_counts.values / total * 100,
+            color=colors,
+            alpha=0.85,
+            edgecolor='white',
+            linewidth=0.5
+        )
+
+        # Baseline reference line
+        ax1.axvline(
+            baseline_pct,
+            color='red', linestyle='--',
+            linewidth=1.2, alpha=0.7,
+            label=f'Equal distribution ({baseline_pct:.0f}%)'
+        )
+
+        ax1.set_yticks(range(len(phases_present)))
+        ax1.set_yticklabels(phases_present, fontsize=11)
+        ax1.set_title('Phase Frequency\nDistribution', fontsize=13)
+        ax1.set_xlabel('Frequency (%)', fontsize=13)
+        ax1.tick_params(axis='x', labelsize=11)
+        ax1.legend(fontsize=10)
+        ax1.grid(True, alpha=0.3, axis='x')
+
         for bar, count in zip(bars, phase_counts.values):
             ax1.text(
-                bar.get_x() + bar.get_width() / 2.,
-                bar.get_height(),
+                bar.get_width() + 0.3,
+                bar.get_y() + bar.get_height() / 2,
                 f'{count / total * 100:.1f}%',
-                ha='center', va='bottom', fontsize=8
+                ha='left', va='center', fontsize=10
             )
 
-        # --- 2. Average next-day return per phase ---
-        ax2 = axes[0, 1]
-        phase_returns = df.groupby('phase')['next_return'].agg(
-            ['mean', 'std']
-        ).sort_values('mean', ascending=True)
 
-        colors2 = [self.phase_colors.get(p, '#AAAAAA')
-                   for p in phase_returns.index]
-        ax2.barh(
-            range(len(phase_returns)),
-            phase_returns['mean'] * 100,
-            xerr=phase_returns['std'] * 100,
-            color=colors2, alpha=0.8, capsize=3
-        )
-        ax2.set_yticks(range(len(phase_returns)))
-        ax2.set_yticklabels(phase_returns.index, fontsize=9)
-        ax2.axvline(0, color='black', linewidth=0.8)
-        ax2.set_title('Average Next-Day Return by Phase (%)')
-        ax2.set_xlabel('Return (%)')
+        # ── Panel 2: Directional accuracy ────────────────────────────────
+        ax2 = axes[1]
 
-        # --- 3. Directional accuracy per phase ---
-        ax3 = axes[1, 0]
         phase_accuracy = df.groupby('phase').apply(
             lambda x: (
-                    np.sign(x['next_return']) ==
-                    np.sign(x['returns'])
+                np.sign(x['next_return']) ==
+                np.sign(x['returns'])
             ).mean()
-        ).sort_values(ascending=True)
+        )
+        phase_accuracy = pd.Series(phase_accuracy).reindex(
+            phases_present
+        ).fillna(0)
 
-        colors3 = [self.phase_colors.get(p, '#AAAAAA')
-                   for p in phase_accuracy.index]
-        ax3.barh(
-            range(len(phase_accuracy)),
+        ax2.barh(
+            range(len(phases_present)),
             phase_accuracy.values * 100,
-            color=colors3, alpha=0.8
+            color=colors,
+            alpha=0.85,
+            edgecolor='white',
+            linewidth=0.5
         )
-        ax3.set_yticks(range(len(phase_accuracy)))
-        ax3.set_yticklabels(phase_accuracy.index, fontsize=9)
-        ax3.axvline(
+
+        # Baseline: random directional accuracy = 50%
+        ax2.axvline(
             50, color='red', linestyle='--',
-            linewidth=1, label='Random (50%)'
+            linewidth=1.2, alpha=0.7,
+            label='Random baseline (50%)'
         )
-        ax3.set_title('Directional Accuracy by Phase (%)')
-        ax3.set_xlabel('Accuracy (%)')
-        ax3.legend(fontsize=8)
 
-        # --- 4. ATR% distribution per phase (violin) ---
-        ax4 = axes[1, 1]
-        phases_present = df['phase'].unique()
-        violin_data = [
-            df[df['phase'] == p] ['atr_pct'].dropna().values
-            for p in phases_present
-        ]
-        violin_colors = [
-            self.phase_colors.get(p, '#AAAAAA')
-            for p in phases_present
-        ]
+        ax2.set_yticks(range(len(phases_present)))
+        ax2.set_yticklabels([])        # remove labels, keep ticks
+        ax2.set_title('Directional Accuracy by Phase', fontsize=13)
+        ax2.set_xlabel('Accuracy (%)', fontsize=13)
+        ax2.tick_params(axis='x', labelsize=11)
+        ax2.legend(fontsize=10)
+        ax2.grid(True, alpha=0.3, axis='x')
 
-        parts = ax4.violinplot(
-            violin_data,
-            positions=range(len(phases_present)),
-            showmedians=True
+        # Add value labels
+        for idx, val in enumerate(phase_accuracy.values * 100):
+            ax2.text(
+                val + 0.3, idx,
+                f'{val:.1f}%',
+                va='center', fontsize=10
+            )
+
+        # ── Panel 3: Scatter — ATR% vs Next-Day Return by Phase ──────────
+        ax3 = axes[2]
+
+        phase_returns = df.groupby('phase')['next_return'].mean().reindex(
+            phases_present
+        ).fillna(0) * 100
+
+        phase_atr = df.groupby('phase')['atr_pct'].median().reindex(
+            phases_present
+        ).fillna(0)
+
+        # Overall baselines
+        baseline_return = df['next_return'].mean() * 100
+        baseline_atr    = df['atr_pct'].median()
+
+        # Plot each phase as a labeled point
+        for idx, phase in enumerate(phases_present):
+            color = self.phase_colors.get(phase, '#AAAAAA')
+            x_val = phase_atr[phase]
+            y_val = phase_returns[phase]
+
+            ax3.scatter(
+                x_val, y_val,
+                color=color,
+                s=200,              # marker size
+                zorder=5,
+                edgecolors='white',
+                linewidth=1.5
+            )
+
+            # Phase label next to each point
+            ax3.annotate(
+                phase,
+                xy=(x_val, y_val),
+                xytext=(8, 4),
+                textcoords='offset points',
+                fontsize=10,
+                color=color,
+                fontweight='bold'
+            )
+
+        # Baseline crosshairs
+        ax3.axhline(
+            baseline_return,
+            color='darkgreen', linestyle='--',
+            linewidth=1.2, alpha=0.6,
+            label=f'Overall avg return ({baseline_return:.3f}%)'
         )
-        for pc, color in zip(parts['bodies'], violin_colors):
-            pc.set_facecolor(color)
-            pc.set_alpha(0.7)
-
-        ax4.set_xticks(range(len(phases_present)))
-        ax4.set_xticklabels(
-            phases_present, rotation=30,
-            ha='right', fontsize=9
+        ax3.axvline(
+            baseline_atr,
+            color='darkorange', linestyle='--',
+            linewidth=1.2, alpha=0.6,
+            label=f'Overall median ATR% ({baseline_atr:.3f})'
         )
-        ax4.set_title('ATR% Distribution by Phase')
-        ax4.set_xlabel('Phase')
-        ax4.set_ylabel('ATR%')
+
+        # Quadrant labels — explains what each quadrant means
+        x_min, x_max = ax3.get_xlim()
+        y_min, y_max = ax3.get_ylim()
+
+        # We'll add quadrant labels after setting limits
+        ax3.set_xlabel('Median ATR% (Volatility)', fontsize=13)
+        ax3.set_ylabel('', fontsize=13)   # no y-label — shared axis
+        ax3.set_yticklabels([])           # no y-tick labels
+        ax3.set_title(
+            'Volatility vs Next-Day Return\nby Phase',
+            fontsize=13
+        )
+        ax3.tick_params(axis='x', labelsize=11)
+        ax3.grid(True, alpha=0.3)
+
+        # Figure-level legend — top right corner
+        handles, labels = ax3.get_legend_handles_labels()
+        fig.legend(
+            handles, labels,
+            fontsize=9,
+            loc='upper right',
+            bbox_to_anchor=(0.98, 0.98),
+            framealpha=0.8,
+            title='Baselines',
+            title_fontsize=10
+        )
+
+        # ── Quadrant annotations ─────────────────────────────────────────
+        # Get axis limits after plotting
+        x_min, x_max = ax3.get_xlim()
+        y_min, y_max = ax3.get_ylim()
+        x_mid = baseline_atr
+        y_mid = baseline_return
+
+        quadrant_style = dict(
+            fontsize=10,
+            alpha=1,
+            ha='center',
+            va='center',
+            style='italic',
+            color='black'
+        )
+
+        # Top-left: low vol, high return — ideal TF conditions
+        ax3.text(
+            (x_min + x_mid) / 2, (y_mid + y_max) / 2,
+            'Low Vol\nHigh Return\n(LV_Trend)',
+            **quadrant_style
+        )
+        # Top-right: high vol, high return
+        ax3.text(
+            (x_mid + x_max) / 2, (y_mid + y_max) / 2,
+            'High Vol\nHigh Return\n(HV_Trend)',
+            **quadrant_style
+        )
+        # Bottom-left: low vol, low return — ideal MR conditions
+        ax3.text(
+            (x_min + x_mid) / 2, (y_min + y_mid) / 2,
+            'Low Vol\nLow Return\n(LV_Ranging)',
+            **quadrant_style
+        )
+        # Bottom-right: high vol, low return — avoid
+        ax3.text(
+            (x_mid + x_max) / 2, (y_min + y_mid) / 2,
+            'High Vol\nLow Return\n(HV_Ranging)',
+            **quadrant_style
+        )
+
+        # Add right-side y-axis showing return values
+        ax3_right = ax3.twinx()
+        ax3_right.set_ylim(ax3.get_ylim())
+        ax3_right.set_ylabel(
+            'Avg Next-Day Return (%)',
+            fontsize=12
+        )
+        ax3_right.tick_params(axis='y', labelsize=11)
+        ax3_right.yaxis.set_major_formatter(
+            plt.FuncFormatter(lambda x, _: f'{x:.3f}%')
+        )
 
         plt.tight_layout()
         out_path = FIGURES_DIR / 'phase_statistics.png'
-        plt.savefig(out_path, dpi=150, bbox_inches='tight')
+        plt.savefig(out_path, dpi=150, bbox_inches='tight')  # bbox_inches='tight' handles the outside legend
         plt.close()
         print(f'✓ Saved {out_path}')
 
@@ -402,94 +622,444 @@ class PhaseVisualizer:
         plt.close()
         print(f'✓ Saved {out_path}')
 
+def plot_key_results(hardcoded_results: dict,
+                     loaded_majors: list,
+                     loaded_minors: list) -> None:
+    """
+    The key results figure — shows the core finding of the project.
+
+    Layout:
+        Top row:    Equity curves — Majors average | Minors average
+        Bottom row: Metrics table — Majors         | Minors
+
+    Strategies shown:
+        - PhaseAware_TF4_MR42  (best phase-aware combo)
+        - MR42                 (best standalone MR)
+        - TF4                  (best standalone TF)
+    """
+    _ensure_figures_dir()
+
+    FOCUS_STRATEGIES = {
+        'PhaseAware_TF4_MR42': {
+            'color':     '#2ca02c',
+            'linewidth': 2.5,
+            'linestyle': '-',
+            'label':     'PhaseAware TF4+MR42 (phase-aware)',
+            'zorder':    5,
+        },
+        'MR42': {
+            'color':     '#e74c3c',
+            'linewidth': 1.8,
+            'linestyle': '--',
+            'label':     'MR42 (best standalone MR)',
+            'zorder':    4,
+        },
+        'TF4': {
+            'color':     '#1f77b4',
+            'linewidth': 1.8,
+            'linestyle': '--',
+            'label':     'TF4 (best standalone TF)',
+            'zorder':    3,
+        },
+    }
+
+    # Consistent y-axis range for equity curves
+    Y_MIN = 70
+    Y_MAX = 140    # changed from 180
+
+    fig, axes = plt.subplots(
+        2, 2,
+        figsize=(18, 12),
+        gridspec_kw={'height_ratios': [2, 1]}
+    )
+
+    fig.suptitle(
+        'Phase-Aware Strategy Selection — Key Results\n'
+        'PhaseAware_TF4_MR42 vs Best Standalone Strategies',
+        fontsize=16,
+        fontweight='bold',
+        y=1.01
+    )
+    fig.text(
+        0.5, 0.96,
+        'Primary result figure — equally weighted average across '
+        '7 major and 7 minor forex pairs, daily (D1) data.',
+        ha='center',
+        fontsize=11,
+        style='italic',
+        color='#2c7a2c',       # green to signal this is the main result
+        wrap=True
+    )
+    groups = [
+        ('Majors', loaded_majors,  axes[0, 0], axes[1, 0]),
+        ('Minors', loaded_minors,  axes[0, 1], axes[1, 1]),
+    ]
+
+    for group_label, pairs, ax_equity, ax_table in groups:
+
+        # ── Compute average equity curve per strategy ─────────────────────
+        for strat_name, style in FOCUS_STRATEGIES.items():
+            equity_series = []
+
+            for pair in pairs:
+                pair_result = hardcoded_results.get(pair, {})
+                metrics     = pair_result.get(strat_name)
+
+                if metrics is None or 'equity_curve' not in metrics:
+                    continue
+
+                equity      = metrics['equity_curve']
+                equity_norm = equity / equity.iloc[0] * 100
+                equity_series.append(equity_norm)
+
+            if not equity_series:
+                continue
+
+            # Align and average
+            combined   = pd.concat(equity_series, axis=1).ffill()
+            avg_equity = combined.mean(axis=1)
+
+            ax_equity.plot(
+                avg_equity.index,
+                avg_equity.values,
+                color=style['color'],
+                linewidth=style['linewidth'],
+                linestyle=style['linestyle'],
+                label=style['label'],
+                zorder=style['zorder'],
+                alpha=0.9
+            )
+
+        # Reference line at 100
+        ax_equity.axhline(
+            100, color='gray', linestyle=':',
+            linewidth=1, alpha=0.5, label='Starting equity'
+        )
+
+        ax_equity.set_title(
+            f'{group_label} — Average Equity Curve\n'
+            f'({len(pairs)} pairs, equally weighted)',
+            fontsize=11
+        )
+        ax_equity.set_ylabel(
+            'Normalised Equity (start = 100)',
+            fontsize=12        # increased font size
+        )
+        ax_equity.set_xlabel(
+            'Date',
+            fontsize=12        # added x-axis label
+        )
+        ax_equity.set_ylim(Y_MIN, Y_MAX)
+        ax_equity.legend(fontsize=9, loc='upper left', framealpha=0.8)
+        ax_equity.grid(True, alpha=0.3)
+
+        # ── Metrics table ─────────────────────────────────────────────────
+        table_rows = []
+        for strat_name, style in FOCUS_STRATEGIES.items():
+            returns, sharpes, drawdowns, win_rates, pfs = [], [], [], [], []
+
+            for pair in pairs:
+                pair_result = hardcoded_results.get(pair, {})
+                metrics     = pair_result.get(strat_name)
+                if metrics is None:
+                    continue
+                returns.append(metrics['total_return'])
+                sharpes.append(metrics['sharpe_ratio'])
+                drawdowns.append(metrics['max_drawdown'])
+                win_rates.append(metrics['win_rate'])
+                pfs.append(metrics['profit_factor'])
+
+            if not returns:
+                continue
+
+            table_rows.append([
+                style['label'].split('(')[0].strip(),  # short name
+                f"{np.mean(returns):.0f}%",            # 32.1% -> 32%
+                f"{np.mean(sharpes):.2f}",             # 0.190 -> 0.19
+                f"{np.mean(drawdowns):.0f}%",          # -27.4% -> -27%
+                f"{np.mean(win_rates):.0f}%",          # 62.4% -> 62%
+                f"{np.mean(pfs):.2f}",                 # 1.130 -> 1.13
+            ])
+
+        col_labels = [
+            'Strategy',
+            'Avg Return',
+            'Avg Sharpe',
+            'Avg Drawdown',
+            'Win Rate',
+            'Profit Factor'
+        ]
+
+        ax_table.axis('off')
+        table = ax_table.table(
+            cellText=table_rows,
+            colLabels=col_labels,
+            loc='center',
+            cellLoc='center'
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)     # slightly larger font
+        table.scale(1, 2.0)       # slightly more row height
+
+        # Color rows — fixed: check rowB0B (strategy name) not full row
+        for row_idx, row in enumerate(table_rows):
+            for col_idx in range(len(col_labels)):
+                cell = table[row_idx + 1, col_idx]
+                if 'PhaseAware' in row[0]:     # rowB0B = strategy name
+                    cell.set_facecolor('#d4edda')   # light green
+                elif 'TF4' in row:
+                    cell.set_facecolor('#d6eaf8')   # light blue
+                else:
+                    cell.set_facecolor('#fde8e8')   # light red
+
+        # Color header row
+        for col_idx in range(len(col_labels)):
+            table[0, col_idx].set_facecolor('#2c3e50')
+            table[0, col_idx].set_text_props(
+                color='white', fontweight='bold'
+            )
+
+        ax_table.set_title(
+            f'{group_label} — Average Metrics ({len(pairs)} pairs)',
+            fontsize=11,
+            pad=10
+        )
+
+    plt.tight_layout()
+    out_path = FIGURES_DIR / 'key_results.png'
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f'✓ Saved {out_path}')
+
 
 # ---------------------------------------------------------------------------
 # Module-level functions (multi-pair visualizations)
 # ---------------------------------------------------------------------------
-
 def plot_backtest_results(results: dict,
-                          df: pd.DataFrame,
+                          df: pd.DataFrame,  # noqa
                           title: str = 'Backtest Results') -> None:
     """
     3-panel backtest summary for a single pair.
 
     Panels:
-        1. Equity curves for all strategies
-        2. Drawdown curves
-        3. Performance metrics bar chart
+        1. Equity curves — top 5 + bottom 3 by Sharpe ratio
+        2. Drawdown curves — same strategies as panel 1
+        3. Performance metrics — 2x2 subpanels (Return/WinRate
+           and Sharpe/ProfitFactor on separate y-axes)
+
+    Strategies selected: top 5 + bottom 3 by Sharpe ratio.
+    Equity normalized to 100 at start for comparability.
+    Single legend on right side of figure.
     """
     _ensure_figures_dir()
-    fig, axes = plt.subplots(3, 1, figsize=(16, 14))
 
-    # --- Panel 1: Equity curves ---
-    ax1 = axes[0]
-    for name, metrics in results.items():
-        equity = metrics['equity_curve']
-        ax1.plot(
-            equity.index, equity.values,
-            color=STRATEGY_COLORS.get(name, 'gray'),
-            linewidth=1.5,
-            label=f"{name} ({metrics['total_return']:.1f}%)"
+    # ── Select top 5 + bottom 3 strategies by Sharpe ─────────────────────
+    sorted_by_sharpe = sorted(
+        results.items(),
+        key=lambda item: item[1]['sharpe_ratio'],
+        reverse=True
+    )
+
+    top_5    = sorted_by_sharpe[:5]
+    bottom_3 = sorted_by_sharpe[-3:]
+
+    seen     = set()
+    selected = []
+    for name, metrics in top_5 + bottom_3:
+        if name not in seen:
+            selected.append((name, metrics))
+            seen.add(name)
+
+    # ── Figure layout — 3 rows + legend column ────────────────────────────
+    fig = plt.figure(figsize=(20, 16))
+    gs  = fig.add_gridspec(
+        3, 2,
+        width_ratios=[5, 1.2],
+        hspace=0.4,
+        wspace=0.25
+    )
+
+    ax1      = fig.add_subplot(gs[0, 0])
+    ax2      = fig.add_subplot(gs[1, 0], sharex=ax1)
+    ax3      = fig.add_subplot(gs[2, 0])
+    ax_leg   = fig.add_subplot(gs[:, 1])
+    ax_leg.axis('off')
+
+    fig.suptitle(
+        f'{title}\nTop 5 + Bottom 3 Strategies by Sharpe Ratio',
+        fontsize=16,
+        fontweight='bold',
+        y=1.01
+    )
+    fig.text(
+        0.5, 0.96,
+        'Note: Single pair results. EURUSD trended strongly 2014–2022, '
+        'favouring trend-following strategies.\n'
+        'See key_results.png for multi-pair risk-adjusted comparison.',
+        ha='center',
+        fontsize=10,
+        style='italic',
+        color='#cc0000',       # red to draw attention
+        wrap=True
+    )
+
+    # ── Panel 1: Normalised equity curves ────────────────────────────────
+    legend_handles = []
+    legend_labels  = []
+
+    for name, metrics in selected:
+        equity      = metrics['equity_curve']
+        equity_norm = equity / equity.iloc[0] * 100
+        color       = STRATEGY_COLORS.get(name, '#aaaaaa')
+        sharpe      = metrics['sharpe_ratio']
+
+        # Distinguish top 5 vs bottom 3 with linewidth
+        is_top = any(name == n for n, _ in top_5)
+        lw     = 2.0 if is_top else 1.0
+        alpha  = 0.9 if is_top else 0.5
+
+        line, = ax1.plot(
+            equity_norm.index,
+            equity_norm.values,
+            color=color,
+            linewidth=lw,
+            alpha=alpha,
+            label=name
         )
-    ax1.set_title(f'{title} — Equity Curves', fontsize=12)
-    ax1.set_ylabel('Portfolio Value ($)')
-    ax1.legend(fontsize=10)
+        legend_handles.append(line)
+        legend_labels.append(
+            f"{name}  |  Sharpe: {sharpe:.2f}  |  "
+            f"Return: {metrics['total_return']:.0f}%"
+        )
+
+    ax1.axhline(
+        100, color='gray', linestyle=':',
+        linewidth=1, alpha=0.5
+    )
+    ax1.set_title('Normalised Equity Curves', fontsize=13)
+    ax1.set_ylabel('Normalised Equity (start = 100)', fontsize=13)
+    ax1.tick_params(axis='y', labelsize=11)
+    ax1.set_ylim(40, 200)
     ax1.grid(True, alpha=0.3)
 
-    # --- Panel 2: Drawdown ---
-    ax2 = axes[1]
-    for name, metrics in results.items():
-        equity = metrics['equity_curve']
+    # ── Panel 2: Drawdown ─────────────────────────────────────────────────
+    for name, metrics in selected:
+        equity      = metrics['equity_curve']
         rolling_max = equity.expanding().max()
-        drawdown = (equity - rolling_max) / rolling_max * 100
+        drawdown    = (equity - rolling_max) / rolling_max * 100
+        color       = STRATEGY_COLORS.get(name, '#aaaaaa')
+        is_top      = any(name == n for n, _ in top_5)
+        lw          = 2.0 if is_top else 1.0
+        alpha       = 0.9 if is_top else 0.5
+
         ax2.plot(
-            drawdown.index, drawdown.values,
-            color=STRATEGY_COLORS.get(name, 'gray'),
-            linewidth=1,
-            label=f"{name} (max: {metrics['max_drawdown']:.1f}%)"
+            drawdown.index,
+            drawdown.values,
+            color=color,
+            linewidth=lw,
+            alpha=alpha
         )
-    ax2.set_title('Drawdown Comparison', fontsize=12)
-    ax2.set_ylabel('Drawdown (%)')
-    ax2.legend(fontsize=10)
+
+    ax2.set_title('Drawdown (%)', fontsize=13)
+    ax2.set_ylabel('Drawdown (%)', fontsize=13)
+    ax2.set_xlabel('Date', fontsize=13)
+    ax2.tick_params(axis='y', labelsize=11)
+    ax2.tick_params(axis='x', labelsize=11)
     ax2.grid(True, alpha=0.3)
 
-    # --- Panel 3: Performance metrics bar chart ---
-    ax3 = axes[2]
-    metric_labels = [
-        'Total Return (%)',
-        'Sharpe × 10',
-        'Win Rate (%)',
-        'Profit Factor × 10'
-    ]
-    x     = np.arange(len(metric_labels))
-    width = 0.25
+    # ── Panel 3: Metrics — 2x2 using gridspec within ax3 ─────────────────
+    # Remove ax3 and replace with 2x2 subgrid
+    ax3.remove()
+    gs_inner = gs[2, 0].subgridspec(
+        1, 2, wspace=0.35
+    )
+    ax3a = fig.add_subplot(gs_inner[0, 0])   # Total Return + Win Rate
+    ax3b = fig.add_subplot(gs_inner[0, 1])   # Sharpe + Profit Factor
 
-    for idx, (name, metrics) in enumerate(results.items()):
-        values = [
-            metrics['total_return'],
-            metrics['sharpe_ratio'] * 10,
-            metrics['win_rate'],
-            metrics['profit_factor'] * 10
-        ]
-        ax3.bar(
-            x + idx * width, values, width,
-            label=name,
-            color=STRATEGY_COLORS.get(name, 'gray'),
-            alpha=0.8
-        )
+    strategy_names = [name for name, _ in selected]
+    x              = np.arange(len(strategy_names))
+    width          = 0.35
 
-    ax3.set_xticks(x + width)
-    ax3.set_xticklabels(metric_labels)
-    ax3.set_title('Performance Metrics Comparison', fontsize=12)
-    ax3.legend(fontsize=10)
-    ax3.grid(True, alpha=0.3, axis='y')
+    # Panel 3a: Total Return and Win Rate
+    returns   = [m['total_return']  for _, m in selected]
+    win_rates = [m['win_rate']       for _, m in selected]
+    colors    = [STRATEGY_COLORS.get(n, '#aaaaaa') for n, _ in selected]
 
-    plt.tight_layout()
+    ax3a.bar(
+        x - width / 2, returns, width,
+        color=colors, alpha=0.85,
+        edgecolor='white', linewidth=0.5,
+        label='Total Return (%)'
+    )
+    ax3a_twin = ax3a.twinx()
+    ax3a_twin.bar(
+        x + width / 2, win_rates, width,
+        color=colors, alpha=0.45,
+        edgecolor='white', linewidth=0.5,
+        hatch='//',
+        label='Win Rate (%)'
+    )
+
+    ax3a.axhline(0, color='black', linewidth=0.8, alpha=0.5)
+    ax3a.set_xticks(x)
+    ax3a.set_xticklabels([])           # no x labels — legend handles this
+    ax3a.set_ylabel('Total Return (%)', fontsize=12)
+    ax3a_twin.set_ylabel('Win Rate (%)', fontsize=12)
+    ax3a.set_title('Return & Win Rate', fontsize=13)
+    ax3a.tick_params(axis='y', labelsize=11)
+    ax3a_twin.tick_params(axis='y', labelsize=11)
+    ax3a.grid(True, alpha=0.3, axis='y')
+
+    # Panel 3b: Sharpe and Profit Factor
+    sharpes = [m['sharpe_ratio']  for _, m in selected]
+    pfs     = [m['profit_factor'] for _, m in selected]
+
+    ax3b.bar(
+        x - width / 2, sharpes, width,
+        color=colors, alpha=0.85,
+        edgecolor='white', linewidth=0.5,
+        label='Sharpe Ratio'
+    )
+    ax3b_twin = ax3b.twinx()
+    ax3b_twin.bar(
+        x + width / 2, pfs, width,
+        color=colors, alpha=0.45,
+        edgecolor='white', linewidth=0.5,
+        hatch='//',
+        label='Profit Factor'
+    )
+
+    ax3b.axhline(0, color='black', linewidth=0.8, alpha=0.5)
+    ax3b_twin.axhline(
+        1.0, color='red', linestyle='--',
+        linewidth=1.0, alpha=0.6,
+        label='Break-even (PF=1.0)'
+    )
+    ax3b.set_xticks(x)
+    ax3b.set_xticklabels([])
+    ax3b.set_ylabel('Sharpe Ratio', fontsize=12)
+    ax3b_twin.set_ylabel('Profit Factor', fontsize=12)
+    ax3b.set_title('Sharpe & Profit Factor', fontsize=13)
+    ax3b.tick_params(axis='y', labelsize=11)
+    ax3b_twin.tick_params(axis='y', labelsize=11)
+    ax3b.grid(True, alpha=0.3, axis='y')
+
+    # ── Single legend on right side ───────────────────────────────────────
+    ax_leg.legend(
+        handles=legend_handles,
+        labels=legend_labels,
+        loc='center left',
+        fontsize=11,           # increased from 9
+        framealpha=0.9,
+        title='Strategy  |  Sharpe  |  Return',
+        title_fontsize=12,     # increased from 10
+        ncol=1
+    )
+
     out_path = FIGURES_DIR / 'backtest_results.png'
     plt.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f'✓ Saved {out_path}')
-
 
 def plot_phase_performance(results: dict) -> None:
     """
@@ -596,8 +1166,8 @@ def plot_phase_distribution_heatmap(processed_data: dict) -> None:
     ]
 
     fig, ax = plt.subplots(
-        figsize=(max(10, len(heatmap_df.columns) * 1.5),
-                 max(6, len(heatmap_df) * 0.5))
+        figsize=(max(10.0, len(heatmap_df.columns) * 1.5),
+                 max(6.0, len(heatmap_df) * 0.5))
     )
 
     sns.heatmap(
@@ -631,77 +1201,159 @@ def plot_group_comparison(majors_hardcoded: pd.DataFrame,
                           majors_atr: pd.DataFrame,
                           minors_atr: pd.DataFrame) -> None:
     """
-    Side-by-side comparison of weighted average results
-    for majors vs minors, hardcoded vs ATR sizing.
+    Strategy comparison for majors vs minors, hardcoded vs ATR sizing.
 
-    2 rows × 2 cols:
-        Row 1: Hardcoded sizing  — Majors | Minors
-        Row 2: ATR sizing        — Majors | Minors
+    Layout: 4 rows x 2 cols
+        Row 1: Total Return (%)
+        Row 2: Win Rate (%)
+        Row 3: Sharpe Ratio
+        Row 4: Profit Factor
+
+        Left col:  Hardcoded sizing
+        Right col: ATR constant risk sizing
+
+    Single legend on the right side of the figure.
+    Sharpe and Profit Factor have independent y-axes.
     """
     _ensure_figures_dir()
 
-    metrics = [
-        'Total Return (%)',
-        'Sharpe Ratio',
-        'Win Rate (%)',
-        'Profit Factor'
+    # Metrics split into two groups for independent y-axis scaling
+    METRICS_CONFIG = [
+        {
+            'col':       'Total Return (%)',
+            'ylabel':    'Total Return (%)',
+            'row':       0,
+        },
+        {
+            'col':       'Win Rate (%)',
+            'ylabel':    'Win Rate (%)',
+            'row':       1,
+        },
+        {
+            'col':       'Sharpe Ratio',
+            'ylabel':    'Sharpe Ratio',
+            'row':       2,
+        },
+        {
+            'col':       'Profit Factor',
+            'ylabel':    'Profit Factor',
+            'row':       3,
+        },
     ]
 
-    fig, axes = plt.subplots(2, 2, figsize=(18, 12))
+    # Use gridspec to add a narrow legend column on the right
+    fig = plt.figure(figsize=(20, 16))
+    gs  = fig.add_gridspec(
+        4, 3,
+        width_ratios=[5, 5, 1.0],   # two plot cols + one legend col, reduced from 1.5
+        hspace=0.45,
+        wspace=0.35
+    )
+
+    # Create plot axes
+    plot_axes = np.array([
+        [fig.add_subplot(gs[row, 0]),
+         fig.add_subplot(gs[row, 1])]
+        for row in range(4)
+    ])
+
+    # Legend axis — invisible, just holds the legend
+    ax_legend = fig.add_subplot(gs[:, 2])
+    ax_legend.axis('off')
 
     plot_configs = [
-        (axes[0, 0], majors_hardcoded, 'Majors — Hardcoded Sizing'),
-        (axes[0, 1], minors_hardcoded, 'Minors — Hardcoded Sizing'),
-        (axes[1, 0], majors_atr,       'Majors — ATR Constant Risk'),
-        (axes[1, 1], minors_atr,       'Minors — ATR Constant Risk'),
+        (plot_axes[:, 0], majors_hardcoded, 'Majors — Hardcoded Sizing'),
+        (plot_axes[:, 1], minors_hardcoded, 'Minors — Hardcoded Sizing'),
     ]
 
-    for ax, summary_df, title in plot_configs:
-        if summary_df.empty:
-            ax.text(
-                0.5, 0.5, 'No data',
-                ha='center', va='center',
-                transform=ax.transAxes, fontsize=12
-            )
-            ax.set_title(title, fontsize=11)
-            continue
+    # We'll collect legend handles once from the first panel
+    legend_handles = []
+    legend_labels  = []
 
-        strategies = summary_df['Strategy'].tolist()
-        x = np.arange(len(metrics))
-        width = 0.8 / len(strategies)
+    for col_idx, (summary_df, col_title) in enumerate([
+        (majors_hardcoded, 'Majors — Hardcoded Sizing'),
+        (minors_hardcoded, 'Minors — Hardcoded Sizing'),
+    ]):
+        for metric_cfg in METRICS_CONFIG:
+            row      = metric_cfg['row']
+            ax       = plot_axes[row, col_idx]
+            metric   = metric_cfg['col']
+            ylabel   = metric_cfg['ylabel']
 
-        for idx, strategy in enumerate(strategies):
-            row = summary_df[
-                summary_df['Strategy'] == strategy
-            ].iloc[0]
+            # Title only on top row
+            if row == 0:
+                ax.set_title(col_title, fontsize=13, fontweight='bold') # increased from 11
 
-            values = [
-                row.get('Total Return (%)', 0),
-                row.get('Sharpe Ratio', 0),
-                row.get('Win Rate (%)', 0),
-                row.get('Profit Factor', 0),
-            ]
+            if summary_df.empty:
+                ax.text(
+                    0.5, 0.5, 'No data',
+                    ha='center', va='center',
+                    transform=ax.transAxes, fontsize=11
+                )
+                continue
 
-            ax.bar(
-                x + idx * width, values, width,
-                label=strategy,
-                color=STRATEGY_COLORS.get(strategy, 'gray'),
-                alpha=0.8
-            )
+            strategies = summary_df['Strategy'].tolist()
+            x          = np.arange(len(strategies))
+            width      = 0.6
 
-        ax.set_xticks(x + width * (len(strategies) - 1) / 2)
-        ax.set_xticklabels(metrics, fontsize=8, rotation=15)
-        ax.set_title(title, fontsize=11)
-        ax.legend(fontsize=8)
-        ax.grid(True, alpha=0.3, axis='y')
-        ax.axhline(0, color='black', linewidth=0.5)
+            for idx, strategy in enumerate(strategies):
+                row_data = summary_df[
+                    summary_df['Strategy'] == strategy
+                ].iloc[0]
 
-    plt.suptitle(
-        'Strategy Comparison: Majors vs Minors, '
-        'Hardcoded vs ATR Sizing',
-        fontsize=14, y=1.02
+                value = row_data.get(metric, 0)
+                color = STRATEGY_COLORS.get(strategy, '#aaaaaa')
+
+                bar = ax.bar(
+                    idx, value, width,
+                    color=color,
+                    alpha=0.85,
+                    edgecolor='white',
+                    linewidth=0.5
+                )
+
+                # Collect legend handles from first column, first metric only
+                if col_idx == 0 and row == 0:
+                    legend_handles.append(bar)
+                    legend_labels.append(strategy)
+
+            ax.set_ylabel(ylabel, fontsize=13)   # increased from 11
+            ax.tick_params(axis='y', labelsize=11)
+            ax.set_xticks([])          # no x tick labels — legend handles this
+            ax.set_xlim(-0.5, len(strategies) - 0.5)
+            ax.axhline(0, color='black', linewidth=0.8, alpha=0.5)
+            ax.grid(True, alpha=0.3, axis='y')
+
+            # Add profit factor reference line at 1.0
+            if metric == 'Profit Factor':
+                ax.axhline(
+                    1.0, color='red', linewidth=1.0,
+                    linestyle='--', alpha=0.6,
+                    label='Break-even (PF=1.0)'
+                )
+
+    # Add ATR sizing results as a subtle overlay annotation
+    # on the title to keep the figure from getting too complex
+    fig.suptitle(
+        'Strategy Comparison — Majors vs Minors\n'
+        '(Hardcoded Position Sizing)',
+        fontsize=16,        # increased from 14
+        fontweight='bold',
+        y=1.01
     )
-    plt.tight_layout()
+
+    # Place single legend in the right column
+    ax_legend.legend(
+        handles=[h for h in legend_handles],
+        labels=legend_labels,
+        loc='center left',
+        fontsize=11,            # increased from 9
+        framealpha=0.9,
+        title='Strategies',
+        title_fontsize=12,      # increased from 0
+        ncol=1
+    )
+
     out_path = FIGURES_DIR / 'group_comparison.png'
     plt.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close()
@@ -728,20 +1380,19 @@ def plot_equity_curves_by_strategy(
         - Bold black    = equally-weighted average across all pairs
     """
 
-    print(f"\nDEBUG equity curves:")
-    print(f"  hardcoded_results pairs: {list(hardcoded_results.keys())}")
-    print(f"  loaded_majors: {loaded_majors}")
-    print(f"  loaded_minors: {loaded_minors}")
     for pair in loaded_majors + loaded_minors:
         pair_result = hardcoded_results.get(pair, {})
         print(f"  {pair} keys: {list(pair_result.keys())}")
 
     _ensure_figures_dir()
 
-    strategies = ['TrendFollowing', 'MeanReversion', 'PhaseAware']
-
+    strategies = [
+        'TF1', 'TF2', 'TF3', 'TF4', 'TF5',
+        'MR1', 'MR2', 'MR32', 'MR42', 'MR5',
+        'PhaseAware_TF4_MR42',   # best combo — always plot this one
+    ]
     # Color palette for individual pairs
-    pair_palette = plt.cm.tab20.colors
+    pair_palette = list(plt.colormaps['tab20'].colors)
 
     for strategy in strategies:
         fig, ax = plt.subplots(figsize=(16, 8))
@@ -758,7 +1409,6 @@ def plot_equity_curves_by_strategy(
                 metrics = pair_result.get(strategy)
 
                 if metrics is None or 'equity_curve' not in metrics:
-                    print(f"  SKIP {pair_name} / {strategy}: metrics={metrics is None}, keys={list(pair_result.keys()) if pair_result else 'empty'}")
                     continue
 
                 equity = metrics['equity_curve']
@@ -804,16 +1454,25 @@ def plot_equity_curves_by_strategy(
             linewidth=1, alpha=0.7
         )
 
+        # Consistent y-axis range across all strategy plots
+        ax.set_ylim(40, 200)
+
         ax.set_title(
             f'{strategy} — Equity Curves: All Pairs\n'
             f'(Solid = Majors, Dashed = Minors, '
             f'Black = Average)',
-            fontsize=12
+            fontsize=13,           # increased
+            fontweight='bold'
         )
-        ax.set_ylabel('Normalised Equity (start = 100)')
-        ax.set_xlabel('Date')
+        ax.set_ylabel('Normalised Equity (start = 100)',
+                      fontsize=13  # increased
+        )
+        ax.set_xlabel('Date', fontsize=13)    # increased
+        ax.tick_params(axis='y', labelsize=11)
+        ax.tick_params(axis='x', labelsize=11)
         ax.legend(
-            fontsize=7, ncol=3,
+            fontsize=8,            # slightly increased
+            ncol=3,
             loc='upper left',
             framealpha=0.7
         )

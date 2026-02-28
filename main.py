@@ -19,7 +19,17 @@ from src.strategies import run_backtests
 from src.models import PhaseMLExperiment
 from src import visualization as viz
 from src.visualization import PhaseVisualizer
+from src.cache import (
+    save_cache, load_cache, clear_cache,
+    _hash_dict_of_dataframes, _hash_params
+)
 
+# ── Uncomment to force cache refresh ─────
+# clear_cache('processed_data')
+# clear_cache('backtest_results')
+# clear_cache('ml_results')
+# clear_cache()   # clears everything
+# ─────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────
 # CONFIGURATION
@@ -298,33 +308,48 @@ def main():
     # ─────────────────────────────────────────
     print('\n[2/5] Detecting phases and engineering features...')
 
-    detector = MarketPhaseDetector(
+    detector_params = dict(
         adx_period=14,
         adx_trend_threshold=25.0,
         atr_period=14,
         vol_rolling_window=252,
         risk_pct=0.01
     )
+    detector = MarketPhaseDetector(**detector_params)
 
-    processed_data = {}
-    for pair_name, df in raw_data.items():
-        processed_df = process_pair(pair_name, df, detector)
-        if processed_df is not None:
-            processed_data[pair_name] = processed_df
-            # Save processed data per pair
-            processed_df.to_csv(
-                f'data/processed/{pair_name}.csv'
-            )
+    # Cache key: hash of raw data + detector parameters
+    raw_data_hash  = _hash_dict_of_dataframes(raw_data)
+    detector_hash  = _hash_params(**detector_params)
+
+    processed_data = load_cache(
+        'processed_data', raw_data_hash, detector_hash
+    )
+
+    if processed_data is None:
+        print('  No cache found — running phase detection...')
+        processed_data = {}
+        for pair_name, df in raw_data.items():
+            processed_df = process_pair(pair_name, df, detector)
+            if processed_df is not None:
+                processed_data[pair_name] = processed_df
+                processed_df.to_csv(
+                    f'data/processed/{pair_name}.csv'
+                )
+
+        save_cache(
+            'processed_data', processed_data,
+            raw_data_hash, detector_hash
+        )
+    else:
+        print('  Loaded processed data from cache.')
 
     if not processed_data:
         print('✗ No pairs processed successfully. Exiting.')
         return
 
-    # Print phase distribution for each pair
     for pair_name, df in processed_data.items():
         print_phase_distribution(df, pair_name)
 
-    # Update group lists to only include successfully processed pairs
     loaded_majors = [p for p in loaded_majors if p in processed_data]
     loaded_minors = [p for p in loaded_minors if p in processed_data]
 
@@ -337,25 +362,41 @@ def main():
     # ─────────────────────────────────────────
     print('\n[3/5] Running ML experiments...')
 
-    ml_results_all = {}
+    ml_params     = dict(n_splits=5, random_state=42)
+    ml_data_hash  = _hash_dict_of_dataframes(processed_data)
+    ml_param_hash = _hash_params(**ml_params)
 
-    for pair_name, df in processed_data.items():
-        print(f'\n  --- {pair_name} ---')
-        try:
-            experiment = PhaseMLExperiment(
-                n_splits=5,
-                random_state=42
-            )
-            experiment.run_baseline(df)
-            experiment.run_phase_features(df)
-            experiment.run_phase_models(
-                df, min_samples=MIN_PHASE_SAMPLES
-            )
-            ml_results_all[pair_name] = experiment.compare_results()
-        except Exception as e:
-            print(f'  ✗ {pair_name}: ML experiment failed — {e}')
+    ml_results_all = load_cache(
+        'ml_results', ml_data_hash, ml_param_hash
+    )
 
-    # Save per-pair ML results
+    if ml_results_all is None:
+        print('  No cache found — running ML experiments...')
+        ml_results_all = {}
+
+        for pair_name, df in processed_data.items():
+            print(f'\n  --- {pair_name} ---')
+            try:
+                experiment = PhaseMLExperiment(
+                    n_splits=ml_params['n_splits'],
+                    random_state=ml_params['random_state']
+                )
+                experiment.run_baseline(df)
+                experiment.run_phase_features(df)
+                experiment.run_phase_models(
+                    df, min_samples=MIN_PHASE_SAMPLES
+                )
+                ml_results_all[pair_name] = experiment.compare_results()
+            except Exception as e:
+                print(f'  ✗ {pair_name}: ML experiment failed — {e}')
+
+        save_cache(
+            'ml_results', ml_results_all,
+            ml_data_hash, ml_param_hash
+        )
+    else:
+        print('  Loaded ML results from cache.')
+
     if ml_results_all:
         ml_combined = pd.concat(
             [df.assign(Pair=pair)
@@ -370,53 +411,71 @@ def main():
     # ─────────────────────────────────────────
     print('\n[4/5] Running strategy backtests...')
 
-    all_pair_results = {}
+    backtest_params = dict(
+        initial_capital=INITIAL_CAPITAL,
+    )
+    bt_data_hash  = _hash_dict_of_dataframes(processed_data)
+    bt_param_hash = _hash_params(**backtest_params)
 
-    for pair_name, df in processed_data.items():
-        ticker = next(
-            (t for t, n in PAIR_NAMES.items() if n == pair_name),
-            None
-        )
-        pip_value = PIP_VALUES.get(ticker, 0.0001)
+    all_pair_results = load_cache(
+        'backtest_results', bt_data_hash, bt_param_hash
+    )
 
-        print(f'\n  --- {pair_name} (pip={pip_value}) ---')
+    if all_pair_results is None:
+        print('  No cache found — running backtests...')
+        all_pair_results = {}
 
-        results_hardcoded = {}
-        results_atr = {}
-
-        try:
-            results_hardcoded = run_backtests(
-                df=df,
-                initial_capital=INITIAL_CAPITAL,
-                use_atr_sizing=False
+        for pair_name, df in processed_data.items():
+            ticker = next(
+                (t for t, n in PAIR_NAMES.items() if n == pair_name),
+                None
             )
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f'  ✗ {pair_name}: backtest failed — {e}')
+            pip_value = PIP_VALUES.get(ticker, 0.0001)
+            print(f'\n  --- {pair_name} (pip={pip_value}) ---')
 
-        try:
-            results_atr = run_backtests(
-                df=df,
-                initial_capital=INITIAL_CAPITAL,
-                use_atr_sizing=True
+            results_hardcoded = {}
+            results_atr       = {}
+
+            try:
+                results_hardcoded = run_backtests(
+                    df=df,
+                    initial_capital=INITIAL_CAPITAL,
+                    use_atr_sizing=False
+                )
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f'  ✗ {pair_name}: backtest failed — {e}')
+
+            try:
+                results_atr = run_backtests(
+                    df=df,
+                    initial_capital=INITIAL_CAPITAL,
+                    use_atr_sizing=True
+                )
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print
+                (f'  ✗ {pair_name}: backtest failed — {e}')
+
+            if results_hardcoded:
+                all_pair_results[pair_name] = {
+                    **{f'{k}_hardcoded': v
+                       for k, v in results_hardcoded.items()},
+                    **{f'{k}_atr': v
+                       for k, v in results_atr.items()},
+                }
+                print(f'  ✓ {pair_name}: results stored')
+            else:
+                print(f'  ✗ {pair_name}: no results stored')
+
+            save_cache(
+                'backtest_results', all_pair_results,
+                bt_data_hash, bt_param_hash
             )
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f'  ✗ {pair_name}: backtest failed — {e}')
-
-        # Only store if at least hardcoded succeeded
-        if results_hardcoded:
-            all_pair_results[pair_name] = {
-                **{f'{k}_hardcoded': v
-                   for k, v in results_hardcoded.items()},
-                **{f'{k}_atr': v
-                   for k, v in results_atr.items()},
-            }
-            print(f'  ✓ {pair_name}: results stored')
         else:
-            print(f'  ✗ {pair_name}: no results stored')
+            print('  Loaded backtest results from cache.')
 
     # ─────────────────────────────────────────
     # 5. AGGREGATE AND REPORT RESULTS
@@ -498,19 +557,34 @@ def main():
 
     visualizer = PhaseVisualizer()
 
-    # Plot phase overview for first available pair
+    # ── 1. Key results figure (most important — shown first) ──────────────
+    viz.plot_key_results(
+        hardcoded_results=hardcoded_results,
+        loaded_majors=loaded_majors,
+        loaded_minors=loaded_minors
+    )
+
+    # ── 2. Group summary comparison (majors vs minors) ────────────────────
+    viz.plot_group_comparison(
+        majors_hardcoded,
+        minors_hardcoded,
+        majors_atr,
+        minors_atr
+    )
+
+    # ── 3. Phase distribution heatmap (cross-pair) ────────────────────────
+    viz.plot_phase_distribution_heatmap(processed_data)
+
+    # ── 4. Phase overview — EURUSD representative example ─────────────────
     first_pair = next(iter(processed_data))
     first_df = processed_data[first_pair]
 
     visualizer.plot_phases_overview(
         first_df, ticker=first_pair
     )
-    visualizer.plot_phase_statistics(first_df)
+    visualizer.plot_phase_statistics(first_df, ticker=first_pair)
 
-    # Plot cross-pair phase distribution heatmap
-    viz.plot_phase_distribution_heatmap(processed_data)
-
-    # Plot backtest comparison for first pair (detailed view)
+    # ── 5. Backtest results — EURUSD detailed view ────────────────────────
     first_pair_results = {
         k: v for k, v in hardcoded_results.get(
             first_pair, {}
@@ -523,15 +597,7 @@ def main():
         )
         viz.plot_phase_performance(first_pair_results)
 
-    # Plot group summary comparison
-    viz.plot_group_comparison(
-        majors_hardcoded,
-        minors_hardcoded,
-        majors_atr,
-        minors_atr
-    )
-
-    # Plot equity curves for all pairs, one chart per strategy
+    # ── 6. Equity curves — all pairs, one chart per strategy ──────────────
     viz.plot_equity_curves_by_strategy(
         hardcoded_results,
         processed_data,

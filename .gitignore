@@ -190,3 +190,6 @@ figures/
 *.joblib
 *.pkl
 models/saved/
+
+# Cache files
+data/cache/

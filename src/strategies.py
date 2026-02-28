@@ -931,7 +931,6 @@ class PhaseAwareStrategy:
     MR_STRATEGIES = {
         'MR1': MR1Strategy,
         'MR2': MR2Strategy,
-        'MR3': MR3Strategy,
         'MR32': MR32Strategy,
         'MR42': MR42Strategy,
         'MR5': MR5Strategy,
@@ -1563,7 +1562,6 @@ def run_backtests(df: pd.DataFrame,
     mr_strategies = {
         'MR1':  MR1Strategy(),
         'MR2':  MR2Strategy(),
-        'MR3':  MR3Strategy(),
         'MR32': MR32Strategy(),
         'MR42': MR42Strategy(),
         'MR5':  MR5Strategy(),
