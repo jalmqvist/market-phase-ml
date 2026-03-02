@@ -24,4 +24,5 @@ __all__ = [
     'TradeResult',
     'PhaseMLExperiment',
     'PhaseVisualizer',
+    'PhaseMLPredictor',
 ]

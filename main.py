@@ -23,12 +23,17 @@ from src.cache import (
     save_cache, load_cache, clear_cache,
     _hash_dict_of_dataframes, _hash_params
 )
+from src.models import PhaseMLExperiment, PhaseMLPredictor
+from src.strategies import PhaseAwareStrategy
 
 # ── Uncomment to force cache refresh ─────
 # clear_cache('processed_data')
 # clear_cache('backtest_results')
 # clear_cache('ml_results')
+# clear_cache('ml_predicted_phases')
+# clear_cache('ml_backtest_results')
 # clear_cache()   # clears everything
+clear_cache('ml_backtest_results')
 # ─────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────
@@ -204,14 +209,83 @@ def aggregate_backtest_results(pair_results: dict,
 
 def print_phase_distribution(df: pd.DataFrame,
                               pair_name: str) -> None:
-    """Print phase distribution for a single pair."""
+    """
+    Print phase distribution and duration statistics for a single pair.
+
+    Helps calibrate ML training window size and retraining frequency.
+    """
     phase_counts = df['phase'].value_counts()
-    total = len(df)
+    total        = len(df)
+
     print(f'\n  {pair_name} phase distribution:')
     for phase, count in phase_counts.items():
         pct = count / total * 100
         print(f'    {phase:<20} {count:>5} ({pct:.1f}%)')
 
+    # ── Phase duration statistics ─────────────────────────────────────────
+    # Identify consecutive runs of the same phase
+    phase_series  = df['phase']
+    run_lengths   = {}
+    transitions   = 0
+
+    current_phase = phase_series.iloc[0]
+    current_len   = 1
+
+    for i in range(1, len(phase_series)):
+        if phase_series.iloc[i] == current_phase:
+            current_len += 1
+        else:
+            # Phase changed — record the completed run
+            if current_phase not in run_lengths:
+                run_lengths[current_phase] = []
+            run_lengths[current_phase].append(current_len)
+            transitions  += 1
+            current_phase = phase_series.iloc[i]
+            current_len   = 1
+
+    # Don't forget the last run
+    if current_phase not in run_lengths:
+        run_lengths[current_phase] = []
+    run_lengths[current_phase].append(current_len)
+
+    # Calculate years in data
+    n_years = (df.index[-1] - df.index[0]).days / 365.25
+
+    print(f'\n  {pair_name} phase duration statistics (bars):')
+    print(f'    {"Phase":<20} {"Mean":>6} {"Median":>8} '
+          f'{"Min":>6} {"Max":>6} {"N runs":>8}')
+    print(f'    {"-" * 58}')
+
+    all_durations = []
+    for phase in sorted(run_lengths.keys()):
+        durations = run_lengths[phase]
+        all_durations.extend(durations)
+        print(
+            f'    {phase:<20} '
+            f'{np.mean(durations):>6.1f} '
+            f'{np.median(durations):>8.1f} '
+            f'{np.min(durations):>6} '
+            f'{np.max(durations):>6} '
+            f'{len(durations):>8}'
+        )
+
+    print(f'    {"-" * 58}')
+    print(
+        f'    {"ALL PHASES":<20} '
+        f'{np.mean(all_durations):>6.1f} '
+        f'{np.median(all_durations):>8.1f} '
+        f'{np.min(all_durations):>6} '
+        f'{np.max(all_durations):>6} '
+        f'{len(all_durations):>8}'
+    )
+    print(
+        f'\n    Phase transitions: {transitions} '
+        f'({transitions / n_years:.1f} per year)'
+    )
+    print(
+        f'    Avg phase duration: {np.mean(all_durations):.1f} bars '
+        f'({np.mean(all_durations) / 21:.1f} months)'
+    )
 
 def save_results(all_pair_results: dict,
                  majors_summary: pd.DataFrame,
@@ -350,6 +424,16 @@ def main():
     for pair_name, df in processed_data.items():
         print_phase_distribution(df, pair_name)
 
+    # ── Temporary diagnostic — phase label smoothing effect ──────────────
+    from src.models import smooth_phase_labels
+    print('\n  Phase smoothing diagnostic:')
+    for pair_name, df in list(processed_data.items())[:2]:
+        raw      = df['phase']
+        smoothed = smooth_phase_labels(raw, confirmation_bars=5)
+        changed  = (raw != smoothed).sum()
+        print(f'  {pair_name}: {changed} bars relabeled '
+              f'({changed / len(raw) * 100:.1f}% of total)')
+
     loaded_majors = [p for p in loaded_majors if p in processed_data]
     loaded_minors = [p for p in loaded_minors if p in processed_data]
 
@@ -379,7 +463,9 @@ def main():
             try:
                 experiment = PhaseMLExperiment(
                     n_splits=ml_params['n_splits'],
-                    random_state=ml_params['random_state']
+                    random_state=ml_params['random_state'],
+                    smooth_labels=True,  # False to disable
+                    confirmation_bars=5  # tune this value
                 )
                 experiment.run_baseline(df)
                 experiment.run_phase_features(df)
@@ -406,6 +492,176 @@ def main():
         ml_combined.to_csv('results/results_ml.csv', index=False)
         print('\n✓ ML results saved to results/results_ml.csv')
 
+    # ─────────────────────────────────────────
+    # 3b. ML PHASE PREDICTION
+    # ─────────────────────────────────────────
+    print('\n[3b/5] Running ML phase prediction...')
+
+    predictor_params = dict(
+        train_window=504,
+        retrain_freq=21,
+        confirmation_bars=5,
+        smooth_labels=True,
+        random_state=42
+    )
+
+    # Cache key: hash of processed data + predictor parameters
+    pred_data_hash  = _hash_dict_of_dataframes(processed_data)
+    pred_param_hash = _hash_params(**predictor_params)
+
+    ml_predicted_data = load_cache(
+        'ml_predicted_phases', pred_data_hash, pred_param_hash
+    )
+
+    if ml_predicted_data is None:
+        print('  No cache found — running ML phase prediction...')
+        ml_predicted_data = {}
+
+        predictor = PhaseMLPredictor(**predictor_params)
+
+        for pair_name, df in processed_data.items():
+            print(f'\n  --- {pair_name} ---')
+            try:
+                predictions = predictor.fit_predict(df)
+                eval_scores = predictor.evaluate(df, predictions)
+
+                # Add predicted phase column to DataFrame copy
+                df_ml = df.copy()
+                df_ml['predicted_phase'] = predictions
+
+                ml_predicted_data[pair_name] = {
+                    'df':         df_ml,
+                    'eval':       eval_scores,
+                    'predictions': predictions
+                }
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f'  ✗ {pair_name}: ML prediction failed — {e}')
+
+        save_cache(
+            'ml_predicted_phases', ml_predicted_data,
+            pred_data_hash, pred_param_hash
+        )
+    else:
+        print('  Loaded ML predicted phases from cache.')
+
+    # ✅ ADD THIS DEBUG BLOCK:
+    print(f'\n  [DEBUG] ml_predicted_data contents:')
+    print(f'    Keys: {list(ml_predicted_data.keys())}')
+    print(f'    Length: {len(ml_predicted_data)}')
+    if ml_predicted_data:
+        for pair_name in list(ml_predicted_data.keys())[:2]:  # Show first 2
+            pred_data = ml_predicted_data[pair_name]
+            print(f'    {pair_name}: has keys {list(pred_data.keys())}')
+    else:
+        print('    ⚠️  ml_predicted_data is EMPTY!')
+
+    # ── Print accuracy scores regardless of cache hit ─────────────────────
+    print('\n  ML Phase Prediction Accuracy Summary:')
+    predictor = PhaseMLPredictor(**predictor_params)
+    for pair_name, pred_data in ml_predicted_data.items():
+        print(f'\n  --- {pair_name} ---')
+        eval_scores = predictor.evaluate(
+            processed_data[pair_name],
+            pred_data['predictions']
+        )
+        ml_predicted_data[pair_name] ['eval'] = eval_scores
+
+    # ─────────────────────────────────────────
+    # 3c. BACKTEST WITH ML-PREDICTED PHASES
+    # ─────────────────────────────────────────
+    print('\n[3c/5] Running backtests with ML-predicted phases...')
+
+    ml_bt_param_hash = _hash_params(
+        **predictor_params,
+        initial_capital=INITIAL_CAPITAL
+    )
+    ml_bt_data_hash = pred_data_hash
+
+    ml_backtest_results = load_cache(
+        'ml_backtest_results', ml_bt_data_hash, ml_bt_param_hash
+    )
+
+    if ml_backtest_results is None:
+        print('  No cache found — running ML backtests...')
+        ml_backtest_results = {}
+
+        print(f'  DEBUG: ml_predicted_data has {len(ml_predicted_data)} pairs')
+        for pair_name in ml_predicted_data.keys():
+            print(f'    - {pair_name}')
+
+        for pair_name, pred_data in ml_predicted_data.items():
+            print(f'\n  DEBUG: Processing {pair_name}')
+            print(f'  DEBUG: pred_data keys = {pred_data.keys()}')
+
+            df_ml = pred_data['df']
+            print(f'  DEBUG: df_ml shape = {df_ml.shape}')
+            print(f'  DEBUG: df_ml columns = {df_ml.columns.tolist()}')
+            print(f'\n  --- {pair_name} ---')
+
+            try:
+                # Temporarily swap phase column for backtesting
+                df_ml_swap = df_ml.copy()
+                df_ml_swap['phase'] = df_ml_swap['predicted_phase']
+
+                # Run backtest with ML-predicted phases using run_backtests
+                # Only run the best PhaseAware combo
+                result = run_backtests(
+                    df=df_ml_swap,
+                    initial_capital=INITIAL_CAPITAL,
+                    use_atr_sizing=False,
+                    tf_strategy_name='TF4',
+                    mr_strategy_name='MR42'
+                )
+
+                # Extract just the PhaseAware_TF4_MR42 result
+                if 'PhaseAware_TF4_MR42' in result:
+                    ml_backtest_results[pair_name] = result['PhaseAware_TF4_MR42']
+                    print(f'  ✓ {pair_name}: ML backtest complete')
+                else:
+                    print(f'  ✗ {pair_name}: PhaseAware_TF4_MR42 not in results')
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f'  ✗ {pair_name}: ML backtest failed — {e}')
+
+        save_cache(
+            'ml_backtest_results', ml_backtest_results,
+            ml_bt_data_hash, ml_bt_param_hash
+        )
+    else:
+        print('  Loaded ML backtest results from cache.')
+
+    # ── Print and save ML backtest results ────────────────────────────────
+    print('\n  ML Backtest Results Summary (PhaseAware_TF4_MR42_ML):')
+    print(f'  {"Pair":<12} {"Return %":>10} {"Sharpe":>8} '
+          f'{"MaxDD %":>10} {"WinRate %":>10} {"Trades":>8}')
+    print(f'  {"-" * 62}')
+
+    ml_rows = []
+    for pair_name, result in ml_backtest_results.items():
+        print(f'  {pair_name:<12} '
+              f'{result["total_return"]:>10.2f} '
+              f'{result["sharpe_ratio"]:>8.4f} '
+              f'{result["max_drawdown"]:>10.2f} '
+              f'{result["win_rate"]:>10.2f} '
+              f'{result["n_trades"]:>8}')
+        ml_rows.append({
+            'Pair': pair_name,
+            'Strategy': 'PhaseAware_TF4_MR42_ML',
+            'Total Return (%)': result['total_return'],
+            'Sharpe Ratio': result['sharpe_ratio'],
+            'Max Drawdown (%)': result['max_drawdown'],
+            'Win Rate (%)': result['win_rate'],
+            'Profit Factor': result['profit_factor'],
+            'Total Trades': result['n_trades'],
+        })
+
+    ml_df = pd.DataFrame(ml_rows)
+    ml_df.to_csv('results/results_ml_backtest.csv', index=False)
+    print(f'\n  ✓ Saved to results_ml_backtest.csv')
     # ─────────────────────────────────────────
     # 4. RUN BACKTESTS
     # ─────────────────────────────────────────
@@ -437,50 +693,56 @@ def main():
             results_atr       = {}
 
             try:
+                print(f'    [DEBUG] Starting hardcoded backtest for {pair_name}')
+                print(f'    [DEBUG] df shape: {df.shape}, columns: {df.columns.tolist()}')
                 results_hardcoded = run_backtests(
                     df=df,
                     initial_capital=INITIAL_CAPITAL,
                     use_atr_sizing=False
                 )
+                print(f'    [DEBUG] Hardcoded backtest complete: {len(results_hardcoded)} strategies')
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                print(f'  ✗ {pair_name}: backtest failed — {e}')
+                print(f'  ✗ {pair_name}: hardcoded backtest failed — {e}')
 
             try:
+                print(f'    [DEBUG] Starting ATR backtest for {pair_name}')
                 results_atr = run_backtests(
                     df=df,
                     initial_capital=INITIAL_CAPITAL,
                     use_atr_sizing=True
                 )
+                print(f'    [DEBUG] ATR backtest complete: {len(results_atr)} strategies')
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                print
-                (f'  ✗ {pair_name}: backtest failed — {e}')
+                print(f'  ✗ {pair_name}: ATR backtest failed — {e}')
 
-            if results_hardcoded:
+            if results_hardcoded or results_atr:
                 all_pair_results[pair_name] = {
                     **{f'{k}_hardcoded': v
                        for k, v in results_hardcoded.items()},
                     **{f'{k}_atr': v
                        for k, v in results_atr.items()},
                 }
-                print(f'  ✓ {pair_name}: results stored')
+                print(f'  ✓ {pair_name}: results stored ({len(results_hardcoded)} hardcoded + {len(results_atr)} atr)')
             else:
-                print(f'  ✗ {pair_name}: no results stored')
+                print(f'  ✗ {pair_name}: NO RESULTS STORED — both backtests returned empty')
 
             save_cache(
                 'backtest_results', all_pair_results,
                 bt_data_hash, bt_param_hash
             )
-        else:
-            print('  Loaded backtest results from cache.')
+    else:
+        print('  Loaded backtest results from cache.')
 
     # ─────────────────────────────────────────
     # 5. AGGREGATE AND REPORT RESULTS
     # ─────────────────────────────────────────
     print('\n[5/5] Aggregating results and creating visualizations...')
+
+
 
     # Separate hardcoded and ATR results for aggregation
     # Build clean dicts with just strategy_name -> metrics
@@ -498,6 +760,19 @@ def main():
 
     hardcoded_results = extract_sizing(all_pair_results, 'hardcoded')
     atr_results = extract_sizing(all_pair_results, 'atr')
+
+    # ✅ ADD THIS DEBUG BLOCK:
+    print(f'\n  [DEBUG] Before aggregation:')
+    print(f'    loaded_majors: {loaded_majors}')
+    print(f'    loaded_minors: {loaded_minors}')
+    print(f'    hardcoded_results pairs: {list(hardcoded_results.keys())}')
+    print(f'    atr_results pairs: {list(atr_results.keys())}')
+
+    # Check which pairs are in each group
+    majors_in_results = [p for p in loaded_majors if p in hardcoded_results]
+    minors_in_results = [p for p in loaded_minors if p in hardcoded_results]
+    print(f'    Majors with backtest results: {majors_in_results}')
+    print(f'    Minors with backtest results: {minors_in_results}')
 
     # Aggregate by group for both sizing methods
     print('\n--- Hardcoded Size Multipliers ---')
@@ -626,6 +901,7 @@ def main():
     print('  figures/phase_performance.png')
     print('  figures/group_comparison.png')
     print('  figures/equity_curves_*.png')
+
 
 
 if __name__ == '__main__':

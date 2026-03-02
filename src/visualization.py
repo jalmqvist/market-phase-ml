@@ -627,15 +627,7 @@ def plot_key_results(hardcoded_results: dict,
                      loaded_minors: list) -> None:
     """
     The key results figure — shows the core finding of the project.
-
-    Layout:
-        Top row:    Equity curves — Majors average | Minors average
-        Bottom row: Metrics table — Majors         | Minors
-
-    Strategies shown:
-        - PhaseAware_TF4_MR42  (best phase-aware combo)
-        - MR42                 (best standalone MR)
-        - TF4                  (best standalone TF)
+    ...
     """
     _ensure_figures_dir()
 
@@ -663,9 +655,8 @@ def plot_key_results(hardcoded_results: dict,
         },
     }
 
-    # Consistent y-axis range for equity curves
     Y_MIN = 70
-    Y_MAX = 140    # changed from 180
+    Y_MAX = 140
 
     fig, axes = plt.subplots(
         2, 2,
@@ -687,9 +678,10 @@ def plot_key_results(hardcoded_results: dict,
         ha='center',
         fontsize=11,
         style='italic',
-        color='#2c7a2c',       # green to signal this is the main result
+        color='#2c7a2c',
         wrap=True
     )
+
     groups = [
         ('Majors', loaded_majors,  axes[0, 0], axes[1, 0]),
         ('Minors', loaded_minors,  axes[0, 1], axes[1, 1]),
@@ -743,17 +735,27 @@ def plot_key_results(hardcoded_results: dict,
         )
         ax_equity.set_ylabel(
             'Normalised Equity (start = 100)',
-            fontsize=12        # increased font size
+            fontsize=12
         )
         ax_equity.set_xlabel(
             'Date',
-            fontsize=12        # added x-axis label
+            fontsize=12
         )
         ax_equity.set_ylim(Y_MIN, Y_MAX)
         ax_equity.legend(fontsize=9, loc='upper left', framealpha=0.8)
         ax_equity.grid(True, alpha=0.3)
 
         # ── Metrics table ─────────────────────────────────────────────────
+        # Define column labels before the loop
+        col_labels = [
+            'Strategy',
+            'Avg Return',
+            'Avg Sharpe',
+            'Avg Drawdown',
+            'Win Rate',
+            'Profit Factor'
+        ]
+
         table_rows = []
         for strat_name, style in FOCUS_STRATEGIES.items():
             returns, sharpes, drawdowns, win_rates, pfs = [], [], [], [], []
@@ -773,64 +775,65 @@ def plot_key_results(hardcoded_results: dict,
                 continue
 
             table_rows.append([
-                style['label'].split('(')[0].strip(),  # short name
-                f"{np.mean(returns):.0f}%",            # 32.1% -> 32%
-                f"{np.mean(sharpes):.2f}",             # 0.190 -> 0.19
-                f"{np.mean(drawdowns):.0f}%",          # -27.4% -> -27%
-                f"{np.mean(win_rates):.0f}%",          # 62.4% -> 62%
-                f"{np.mean(pfs):.2f}",                 # 1.130 -> 1.13
+                style['label'].split('(')[0].strip(),
+                f"{np.mean(returns):.0f}%",
+                f"{np.mean(sharpes):.2f}",
+                f"{np.mean(drawdowns):.0f}%",
+                f"{np.mean(win_rates):.0f}%",
+                f"{np.mean(pfs):.2f}",
             ])
 
-        col_labels = [
-            'Strategy',
-            'Avg Return',
-            'Avg Sharpe',
-            'Avg Drawdown',
-            'Win Rate',
-            'Profit Factor'
-        ]
-
-        ax_table.axis('off')
-        table = ax_table.table(
-            cellText=table_rows,
-            colLabels=col_labels,
-            loc='center',
-            cellLoc='center'
-        )
-        table.auto_set_font_size(False)
-        table.set_fontsize(10)     # slightly larger font
-        table.scale(1, 2.0)       # slightly more row height
-
-        # Color rows — fixed: check rowB0B (strategy name) not full row
-        for row_idx, row in enumerate(table_rows):
-            for col_idx in range(len(col_labels)):
-                cell = table[row_idx + 1, col_idx]
-                if 'PhaseAware' in row[0]:     # rowB0B = strategy name
-                    cell.set_facecolor('#d4edda')   # light green
-                elif 'TF4' in row:
-                    cell.set_facecolor('#d6eaf8')   # light blue
-                else:
-                    cell.set_facecolor('#fde8e8')   # light red
-
-        # Color header row
-        for col_idx in range(len(col_labels)):
-            table[0, col_idx].set_facecolor('#2c3e50')
-            table[0, col_idx].set_text_props(
-                color='white', fontweight='bold'
+        # Only create table if there are rows to display
+        if table_rows:
+            ax_table.axis('off')
+            table = ax_table.table(
+                cellText=table_rows,
+                colLabels=col_labels,
+                loc='center',
+                cellLoc='center'
             )
+            table.auto_set_font_size(False)
+            table.set_fontsize(10)
+            table.scale(1, 2.0)
 
-        ax_table.set_title(
-            f'{group_label} — Average Metrics ({len(pairs)} pairs)',
-            fontsize=11,
-            pad=10
-        )
+            # Color rows
+            for row_idx, row in enumerate(table_rows):
+                for col_idx in range(len(col_labels)):
+                    cell = table[row_idx + 1, col_idx]
+                    if 'PhaseAware' in row[0]:
+                        cell.set_facecolor('#d4edda')
+                    elif 'TF4' in row[0]:
+                        cell.set_facecolor('#d6eaf8')
+                    else:
+                        cell.set_facecolor('#fde8e8')
+
+            # Color header row
+            for col_idx in range(len(col_labels)):
+                table[0, col_idx].set_facecolor('#2c3e50')
+                table[0, col_idx].set_text_props(
+                    color='white', fontweight='bold'
+                )
+
+            ax_table.set_title(
+                f'{group_label} — Average Metrics ({len(pairs)} pairs)',
+                fontsize=11,
+                pad=10
+            )
+        else:
+            ax_table.axis('off')
+            ax_table.text(
+                0.5, 0.5,
+                'No data available for this group',
+                ha='center', va='center',
+                transform=ax_table.transAxes,
+                fontsize=11
+            )
 
     plt.tight_layout()
     out_path = FIGURES_DIR / 'key_results.png'
     plt.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f'✓ Saved {out_path}')
-
 
 # ---------------------------------------------------------------------------
 # Module-level functions (multi-pair visualizations)
