@@ -30,10 +30,9 @@ from src.strategies import PhaseAwareStrategy
 # clear_cache('processed_data')
 # clear_cache('backtest_results')
 # clear_cache('ml_results')
-# clear_cache('ml_predicted_phases')
-# clear_cache('ml_backtest_results')
+#clear_cache('ml_predicted_phases')
+#clear_cache('ml_backtest_results')
 # clear_cache()   # clears everything
-clear_cache('ml_backtest_results')
 # ─────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────
@@ -737,12 +736,11 @@ def main():
     else:
         print('  Loaded backtest results from cache.')
 
+
     # ─────────────────────────────────────────
     # 5. AGGREGATE AND REPORT RESULTS
     # ─────────────────────────────────────────
     print('\n[5/5] Aggregating results and creating visualizations...')
-
-
 
     # Separate hardcoded and ATR results for aggregation
     # Build clean dicts with just strategy_name -> metrics
@@ -761,18 +759,49 @@ def main():
     hardcoded_results = extract_sizing(all_pair_results, 'hardcoded')
     atr_results = extract_sizing(all_pair_results, 'atr')
 
-    # ✅ ADD THIS DEBUG BLOCK:
-    print(f'\n  [DEBUG] Before aggregation:')
-    print(f'    loaded_majors: {loaded_majors}')
-    print(f'    loaded_minors: {loaded_minors}')
-    print(f'    hardcoded_results pairs: {list(hardcoded_results.keys())}')
-    print(f'    atr_results pairs: {list(atr_results.keys())}')
+    # ─────────────────────────────────────────
+    # 4b. TRAIN STRATEGY SELECTOR (ML)
+    # ─────────────────────────────────────────
+    print('\n[4b/5] Training strategy selector ML...')
+    print('  (Predicting strategy TYPE: TrendFollowing vs MeanReversion vs PhaseAware)')
 
-    # Check which pairs are in each group
-    majors_in_results = [p for p in loaded_majors if p in hardcoded_results]
-    minors_in_results = [p for p in loaded_minors if p in hardcoded_results]
-    print(f'    Majors with backtest results: {majors_in_results}')
-    print(f'    Minors with backtest results: {minors_in_results}')
+    from src.models import StrategyPerformanceTracker, StrategySelector
+
+    selector_trained = {}
+
+    for pair_name, df in processed_data.items():
+        print(f'\n  --- {pair_name} ---')
+
+        try:
+            # Get backtest results for this pair
+            pair_backtest = hardcoded_results.get(pair_name, {})
+            if not pair_backtest:
+                print(f'    ✗ No backtest results available')
+                continue
+
+            # Track which strategy won in rolling windows
+            tracker = StrategyPerformanceTracker(window_days=20)
+            training_data = tracker.compute_strategy_returns(df, pair_backtest)
+
+            # Train selector model (3-class: TF vs MR vs PhaseAware)
+            selector = StrategySelector()
+            metrics = selector.train(training_data)
+
+            if metrics:
+                selector_trained[pair_name] = selector
+                print(f'    ✓ Model trained: CV accuracy {metrics["cv_accuracy"]:.4f}')
+            else:
+                print(f'    ✗ Training failed')
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f'    ✗ {pair_name}: selector training failed — {e}')
+
+    if selector_trained:
+        print(f'\n✓ Strategy selectors trained for {len(selector_trained)} pairs')
+    else:
+        print(f'✗ No strategy selectors trained')
 
     # Aggregate by group for both sizing methods
     print('\n--- Hardcoded Size Multipliers ---')

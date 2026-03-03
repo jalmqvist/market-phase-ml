@@ -773,5 +773,269 @@ def smooth_phase_labels(phase_series: pd.Series,
             candidate     = new_phase
             candidate_len = 1
             smoothed.iat[i] = current_phase
-
     return smoothed
+
+class StrategyPerformanceTracker:
+    """
+    Tracks per-strategy performance in rolling windows.
+    Used to train the strategy selector ML model.
+
+    For each bar, we collect:
+    - Current market state (ADX, ATR%, phase, etc.)
+    - Which strategy performed best over next N bars
+
+    This creates training data for: "Given this phase and these indicators,
+    which strategy (TF4, MR42, TF5, PhaseAware_TF4_MR42) will win?"
+    """
+
+    def __init__(self, window_days: int = 20):
+        """
+        Args:
+            window_days: Number of bars ahead to measure performance
+                        (default 20 = ~1 trading month)
+        """
+        self.window_days = window_days
+
+    def compute_strategy_returns(self,
+                                 df: pd.DataFrame,
+                                 strategy_results: dict) -> pd.DataFrame:
+        """
+        For each bar, compute which strategy had the best return
+        over the next window_days bars.
+
+        Args:
+            df:                 Processed DataFrame with phases
+            strategy_results:   Dict of strategy backtest results
+                               (from run_backtests)
+
+        Returns:
+            DataFrame with columns:
+            - phase: current phase
+            - adx, atr_pct, returns: features
+            - best_strategy: which strategy won (target variable)
+            - strategy_returns_*: returns for each strategy (for analysis)
+        """
+        training_data = []
+
+        # Get equity curves for each strategy
+        equity_curves = {
+            name: results['equity_curve']
+            for name, results in strategy_results.items()
+        }
+
+        # Align all equity curves to same index
+        eq_df = pd.concat(equity_curves, axis=1)
+        eq_df.columns = list(equity_curves.keys())
+        eq_df = eq_df.ffill()
+
+        # For each bar, look ahead window_days
+        for i in range(len(df) - self.window_days - 1):
+            current_idx = df.index[i]
+            lookahead_idx = df.index[i + self.window_days]
+
+            # Current bar features
+            row = {
+                'date': current_idx,
+                'phase': df['phase'].iloc[i],
+                'adx': df['adx'].iloc[i],
+                'atr_pct': df['atr_pct'].iloc[i],
+                'plus_di': df['plus_di'].iloc[i],
+                'minus_di': df['minus_di'].iloc[i],
+                'rsi': df['rsi'].iloc[i],
+                'returns_recent': df['returns'].iloc[max(0, i - 5):i].mean(),
+                'volatility_recent': df['atr_pct'].iloc[max(0, i - 5):i].mean(),
+            }
+
+            # Strategy returns over next window_days
+            for strategy_name in equity_curves.keys():
+                eq_current = eq_df[strategy_name].iloc[i]
+                eq_future = eq_df[strategy_name].iloc[i + self.window_days]
+                ret = (eq_future - eq_current) / eq_current
+                row[f'{strategy_name}_return'] = ret
+
+            # Which strategy had best return?
+            strategy_returns = {
+                name: row[f'{name}_return']
+                for name in equity_curves.keys()
+            }
+            best_strategy = max(strategy_returns, key=strategy_returns.get)
+
+            row['best_strategy'] = best_strategy
+            row['best_return'] = strategy_returns[best_strategy]
+
+            training_data.append(row)
+
+        return pd.DataFrame(training_data)
+
+
+class StrategySelector:
+    """
+    ML model to select which strategy TYPE to run given current market state.
+
+    Predicts: TrendFollowing vs MeanReversion vs PhaseAware
+    (3-class problem, much more learnable than 31-class)
+    """
+
+    def __init__(self, random_state: int = 42):
+        self.model = None
+        self.label_encoder = None
+        self.feature_cols = None
+        self.random_state = random_state
+
+    def get_feature_columns(self) -> list:
+        """Features used for prediction."""
+        return [
+            'adx',
+            'atr_pct',
+            'plus_di',
+            'minus_di',
+            'rsi',
+            'returns_recent',
+            'volatility_recent',
+        ]
+
+    @staticmethod
+    def _strategy_to_category(strategy_name: str) -> str:
+        """Map strategy name to category."""
+        if strategy_name.startswith('TF'):
+            return 'TrendFollowing'
+        elif strategy_name.startswith('MR'):
+            return 'MeanReversion'
+        elif strategy_name.startswith('PhaseAware'):
+            return 'PhaseAware'
+        else:
+            return None
+
+    def train(self, training_data: pd.DataFrame) -> dict:
+        """
+        Train the strategy TYPE selector model.
+
+        Args:
+            training_data: Output from StrategyPerformanceTracker.compute_strategy_returns()
+
+        Returns:
+            Dict with training metrics
+        """
+        from sklearn.preprocessing import LabelEncoder, StandardScaler
+        from sklearn.model_selection import cross_val_score
+
+        # Get base training data
+        train_df = training_data.dropna(subset=self.get_feature_columns() + ['best_strategy'])
+
+        if len(train_df) < 100:
+            print(f"  ✗ Too few training samples ({len(train_df)})")
+            return {}
+
+        X = train_df[self.get_feature_columns()].copy()
+        y_strategy = train_df['best_strategy'].copy()
+
+        # ✅ Map 31 strategies to 3 categories
+        y_category = y_strategy.apply(self._strategy_to_category)
+
+        # Remove rows where category is None
+        valid_mask = y_category.notna()
+        X = X[valid_mask]
+        y_category = y_category[valid_mask]
+
+        if len(X) < 50:
+            print(f"  ✗ Too few valid samples ({len(X)})")
+            return {}
+
+        # Encode categories
+        self.label_encoder = LabelEncoder()
+        y_encoded = self.label_encoder.fit_transform(y_category)
+
+        # Scale features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        # Train XGBoost classifier
+        self.model = xgb.XGBClassifier(
+            n_estimators=100,
+            max_depth=4,
+            learning_rate=0.1,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=self.random_state,
+            eval_metric='mlogloss',
+            verbosity=0
+        )
+        self.model.fit(X_scaled, y_encoded)
+        self.feature_cols = self.get_feature_columns()
+
+        # Cross-validation score
+        cv_scores = cross_val_score(
+            self.model, X_scaled, y_encoded, cv=3, scoring='accuracy'
+        )
+
+        print(f'\n  StrategySelector Training (3-class):')
+        print(f'    Samples: {len(X)}')
+        print(f'    Accuracy (CV): {cv_scores.mean():.4f} (±{cv_scores.std():.4f})')
+        print(f'    Categories: {list(self.label_encoder.classes_)}')
+
+        # Feature importance
+        importance = pd.DataFrame({
+            'feature': self.feature_cols,
+            'importance': self.model.feature_importances_
+        }).sort_values('importance', ascending=False)
+
+        print(f'\n  Top 5 features:')
+        for _, row in importance.head(5).iterrows():
+            print(f'    {row["feature"]:<20} {row["importance"]:.4f}')
+
+        return {
+            'cv_accuracy': cv_scores.mean(),
+            'cv_std': cv_scores.std(),
+            'n_samples': len(X),
+            'categories': list(self.label_encoder.classes_)
+        }
+
+    def predict(self, features_df: pd.DataFrame) -> str:
+        """
+        Predict best strategy TYPE given current market state.
+
+        Args:
+            features_df: DataFrame with one row, columns matching get_feature_columns()
+
+        Returns:
+            Strategy type: 'TrendFollowing', 'MeanReversion', or 'PhaseAware'
+        """
+        if self.model is None:
+            raise ValueError("Model not trained. Call train() first.")
+
+        from sklearn.preprocessing import StandardScaler
+
+        X = features_df[self.feature_cols].copy()
+        if X.isnull().any().any():
+            return None
+
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        y_pred_encoded = self.model.predict(X_scaled)[0]
+        y_pred = self.label_encoder.inverse_transform([y_pred_encoded])[0]
+
+        return y_pred
+
+    def predict_proba(self, features_df: pd.DataFrame) -> dict:
+        """
+        Predict probability distribution over strategy types.
+
+        Useful for weighted portfolio allocation.
+
+        Returns:
+            Dict: {strategy_type: probability}
+        """
+        if self.model is None:
+            raise ValueError("Model not trained. Call train() first.")
+
+        from sklearn.preprocessing import StandardScaler
+
+        X = features_df[self.feature_cols].copy()
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        probs = self.model.predict_proba(X_scaled)[0]
+        return {
+            strategy: prob
+            for strategy, prob in zip(self.label_encoder.classes_, probs)
+        }
