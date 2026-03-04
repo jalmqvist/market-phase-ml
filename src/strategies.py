@@ -1107,6 +1107,7 @@ class Backtester:
         Returns:
             Dictionary with performance metrics, trade list, equity curve
         """
+
         # Default to no SL/TP if not provided
         if sl_pct_series is None:
             sl_pct_series = pd.Series(0.0, index=df.index)
@@ -1140,7 +1141,11 @@ class Backtester:
                 current_close = float(df['Close'].iloc[i])
                 current_high  = float(df['High'].iloc[i])
                 current_low   = float(df['Low'].iloc[i])
-                signal        = float(signals[i - 1])  # previous bar signal # not iloc
+                # If signals is a pandas Series/DataFrame column use positional indexing; else list/np array works with []
+                if hasattr(signals, "iloc"):
+                    signal = float(signals.iloc[i - 1])
+                else:
+                    signal = float(signals[i - 1])
                 phase         = str(df['phase'].iloc[i])
                 atr           = float(df['atr'].iloc[i])
                 stop_atr_mult = float(df['stop_atr_mult'].iloc[i])
@@ -1292,9 +1297,16 @@ class Backtester:
                     entry_position_size  = float(position_size)
                     entry_stop_distance  = float(stop_distance)
 
-                    # Compute SL/TP price levels from entry bar's series values
-                    bar_sl_pct = float(sl_pct_series[i])    # lists, no .iloc
-                    bar_tp_pct = float(tp_pct_series[i])    # lists, no .iloc
+                    # Compute SL/TP price levels from entry bar's series values (position-based)
+                    if hasattr(sl_pct_series, "iloc"):
+                        bar_sl_pct = float(sl_pct_series.iloc[i])
+                    else:
+                        bar_sl_pct = float(sl_pct_series[i])
+
+                    if hasattr(tp_pct_series, "iloc"):
+                        bar_tp_pct = float(tp_pct_series.iloc[i])
+                    else:
+                        bar_tp_pct = float(tp_pct_series[i])
 
                     use_sl = bar_sl_pct > 0.0
                     use_tp = bar_tp_pct > 0.0
