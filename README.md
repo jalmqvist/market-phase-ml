@@ -1,321 +1,294 @@
-# Market Phase-Based Strategy Selection
+# Market Phase–Based Strategy Selection (Regime-Aware Time Series Gating)
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-latest-orange)
 ![XGBoost](https://img.shields.io/badge/XGBoost-latest-green)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-## Overview
+---
 
-This project investigates whether **market phase detection enables better trading strategy selection**, leading to improved risk-adjusted trading performance compared to single-strategy approaches.
+A regime-aware **time-series ML pipeline** that uses rule-based regime labeling plus an **XGBoost gating model** (mixture-of-experts) to select among expert policies. Includes leakage-safe evaluation, ablation experiments, cached pipeline runs, and reproducible CSV outputs.
 
-The core insight is that financial markets behave fundamentally differently depending on their current phase. Rather than using one strategy for all conditions, we select the optimal strategy based on the detected phase:
+---
 
-| Phase      | Volatility | Trend | Strategy        | Position Size |
-| ---------- | ---------- | ----- | --------------- | ------------- |
-| LV_Trend   | Low        | Yes   | Trend Following | Large (1.5x)  |
-| HV_Trend   | High       | Yes   | Trend Following | Small (0.5x)  |
-| LV_Ranging | Low        | No    | Mean Reversion  | Medium (1.0x) |
-| HV_Ranging | High       | No    | Mean Reversion  | Small (0.5x)  |
+## Quickstart
 
-## Key Finding
+```bash
+pip install -r requirements.txt
+python main.py
+```
 
-### Best Strategy: PhaseAware_TF5_MR42
+Key outputs:
+- `results/ablation_summary_aggregate.csv` (headline ablation numbers)
+- `results/ablation_summary_per_pair.csv` (per-pair breakdown)
 
-**PhaseAware_TF5_MR42** significantly outperforms standalone strategies on major pairs (hardcoded sizing):
+---
 
-| Strategy              | Total Return | Sharpe | Max Drawdown | Win Rate | Profit Factor |
-| -------------------- | ------------ | ------ | ------------ | -------- | ------------- |
-| **PhaseAware_TF5_MR42** | **+39.92%**  | **0.164** | **-30.56%**  | **59.38%** | **1.113**     |
-| PhaseAware_TF4_MR42  | +37.88%      | 0.217  | -27.43%      | 62.44%   | 1.130         |
-| MR42 (standalone)    | +38.26%      | 0.123  | -42.12%      | 68.00%   | 1.056         |
-| TF4 (standalone)     | +7.09%       | 0.035  | -22.02%      | 52.10%   | 1.047         |
+## Why this project
 
-### With ATR Constant-Risk Sizing
+This repository demonstrates a **regime-aware time series decision pipeline** that routes between multiple “expert” policies (trend-following vs mean-reversion) using:
 
-The same strategies perform even better with position sizing scaled by ATR (targeting 1% risk per trade):
+1) **Rule-based regime detection** (volatility + trend strength), and  
+2) An **ML gating model** (XGBoost) that predicts which policy family is likely to perform best over a fixed horizon.
 
-| Strategy              | Total Return | Sharpe | Max Drawdown |
-| -------------------- | ------------ | ------ | ------------ |
-| **PhaseAware_TF5_MR42** | **+61.12%**  | **0.222** | **-42.85%**  |
-| PhaseAware_TF4_MR42  | +43.98%      | 0.184  | -42.49%      |
-| MR42 (standalone)    | **+84.05%**  | **0.264** | -46.03%      |
+Although the domain is trading, the core pattern is broadly applicable to real-world ML systems:
 
-### Key Insights
+- **context-aware policy selection**
+- **mixture-of-experts / gating networks**
+- **non-stationary time series evaluation**
+- **leakage-safe model training**
+- **reproducible experiment artifacts (CSV outputs + cached pipeline)**
 
-✅ **Phase-aware routing adds ~10-15% Sharpe improvement** over standalone strategies  
-✅ **Major pairs are profitable**, minor pairs are not (avoid trading minors)  
-❌ **ML phase prediction underperforms rule-based detection** — simple ADX + volatility median is better  
-🚀 **Strategy selector ML** trained on 3-class problem (TF vs MR vs PhaseAware) — CV accuracy 39.5% (vs 33.3% baseline)
+> Goal: show end-to-end ML engineering and experimental discipline on a regime-switching time series problem, not “promise profits”.
 
-## Phase Detection Method
+---
+
+## Key Results (Ablation)
+
+Across **14 FX pairs** using ~20 years of daily data, the ML gating approach improves risk-adjusted performance versus fixed-policy and rule-based routing baselines:
+
+| Variant                | Description                                 | Avg Return | Avg Sharpe | Avg Max DD | Pairs |
+| ---------------------- | ------------------------------------------- | ---------: | ---------: | ---------: | ----: |
+| A0_TF4                 | Fixed policy (TrendFollowing only)          |     -4.16% |     -0.055 |    -25.34% |    14 |
+| A1_MR42                | Fixed policy (MeanReversion only)           |    +15.88% |     +0.071 |    -42.03% |    14 |
+| A2_PhaseAware_TF4_MR42 | Rule-based routing using detected regimes   |    +19.40% |     +0.133 |    -28.72% |    14 |
+| A3_DynamicSelector     | ML gating model selects policy type per bar |    +68.45% |     +0.282 |    -27.95% |    14 |
+
+Reproducible artifacts (generated by `python main.py`):
+- `results/ablation_summary_per_pair.csv`
+- `results/ablation_summary_aggregate.csv`
+- `results/dynamic_selector_results_per_pair.csv`
+- `results/baseline_vs_dynamic_comparison.csv`
+
+Notes / limitations:
+- Some pairs degrade under ML gating (e.g., EURCHF, GBPJPY in one run). See “Limitations & future work”.
+- Results depend on backtest assumptions (costs, execution model, data source).
+- Ablations shown above use hardcoded position sizing and the default backtest cost model (see `main.py`).
+
+---
+
+### Run metadata (for reproducibility)
+
+- **Data source:** Yahoo Finance (`yfinance`)
+
+- **Instruments:** 14 FX pairs (7 majors + 7 minors)
+
+- **Bar size:** Daily (D1)
+
+- **Date range:** 2005-01-01 to 2024-12-31
+
+- **Backtest execution model:** enter on next bar close after signal; no pyramiding; no partial closes
+
+- **Transaction costs (defaults):** spread=1.0 pip, slippage=0.5 pip, commission=$0 per trade (round-trip costs applied at entry and exit)
+
+- **Position sizing shown in ablations:** hardcoded multipliers (`use_atr_sizing=False`, initial capital $10,000)
+
+- **Output artifacts:** CSV tables written to `results/` (see “Reproducibility”)
+
+- **All results generated locally** via `python main.py`.
+
+  ---
+
+## System overview (high-level architecture)
+
+**Pipeline:**
+
+1. Download OHLCV (Yahoo Finance via `yfinance`)
+2. Feature engineering (trend/volatility/momentum + “recent” features)
+3. **Regime labeling** (rule-based market phase)
+4. Backtest expert strategies (TF suite, MR suite, PhaseAware router)
+5. Build supervised dataset: features → best strategy type label
+6. Train **StrategySelector** (XGBoost) with leakage-safe cross-validation
+7. Run **StrategySelector_Dynamic** in the backtester and compare to baselines
+8. Export results to CSV + generate figures
+
+This is essentially a **gating model** that decides which expert policy to execute at each time step.
+
+---
+
+## Phase detection (rule-based regime labeling)
 
 Markets are classified into four phases using two dimensions:
 
-### 1. Volatility (ATR%)
+### 1) Volatility (ATR%)
+- Compute ATR as a % of price (ATR%)
+- Compare ATR% to a rolling median (252 bars ≈ 1 trading year):
+  - **High Volatility (HV):** ATR% ≥ rolling median ATR%
+  - **Low Volatility (LV):**  ATR% < rolling median ATR%
 
-Current ATR expressed as a percentage of price, compared to its rolling median (252 bars = 1 trading year):
+### 2) Trend strength (ADX)
+- **Trending:** ADX(14) > 25  
+- **Ranging:**  ADX(14) ≤ 25
 
-- **High Volatility (HV)**: ATR% ≥ rolling median ATR%
-- **Low Volatility (LV)**:  ATR% < rolling median ATR%
+This yields: `HV_Trend`, `LV_Trend`, `HV_Ranging`, `LV_Ranging`.
 
-This adaptive approach normalizes volatility across pairs with different price levels (e.g., USDJPY ~150 vs EURUSD ~1.10).
+---
 
-### 2. Trend Strength (ADX)
-
-- **Trending**: ADX(14) > 25 (stricter than standard 20 to reduce false trends)
-- **Ranging**:  ADX(14) ≤ 25
-
-This gives four phases: **HV_Trend, LV_Trend, HV_Ranging, LV_Ranging**.
-
-Reference: Kaufman, "Trading Systems and Methods" (5th ed., pg 854)
-
-## Strategies
+## Expert strategies (the “experts” in mixture-of-experts)
 
 ### Trend Following Suite (TF1–TF5)
+All TF strategies use crossover detection to avoid immediate re-entry whipsaws.
 
-All strategies use crossover detection to avoid re-entry whipsaws:
-
-| Strategy | Entry Logic                                    | Exit Logic                        |
-| -------- | ---------------------------------------------- | --------------------------------- |
-| TF1      | Close outside LWMA ± σ×StdDev band             | Close crosses back inside band    |
-| TF2      | Donchian channel breakout (new N-day high/low) | Trailing channel exit             |
-| TF3      | SMA(9) crosses above/below SMA(26)             | Opposite crossover                |
-| TF4      | LWMA(40) rising/falling + Stochastic extreme   | Trailing stochastic exit          |
-| TF5      | Close outside Bollinger Band (σ=1.0, 20 bars)  | Close crosses back through center |
+| Strategy | Entry Logic                              | Exit Logic                     |
+| -------- | ---------------------------------------- | ------------------------------ |
+| TF1      | Close outside LWMA ± σ×StdDev band       | Close crosses back inside band |
+| TF2      | Donchian channel breakout                | Trailing channel exit          |
+| TF3      | SMA(9) crosses SMA(26)                   | Opposite crossover             |
+| TF4      | LWMA(40) slope + Stochastic extreme      | Trailing stochastic exit       |
+| TF5      | Bollinger Band breakout (σ=1.0, 20 bars) | Revert through center          |
 
 ### Mean Reversion Suite (MR1–MR5)
+All MR strategies use explicit stop-loss and take-profit series.
 
-All strategies use fixed stop-loss and take-profit levels:
+| Strategy | Entry Logic                        | Exit Logic                  |
+| -------- | ---------------------------------- | --------------------------- |
+| MR1      | Fade LWMA ± σ×StdDev               | 2% SL / 2% TP               |
+| MR2      | Stochastic extreme + momentum turn | Stochastic crosses 50       |
+| MR3      | RSI extremes                       | 1% SL / 3% TP               |
+| MR32     | RSI extreme + MA(200) filter       | RSI crosses 60/40 + 2.5% SL |
+| MR42     | BB(20,2) breakout + ADX<20         | 2.5% SL / 1.25% TP          |
+| MR5      | BB(20,2) breakout                  | 2% SL / 2% TP               |
 
-| Strategy | Entry Logic                                   | Exit Logic                  |
-| -------- | --------------------------------------------- | --------------------------- |
-| MR1      | Close outside LWMA ± σ×StdDev (fade the move) | 2% SL / 2% TP               |
-| MR2      | Stochastic(2,3,1) extreme + momentum turning  | Stochastic crosses 50       |
-| MR3      | RSI(14) crosses above 25 or below 75          | 1% SL / 3% TP               |
-| MR32     | RSI(14) extreme + price above/below MA(200)   | RSI crosses 60/40 + 2.5% SL |
-| MR42     | BB(20,2) breakout + ADX(14) < 20 filter       | 2.5% SL / 1.25% TP          |
-| MR5      | BB(20,2) breakout (no ADX filter)             | 2% SL / 2% TP               |
+### Rule-based routing: PhaseAware
+Routes each bar to either a TF or MR strategy based on the detected regime:
+- `HV_Trend, LV_Trend` → TrendFollowing expert
+- `HV_Ranging, LV_Ranging` → MeanReversion expert
 
-### Phase-Aware Strategy (PhaseAware)
+All TF×MR combinations are backtested automatically.
 
-Routes each bar to either a TF or MR strategy based on detected phase:
+---
 
-- **HV_Trend, LV_Trend** → Use selected TF strategy with reduced position size
-- **HV_Ranging, LV_Ranging** → Use selected MR strategy with appropriate position size
+## Machine learning: StrategySelector (gating model)
 
-All 30 TF×MR combinations (TF1-5 × MR1-5) are backtested automatically.
+### What it predicts
+A supervised classifier predicts which **strategy type** is most likely to perform best over the next fixed horizon:
 
-## Machine Learning Component
+- `TrendFollowing`
+- `MeanReversion`
+- `PhaseAware` (rule-based router)
 
-### StrategySelector: 3-Class Predictor
+### Features (examples)
+- ADX, ATR%, RSI, DI+/DI-
+- recent returns and recent volatility features
+- (plus any engineered indicators from `src/phases.py` / `src/models.py`)
 
-A supervised ML model predicts which **strategy type** will perform best in the next 20 bars:
+### Training & evaluation (leakage-safe)
+- Model: XGBoost classifier
+- Cross-validation is performed with a **Pipeline** (scaler + model) to avoid leakage
+- Final scaler is persisted and reused for inference (no refitting during prediction)
 
-- **TrendFollowing** — enter trend-following strategies
-- **MeanReversion** — enter mean-reversion strategies
-- **PhaseAware** — use phase-aware routing
+### Online use in backtesting
+`StrategySelector_Dynamic`:
+- predicts a strategy type per bar
+- uses precomputed expert signals (performance optimization)
+- executes the selected expert’s signal on that bar
 
-**Training:**
-- 5000+ samples per pair (daily OHLCV data, 20 years)
-- Features: ADX, ATR%, RSI, DI, recent returns, recent volatility
-- Model: XGBoost (100 estimators, max_depth=4)
-- CV Accuracy: **39.5%** (vs 33.3% random baseline, +18% improvement)
+---
 
-**Status:** Models trained for all 14 pairs; integration into backtester in progress.
+## Backtest assumptions & cost model
 
-### Discontinued: Phase Prediction ML
+**Execution model**
+- Daily OHLCV data
+- Enter at the *next bar close* after a signal is generated
+- No pyramiding / no partial closes
 
-Initial attempt to use ML to predict next bar's market phase achieved only 57-59% accuracy (vs 94%+ rule-based baseline). Conclusion: **Phase transitions are too rare and Markovian** — simple rule-based detection is optimal.
+**Transaction costs (defaults)**
+- Spread: **1.0 pip**
+- Slippage: **0.5 pip**
+- Commission: **$0 per trade**
+- Costs are applied at **both entry and exit** (round-trip cost modeled as a fraction of price)
 
-## Results Summary (Hardcoded Position Sizing)
+**Position sizing**
+- Two sizing modes are supported:
+  - **Hardcoded multipliers** (`use_atr_sizing=False`): signal magnitude encodes a size multiplier (legacy mode, used for the main ablations shown in this README)
+  - **ATR constant-risk sizing** (`use_atr_sizing=True`): targets a constant fraction of equity risked per trade (default `risk_pct=1%`)
 
-### Major Pairs (EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, USDCAD, NZDUSD)
+See implementation details in `src/strategies.py` (`Backtester`).
 
-**Best strategies:**
-- PhaseAware_TF5_MR42: +39.92% return, 0.164 Sharpe, -30.56% max DD
-- PhaseAware_TF2_MR42: +44.95% return, 0.128 Sharpe, -32.79% max DD
-- MR42 standalone: +38.26% return, 0.123 Sharpe, -42.12% max DD
+---
 
-**Average across all strategies:**
-- Win rate: 48-68% (trend following lower, mean reversion higher)
-- Sharpe ratio: -0.15 to +0.22
-- Max drawdown: -14% to -46%
+## Archived experiment: ML phase prediction (negative result)
+A separate model attempted to predict the next bar’s market phase. It underperformed rule-based phase detection and was discontinued.
 
-### Minor Pairs (EURGBP, EURJPY, EURCHF, GBPJPY, AUDJPY, EURAUD, GBPAUD)
+This is included intentionally as an engineering lesson:
+> Not all components benefit from ML. When an interpretable rule baseline is strong and transitions are rare, simpler methods can dominate.
 
-⚠️ **Not recommended for trading:**
-- Best strategy: PhaseAware_TF4_MR42: +3.38% return, 0.051 Sharpe
-- Most strategies: negative or near-zero returns
-- High drawdowns (-32% to -68%)
+---
 
-## Project Structure
+## Reproducibility
+
+### Run
+```bash
+python main.py
+```
+
+### Outputs
+- `results/` — CSV tables including ablations and comparisons
+- `figures/` — generated charts (optional / may evolve)
+
+### Caching
+The pipeline uses caching to speed up iteration. If you want a clean run, clear cached files (see `src/cache.py` and any `clear_cache(...)` calls in `main.py`).
+
+---
+
+## Project structure
 
 ```
 market-phase-ml/
-│
-├── README.md                           ← This file
-├── requirements.txt
-├── .gitignore
-├── main.py                             ← Main pipeline
-│
+├── main.py
 ├── src/
-│   ├── __init__.py
-│   ├── data.py                         ← MarketDataPipeline
-│   ├── phases.py                       ← MarketPhaseDetector
-│   ├── strategies.py                   ← TF1-5, MR1-5, PhaseAware
-│   ├── models.py                       ← StrategyPerformanceTracker, StrategySelector
-│   ├── cache.py                        ← Hash-based caching system
-│   └── visualization.py                ← All plotting functions
-│
-├── data/
-│   ├── raw/                            ← Downloaded OHLCV (cached)
-│   ├── processed/                      ← Phase-detected, engineered (cached)
-│   └── cache/                          ← Pickle files for fast re-runs
-│
-├── figures/                            ← Generated PNG charts
-│   ├── phases_overview.png
-│   ├── phase_statistics.png
-│   ├── backtest_results.png
-│   ├── phase_performance.png
-│   ├── group_comparison.png
-│   ├── equity_curves_*.png
-│   └── key_results.png
-│
-└── results/                            ← CSV results files
-    ├── results_per_pair.csv
-    ├── results_majors.csv
-    ├── results_minors.csv
-    ├── results_summary.csv
-    ├── results_ml.csv
-    ├── results_ml_backtest.csv
-    └── results_majors_atr.csv
+│   ├── data.py              # data pipeline (download/prepare)
+│   ├── phases.py            # regime labeling (rule-based)
+│   ├── strategies.py        # expert strategies + routers + backtester helpers
+│   ├── models.py            # StrategySelector training/inference
+│   ├── cache.py             # caching utilities
+│   └── visualization.py     # plotting
+├── results/                 # CSV artifacts (ablations, comparisons)
+└── figures/                 # plots (optional)
 ```
 
-## Installation
+---
 
-```bash
-git clone https://github.com/jalmqvist/market-phase-ml
-cd market-phase-ml
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-venv\Scripts\activate     # Windows
-pip install -r requirements.txt
-```
+## Engineering highlights
+- end-to-end ML pipeline for a non-stationary time series decision problem
+- leakage-safe CV and persisted preprocessing for inference consistency
+- ablation design (fixed policy vs rule gating vs ML gating)
+- performance optimization (precomputing signals to avoid O(N²) loops)
+- reproducible artifacts (CSV outputs) suitable for CI and reporting
 
-## Usage
+---
+## Skills demonstrated
 
-```bash
-# Run complete analysis pipeline (backtests + ML + visualizations)
-python main.py
+- Time-series ML & non-stationarity: regime-aware modeling, horizon-based labeling
+- Leakage-safe evaluation: scaler + model pipelines in cross-validation
+- ML system design: mixture-of-experts / gating model over expert policies
+- Reproducibility: cached pipeline + CSV artifacts for experiment tracking
+- Performance engineering: reduced O(N²) signal generation by precomputing expert outputs
+- Practical modeling: XGBoost + interpretable rule baselines; documented negative results
+---
+## Limitations & future work
+- Walk-forward evaluation / stricter time-based splits for the selector (reduce the risk of temporal leakage in dataset construction)
+- Confidence thresholds to reduce strategy churn and improve worst-case pairs
+- Sensitivity analysis on transaction costs and slippage
+- Additional gating approaches (e.g., calibrated probabilities, bandit-style selection)
 
-# Output: 
-#   - figures/ directory with PNG charts
-#   - results/ directory with CSV summary tables
-#   - Console output with detailed metrics
-```
+---
 
-### Pipeline Steps
+## Background
+This project is based on a trading system I originally implemented in MQL4 (MetaTrader) and later reworked into a Python research/engineering pipeline for reproducible experimentation.
 
-1. **[1/5] Download & prepare** — Fetch 20 years daily OHLCV from Yahoo Finance
-2. **[2/5] Phase detection** — Detect HV/LV and Trend/Ranging using ADX + ATR%
-3. **[3/5] ML phase prediction** — Train walk-forward XGBoost to predict next phase
-4. **[3b/5] ML backtest** — Test PhaseAware_TF4_MR42 with ML-predicted phases
-5. **[3c/5] Strategy selector** — Train 3-class classifier (TF vs MR vs PhaseAware)
-6. **[4/5] Backtest all strategies** — Run 30 TF×MR combos + phase-aware routing
-7. **[5/5] Aggregate & visualize** — Compute metrics, generate charts
+---
+## About the author
 
-### Configuration
+I’m Jonas Almqvist — a Data Scientist / ML Engineer with a PhD and 15+ years of applied computational research, focused on building end-to-end data/ML pipelines and reproducible experimentation. Remote preferred.
 
-Edit `main.py` to adjust:
-
-```python
-START_DATE          = '2005-01-01'    # Backtest start date
-END_DATE            = '2024-12-31'    # Backtest end date
-INITIAL_CAPITAL     = 10000.0         # Starting equity
-MIN_PHASE_SAMPLES   = 100             # Min bars per phase for ML
-USE_ATR_SIZING      = False           # Use ATR-based position sizing
-```
-
-## Requirements
-
-```
-pandas>=1.5.0
-numpy>=1.23.0
-scikit-learn>=1.1.0
-xgboost>=1.7.0
-yfinance>=0.2.0
-ta>=0.10.0
-matplotlib>=3.6.0
-seaborn>=0.12.0
-jupyter>=1.0.0
-notebook>=6.5.0
-ipykernel>=6.0.0
-```
-
-## Background & Motivation
-
-This project is based on a real production trading system developed from 2018-2024. The market phase detection logic was originally implemented in MQL4 for MetaTrader, trading major forex pairs across multiple timeframes (H1-D1).
-
-**Key observations from live trading:**
-
-- ✅ Trend following strategies excel in trending conditions (ADX > 25)
-- ✅ Mean reversion strategies excel in ranging conditions (ADX < 20)
-- ✅ Position sizing by phase quality significantly impacts Sharpe ratio
-- ✅ Major pairs (EURUSD, GBPUSD, USDJPY) have stronger directional bias
-- ❌ Minor pairs and cross-pairs lack consistent tradeable patterns
-
-## Key Methodology Insights
-
-### Why Phase Detection Matters
-
-Most single-strategy systems perform well in some conditions and poorly in others. Phase detection enables:
-
-1. **Strategy selection** — Use the right tool for the market condition
-2. **Position sizing** — Risk less in choppy/volatile periods
-3. **Drawdown control** — Early detection of regime change
-4. **Walk-forward robustness** — Avoid over-optimizing to one regime
-
-### Why ML Phase Prediction Failed
-
-Initial attempt to use ML to predict the next bar's phase:
-- Achieved 57-59% accuracy (vs 57% baseline random guessing)
-- Walk-forward retraining every 21 bars created model drift
-- Phase transitions are too rare (~15-20% of bars) for supervised learning
-- Rule-based detection (ADX + volatility) is already near-optimal
-
-**Lesson:** Not all problems benefit from ML. Domain expertise + simple rules often outperform black-box ML.
-
-### Why Strategy Selector ML Could Work
-
-Unlike phase prediction (rare events), predicting **which strategy type wins** is common:
-- ~33% of bars: TrendFollowing dominates
-- ~33% of bars: MeanReversion dominates
-- ~33% of bars: PhaseAware (routing) dominates
-
-**Current status:** 3-class model achieves 39.5% accuracy; integration into live backtester in progress.
-
-## Author
-
-**Jonas Almqvist**  
-PhD in Chemistry | Data Scientist | ML Engineer  
-15+ years experience in computational analysis
-
-🔗 [LinkedIn](https://www.linkedin.com/in/jalmqvist/)  
-🐙 [GitHub](https://github.com/jalmqvist)
+- LinkedIn: https://linkedin.com/in/jalmqvist  
+- GitHub: https://github.com/jalmqvist
+---
 
 ## License
-
-MIT License — feel free to use and adapt this code for research or trading.
-
-## References
-
-- Kaufman, P.J. (2013). *Trading Systems and Methods* (5th ed.). Wiley Trading.
-- Wilder, J.W. (1978). *New Concepts in Technical Trading Systems*. Trend Research.
-- Connors, L. & Raschke, L. (1995). *Street Smarts*. M. Gordon Publishing.
-- Katz, J.O. & McCormick, D.L. (2000). *The Encyclopedia of Trading Strategies*. McGraw-Hill.
-- Weissman, R.L. (2005). *Mechanical Trading Systems*. Wiley Trading.
-
+MIT License
+---
 ## Disclaimer
-
-**This is a research project for educational purposes only.** Past performance does not guarantee future results. Futures, options, and forex trading involve substantial risk of loss. Use at your own risk. Always backtest on recent out-of-sample data before deploying any strategy with real capital.
+This repository is for educational and research purposes only. It is not financial advice.
+Past performance does not guarantee future results.

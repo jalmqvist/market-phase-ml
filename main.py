@@ -32,6 +32,8 @@ from src.cache import (
 from src.models import PhaseMLExperiment, PhaseMLPredictor
 from src.strategies import PhaseAwareStrategy
 
+os.makedirs("results", exist_ok=True)
+
 # ── Uncomment to force cache refresh ─────
 # clear_cache('processed_data')
 # clear_cache('backtest_results')
@@ -40,6 +42,7 @@ from src.strategies import PhaseAwareStrategy
 # clear_cache('ml_backtest_results')
 # clear_cache()   # clears everything
 # ─────────────────────────────────────────
+DEBUG_BASELINE_KEYS = False
 
 # ─────────────────────────────────────────────────────
 # CONFIGURATION
@@ -923,7 +926,22 @@ def main():
                 import traceback
                 traceback.print_exc()
                 print(f'    ✗ Backtest failed: {e}')
+        # After dynamic_results computed
+        if dynamic_results:
+            dyn_rows = []
+            for pair_name, res in dynamic_results.items():
+                dyn_rows.append({
+                    "Pair": pair_name,
+                    "Strategy": "StrategySelector_Dynamic",
+                    "Total Return (%)": res.get("total_return", np.nan),
+                    "Sharpe": res.get("sharpe_ratio", np.nan),
+                    "Max DD (%)": res.get("max_drawdown", np.nan),
+                    "Num Trades": len(res.get("trades", [])),
+                })
 
+            dyn_df = pd.DataFrame(dyn_rows).sort_values(["Pair"])
+            dyn_df.to_csv("results/dynamic_selector_results_per_pair.csv", index=False)
+            print("Saved: results/dynamic_selector_results_per_pair.csv")
         if dynamic_results:
             print(f'\n✓ StrategySelector_Dynamic tested on {len(dynamic_results)} pairs')
         else:
@@ -938,7 +956,10 @@ def main():
         comparison = []
 
         for pair_name in dynamic_results.keys():
-            print(f"{pair_name}: available baseline keys: {list(hardcoded_results.get(pair_name, {}).keys())}")
+            DEBUG_BASELINE_KEYS = False
+            ...
+            if DEBUG_BASELINE_KEYS:
+                print(f"{pair_name}: available baseline keys: {list(hardcoded_results.get(pair_name, {}).keys())}")
             # baseline_key = 'PhaseAware_TF4_MR42_hardcoded'
             baseline_key = 'PhaseAware_TF4_MR42'    # TEST
 
@@ -975,7 +996,77 @@ def main():
             print(f'Avg Sharpe Δ:     {comp_df["Sharpe Δ"].mean():+.4f}')
             print(f'Avg Max DD Δ:     {comp_df["DD Δ"].mean():+.2f}%')
             print(f'Pairs where Sharpe improved: {(comp_df["Sharpe Δ"] > 0).sum()} / {len(comp_df)}')
+            comp_df.to_csv("results/baseline_vs_dynamic_comparison.csv", index=False)
+            print("Saved: results/baseline_vs_dynamic_comparison.csv")
 
+    # ─────────────────────────────────────────
+    # 4e. ABLATION TABLE (TF-only vs MR-only vs PhaseAware vs Dynamic)
+    # ─────────────────────────────────────────
+    if dynamic_results:
+        print("\n[4e/5] Building ablation summary (A0-A3)...")
+
+        variants = {
+            "A0_TF4": ("hardcoded", "TF4"),
+            "A1_MR42": ("hardcoded", "MR42"),
+            "A2_PhaseAware_TF4_MR42": ("hardcoded", "PhaseAware_TF4_MR42"),
+            "A3_DynamicSelector": ("dynamic", "StrategySelector_Dynamic"),
+        }
+
+        ablation_rows = []
+
+        for pair_name in dynamic_results.keys():
+            # ensure we have hardcoded results for this pair
+            pair_hc = hardcoded_results.get(pair_name, {})
+
+            for variant_name, (source, key) in variants.items():
+                if source == "dynamic":
+                    res = dynamic_results.get(pair_name)
+                    if res is None:
+                        continue
+                else:
+                    res = pair_hc.get(key)
+                    if res is None:
+                        continue
+
+                ablation_rows.append({
+                    "Pair": pair_name,
+                    "Variant": variant_name,
+                    "Total Return (%)": res.get("total_return", np.nan),
+                    "Sharpe": res.get("sharpe_ratio", np.nan),
+                    "Max DD (%)": res.get("max_drawdown", np.nan),
+                    "Num Trades": len(res.get("trades", [])),
+                })
+
+        ablation_df = pd.DataFrame(ablation_rows)
+
+        if ablation_df.empty:
+            print("  ✗ Ablation table empty (missing expected keys in hardcoded_results?)")
+        else:
+            # Save per-pair per-variant
+            ablation_df = ablation_df.sort_values(["Pair", "Variant"])
+            ablation_df.to_csv("results/ablation_summary_per_pair.csv", index=False)
+            print("Saved: results/ablation_summary_per_pair.csv")
+
+            # Aggregate (mean metrics across pairs per variant)
+            agg = (ablation_df
+                   .groupby("Variant", as_index=False)
+                   .agg({
+                "Total Return (%)": "mean",
+                "Sharpe": "mean",
+                "Max DD (%)": "mean",
+                "Num Trades": "mean",
+            })
+                   .sort_values("Variant"))
+
+            # Add pair coverage counts (important for trust)
+            coverage = ablation_df.groupby("Variant")["Pair"].nunique().reset_index(name="Pairs")
+            agg = agg.merge(coverage, on="Variant", how="left")
+
+            agg.to_csv("results/ablation_summary_aggregate.csv", index=False)
+            print("Saved: results/ablation_summary_aggregate.csv")
+
+            print("\nAblation aggregate (mean across pairs):")
+            print(agg.to_string(index=False))
     # ─────────────────────────────────────────
     # VISUALIZATIONS
     # ─────────────────────────────────────────
