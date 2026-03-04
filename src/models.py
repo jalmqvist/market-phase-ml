@@ -880,6 +880,7 @@ class StrategySelector:
         self.model = None
         self.label_encoder = None
         self.feature_cols = None
+        self.scaler = None
         self.random_state = random_state
 
     def get_feature_columns(self) -> list:
@@ -916,8 +917,9 @@ class StrategySelector:
         Returns:
             Dict with training metrics
         """
-        from sklearn.preprocessing import LabelEncoder, StandardScaler
-        from sklearn.model_selection import cross_val_score
+        from sklearn.preprocessing import LabelEncoder
+        from sklearn.model_selection import StratifiedKFold, cross_val_score
+        from sklearn.pipeline import Pipeline
 
         # Get base training data
         train_df = training_data.dropna(subset=self.get_feature_columns() + ['best_strategy'])
@@ -945,11 +947,26 @@ class StrategySelector:
         self.label_encoder = LabelEncoder()
         y_encoded = self.label_encoder.fit_transform(y_category)
 
-        # Scale features
+        # Leakage-free cross-validation: scaler fitted inside each CV fold
+        cv_pipeline = Pipeline([
+            ('scaler', StandardScaler()),
+            ('model', xgb.XGBClassifier(
+                n_estimators=100,
+                max_depth=4,
+                learning_rate=0.1,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                random_state=self.random_state,
+                eval_metric='mlogloss',
+                verbosity=0
+            ))
+        ])
+        skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=self.random_state)
+        cv_scores = cross_val_score(cv_pipeline, X, y_encoded, cv=skf, scoring='accuracy')
+
+        # Fit final scaler and model on full training set
         self.scaler = StandardScaler()
         X_scaled = self.scaler.fit_transform(X)
-
-        # Train XGBoost classifier
         self.model = xgb.XGBClassifier(
             n_estimators=100,
             max_depth=4,
@@ -962,11 +979,6 @@ class StrategySelector:
         )
         self.model.fit(X_scaled, y_encoded)
         self.feature_cols = self.get_feature_columns()
-
-        # Cross-validation score
-        cv_scores = cross_val_score(
-            self.model, X_scaled, y_encoded, cv=3, scoring='accuracy'
-        )
 
         print(f'\n  StrategySelector Training (3-class):')
         print(f'    Samples: {len(X)}')
@@ -1031,11 +1043,11 @@ class StrategySelector:
         if self.model is None:
             raise ValueError("Model not trained. Call train() first.")
 
-        from sklearn.preprocessing import StandardScaler
+        if self.scaler is None:
+            raise ValueError("Scaler not fitted. Call train() first.")
 
         X = features_df[self.feature_cols].copy()
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+        X_scaled = self.scaler.transform(X)
 
         probs = self.model.predict_proba(X_scaled)[0]
         return {
