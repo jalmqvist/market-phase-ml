@@ -1140,7 +1140,7 @@ class Backtester:
                 current_close = float(df['Close'].iloc[i])
                 current_high  = float(df['High'].iloc[i])
                 current_low   = float(df['Low'].iloc[i])
-                signal        = float(signals.iloc[i - 1])  # previous bar signal
+                signal        = float(signals[i - 1])  # previous bar signal # not iloc
                 phase         = str(df['phase'].iloc[i])
                 atr           = float(df['atr'].iloc[i])
                 stop_atr_mult = float(df['stop_atr_mult'].iloc[i])
@@ -1293,8 +1293,8 @@ class Backtester:
                     entry_stop_distance  = float(stop_distance)
 
                     # Compute SL/TP price levels from entry bar's series values
-                    bar_sl_pct = float(sl_pct_series.iloc[i])
-                    bar_tp_pct = float(tp_pct_series.iloc[i])
+                    bar_sl_pct = float(sl_pct_series[i])    # lists, no .iloc
+                    bar_tp_pct = float(tp_pct_series[i])    # lists, no .iloc
 
                     use_sl = bar_sl_pct > 0.0
                     use_tp = bar_tp_pct > 0.0
@@ -1627,3 +1627,111 @@ def run_backtests(df: pd.DataFrame,
             print(results[best_pa_key] ['phase_performance'].to_string())
 
     return results
+
+
+class StrategySelector_Dynamic:
+    """
+    Dynamic strategy selector using ML model.
+
+    At each bar, predicts which strategy TYPE will win (TF vs MR vs PhaseAware)
+    and executes only that strategy.
+
+    This reduces computation and tests if ML selection improves performance.
+    """
+
+    def __init__(self,
+                 selector_trained: dict,
+                 tf_strategies: dict,
+                 mr_strategies: dict,
+                 default_tf: str = 'TF4',
+                 default_mr: str = 'MR42'):
+        """
+        Args:
+            selector_trained: Dict of trained StrategySelector models per pair
+            tf_strategies:    Dict of TF strategy objects (TF1-TF5)
+            mr_strategies:    Dict of MR strategy objects (MR1-MR5)
+            default_tf:       Fallback TF strategy if selector fails
+            default_mr:       Fallback MR strategy if selector fails
+        """
+        self.selector_trained = selector_trained
+        self.tf_strategies = tf_strategies
+        self.mr_strategies = mr_strategies
+        self.default_tf = default_tf
+        self.default_mr = default_mr
+        self.name = 'StrategySelector_Dynamic'
+
+    def generate_signals(self, df: pd.DataFrame, pair_name: str):
+        """
+        Generate signals by dynamically selecting strategy at each bar.
+
+        Args:
+            df:         DataFrame with features, indicators, phase
+            pair_name:  Name of currency pair (e.g., 'EURUSD')
+
+        Returns:
+            signals:    List of 1 (buy), -1 (sell), 0 (no signal)
+            sl_pct:     Stop loss percentages per bar
+            tp_pct:     Take profit percentages per bar
+        """
+        # Get selector for this pair
+        if pair_name not in self.selector_trained:
+            print(f"  ⚠️  No selector for {pair_name}, using default")
+            selector = None
+        else:
+            selector = self.selector_trained[pair_name]
+
+        signals = [0] * len(df)
+        sl_pcts = [0.0] * len(df)
+        tp_pcts = [0.0] * len(df)
+
+        selected_strategies = []  # Track which strategy was selected
+
+        for i in range(len(df)):
+            # Get current features for selector
+            features_df = df.loc[df.index[[i]], selector.feature_cols].copy()
+
+            # Predict strategy type
+            if selector is not None and not features_df.isnull().any().any():
+                try:
+                    strategy_type = selector.predict(features_df)
+                except Exception as e:
+                    print(f"  ⚠️  Selector prediction failed at bar {i}: {e}")
+                    strategy_type = 'PhaseAware'  # Fallback
+            else:
+                strategy_type = 'PhaseAware'  # Fallback if NaN features
+
+            # Get appropriate strategy and generate signal
+            if strategy_type == 'TrendFollowing':
+                strategy = self.tf_strategies[self.default_tf]
+                name_suffix = self.default_tf
+            elif strategy_type == 'MeanReversion':
+                strategy = self.mr_strategies[self.default_mr]
+                name_suffix = self.default_mr
+            else:  # PhaseAware
+                # Use phase-aware routing
+                phase = df['phase'].iloc[i]
+                if 'Trend' in phase:
+                    strategy = self.tf_strategies[self.default_tf]
+                    name_suffix = f"PA_{self.default_tf}"
+                else:
+                    strategy = self.mr_strategies[self.default_mr]
+                    name_suffix = f"PA_{self.default_mr}"
+
+            selected_strategies.append(strategy_type)
+
+            # Generate signal for this bar only
+            bar_signals, bar_sl, bar_tp = strategy.generate_signals(df.iloc[:i + 1])
+
+            signals[i] = bar_signals.iloc[-1]
+            sl_pcts[i] = bar_sl.iloc[-1] if not bar_sl.empty else 0.0   # iloc
+            tp_pcts[i] = bar_tp.iloc[-1] if not bar_tp.empty else 0.0   # iloc
+
+        # Log strategy selection distribution
+        from collections import Counter
+        selection_dist = Counter(selected_strategies)
+        print(f"    Strategy type distribution:")
+        for stype, count in sorted(selection_dist.items(), key=lambda x: x[1], reverse=True):
+            pct = 100 * count / len(selected_strategies)
+            print(f"      {stype:<20} {count:5d} bars ({pct:5.1f}%)")
+
+        return signals, sl_pcts, tp_pcts

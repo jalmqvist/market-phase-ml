@@ -16,6 +16,12 @@ from src.data import (
 )
 from src.phases import MarketPhaseDetector
 from src.strategies import run_backtests
+from src.strategies import (
+    Backtester,
+    TF1Strategy, TF2Strategy, TF3Strategy, TF4Strategy, TF5Strategy,
+    MR1Strategy, MR2Strategy, MR32Strategy, MR42Strategy, MR5Strategy,
+    TradeResult  # if needed for reporting
+)
 from src.models import PhaseMLExperiment
 from src import visualization as viz
 from src.visualization import PhaseVisualizer
@@ -30,8 +36,8 @@ from src.strategies import PhaseAwareStrategy
 # clear_cache('processed_data')
 # clear_cache('backtest_results')
 # clear_cache('ml_results')
-#clear_cache('ml_predicted_phases')
-#clear_cache('ml_backtest_results')
+# clear_cache('ml_predicted_phases')
+# clear_cache('ml_backtest_results')
 # clear_cache()   # clears everything
 # ─────────────────────────────────────────
 
@@ -91,6 +97,8 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         df['minus_di'].replace(0, np.nan)
     )
 
+    df['returns_recent'] = df['returns'].rolling(window=10).mean()
+    df['volatility_recent'] = df['returns'].rolling(window=10).std()
     return df
 
 
@@ -852,6 +860,121 @@ def main():
             'results/results_minors_atr.csv', index=False
         )
     print('  ✓ ATR sizing results saved')
+
+
+    # ─────────────────────────────────────────
+    # 4c. TEST STRATEGY SELECTOR IN BACKTESTER
+    # ─────────────────────────────────────────
+    print('\n[4c/5] Testing StrategySelector_Dynamic in backtester...')
+
+    if not selector_trained:
+        print('  ✗ No selectors trained; skipping dynamic backtest')
+        dynamic_results = {}
+    else:
+        from src.strategies import StrategySelector_Dynamic
+
+        dynamic_results = {}
+
+        for pair_name, df in processed_data.items():
+            print(f'\n  --- {pair_name} ---')
+
+            if pair_name not in selector_trained:
+                print(f'    ✗ No selector for this pair')
+                continue
+
+            try:
+                # Create dynamic selector strategy
+                dynamic_strategy = StrategySelector_Dynamic(
+                    selector_trained=selector_trained,
+                    tf_strategies={
+                        'TF1': TF1Strategy(),
+                        'TF2': TF2Strategy(),
+                        'TF3': TF3Strategy(),
+                        'TF4': TF4Strategy(),
+                        'TF5': TF5Strategy(),
+                    },
+                    mr_strategies={
+                        'MR1': MR1Strategy(),
+                        'MR2': MR2Strategy(),
+                        'MR32': MR32Strategy(),
+                        'MR42': MR42Strategy(),
+                        'MR5': MR5Strategy(),
+                    },
+                    default_tf='TF4',
+                    default_mr='MR42'
+                )
+
+                # Run backtest
+                backtester = Backtester(
+                    initial_capital=10000.0,
+                    use_atr_sizing=False  # Use hardcoded sizing for comparison
+                )
+
+                signals, sl_pcts, tp_pcts = dynamic_strategy.generate_signals(df, pair_name)
+                result = backtester.run(df, signals, 'StrategySelector_Dynamic', sl_pcts, tp_pcts)
+
+                dynamic_results[pair_name] = result
+
+                print(f'    ✓ Return: {result["total_return"]:+7.2f}% | '
+                      f'Sharpe: {result["sharpe_ratio"]:+.3f} | '
+                      f'Max DD: {result["max_drawdown"]:+.2f}%')
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f'    ✗ Backtest failed: {e}')
+
+        if dynamic_results:
+            print(f'\n✓ StrategySelector_Dynamic tested on {len(dynamic_results)} pairs')
+        else:
+            print(f'✗ No dynamic backtest results')
+
+    # ─────────────────────────────────────────
+    # 4d. COMPARE BASELINE VS DYNAMIC SELECTOR
+    # ─────────────────────────────────────────
+    if dynamic_results:
+        print('\n[4d/5] Comparing Baseline (PhaseAware_TF4_MR42) vs Dynamic Selector...\n')
+
+        comparison = []
+
+        for pair_name in dynamic_results.keys():
+            print(f"{pair_name}: available baseline keys: {list(hardcoded_results.get(pair_name, {}).keys())}")
+            # baseline_key = 'PhaseAware_TF4_MR42_hardcoded'
+            baseline_key = 'PhaseAware_TF4_MR42'    # TEST
+
+            if pair_name not in hardcoded_results or baseline_key not in hardcoded_results[pair_name]:
+                print(f'  ⚠️  {pair_name}: No baseline PhaseAware_TF4_MR42')
+                continue
+
+            baseline = hardcoded_results[pair_name][baseline_key]
+            dynamic = dynamic_results[pair_name]
+
+            comparison.append({
+                'Pair': pair_name,
+                'Baseline Return': baseline['total_return'],
+                'Dynamic Return': dynamic['total_return'],
+                'Return Δ': dynamic['total_return'] - baseline['total_return'],
+                'Baseline Sharpe': baseline['sharpe_ratio'],
+                'Dynamic Sharpe': dynamic['sharpe_ratio'],
+                'Sharpe Δ': dynamic['sharpe_ratio'] - baseline['sharpe_ratio'],
+                'Baseline Max DD': baseline['max_drawdown'],
+                'Dynamic Max DD': dynamic['max_drawdown'],
+                'DD Δ': dynamic['max_drawdown'] - baseline['max_drawdown'],
+            })
+
+        comp_df = pd.DataFrame(comparison)
+
+        print(comp_df.to_string(index=False))
+
+        if comp_df.empty:
+            print(
+                "\nNo baseline comparison could be made. Check if run_backtests produced 'PhaseAware_TF4_MR42_hardcoded' for each pair.")
+        else:
+            print(f'\n--- Summary ---')
+            print(f'Avg Return Δ:     {comp_df["Return Δ"].mean():+.2f}%')
+            print(f'Avg Sharpe Δ:     {comp_df["Sharpe Δ"].mean():+.4f}')
+            print(f'Avg Max DD Δ:     {comp_df["DD Δ"].mean():+.2f}%')
+            print(f'Pairs where Sharpe improved: {(comp_df["Sharpe Δ"] > 0).sum()} / {len(comp_df)}')
 
     # ─────────────────────────────────────────
     # VISUALIZATIONS

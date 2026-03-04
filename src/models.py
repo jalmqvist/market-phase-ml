@@ -946,8 +946,8 @@ class StrategySelector:
         y_encoded = self.label_encoder.fit_transform(y_category)
 
         # Scale features
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+        self.scaler = StandardScaler()
+        X_scaled = self.scaler.fit_transform(X)
 
         # Train XGBoost classifier
         self.model = xgb.XGBClassifier(
@@ -1003,14 +1003,17 @@ class StrategySelector:
         if self.model is None:
             raise ValueError("Model not trained. Call train() first.")
 
-        from sklearn.preprocessing import StandardScaler
-
         X = features_df[self.feature_cols].copy()
-        if X.isnull().any().any():
-            return None
 
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+        # Either return a fallback category, or keep returning None if you prefer
+        if X.isnull().any().any():
+            return 'PhaseAware'  # or: return None
+
+        if getattr(self, "scaler", None) is None:
+            raise ValueError("Scaler not fitted. Train() must set self.scaler.")
+
+        X_scaled = self.scaler.transform(X)
+
         y_pred_encoded = self.model.predict(X_scaled)[0]
         y_pred = self.label_encoder.inverse_transform([y_pred_encoded])[0]
 
