@@ -1686,45 +1686,47 @@ class StrategySelector_Dynamic:
 
         selected_strategies = []  # Track which strategy was selected
 
+        # Precompute signals for default TF and MR strategies on the full df (O(N) instead of O(N²))
+        tf_sigs, tf_sl_s, tf_tp_s = self.tf_strategies[self.default_tf].generate_signals(df)
+        mr_sigs, mr_sl_s, mr_tp_s = self.mr_strategies[self.default_mr].generate_signals(df)
+        tf_has_sl = not tf_sl_s.empty
+        tf_has_tp = not tf_tp_s.empty
+        mr_has_sl = not mr_sl_s.empty
+        mr_has_tp = not mr_tp_s.empty
+
         for i in range(len(df)):
-            # Get current features for selector
-            features_df = df.loc[df.index[[i]], selector.feature_cols].copy()
-
             # Predict strategy type
-            if selector is not None and not features_df.isnull().any().any():
-                try:
-                    strategy_type = selector.predict(features_df)
-                except Exception as e:
-                    print(f"  ⚠️  Selector prediction failed at bar {i}: {e}")
-                    strategy_type = 'PhaseAware'  # Fallback
-            else:
-                strategy_type = 'PhaseAware'  # Fallback if NaN features
-
-            # Get appropriate strategy and generate signal
-            if strategy_type == 'TrendFollowing':
-                strategy = self.tf_strategies[self.default_tf]
-                name_suffix = self.default_tf
-            elif strategy_type == 'MeanReversion':
-                strategy = self.mr_strategies[self.default_mr]
-                name_suffix = self.default_mr
-            else:  # PhaseAware
-                # Use phase-aware routing
-                phase = df['phase'].iloc[i]
-                if 'Trend' in phase:
-                    strategy = self.tf_strategies[self.default_tf]
-                    name_suffix = f"PA_{self.default_tf}"
-                else:
-                    strategy = self.mr_strategies[self.default_mr]
-                    name_suffix = f"PA_{self.default_mr}"
+            strategy_type = 'PhaseAware'  # default fallback
+            if selector is not None:
+                features_df = df.loc[df.index[[i]], selector.feature_cols].copy()
+                if not features_df.isnull().any().any():
+                    try:
+                        strategy_type = selector.predict(features_df)
+                    except Exception as e:
+                        print(f"  ⚠️  Selector prediction failed at bar {i}: {e}")
+                        strategy_type = 'PhaseAware'
 
             selected_strategies.append(strategy_type)
 
-            # Generate signal for this bar only
-            bar_signals, bar_sl, bar_tp = strategy.generate_signals(df.iloc[:i + 1])
-
-            signals[i] = bar_signals.iloc[-1]
-            sl_pcts[i] = bar_sl.iloc[-1] if not bar_sl.empty else 0.0   # iloc
-            tp_pcts[i] = bar_tp.iloc[-1] if not bar_tp.empty else 0.0   # iloc
+            # Read precomputed signal at position i
+            if strategy_type == 'TrendFollowing':
+                signals[i] = tf_sigs.iloc[i]
+                sl_pcts[i] = tf_sl_s.iloc[i] if tf_has_sl else 0.0
+                tp_pcts[i] = tf_tp_s.iloc[i] if tf_has_tp else 0.0
+            elif strategy_type == 'MeanReversion':
+                signals[i] = mr_sigs.iloc[i]
+                sl_pcts[i] = mr_sl_s.iloc[i] if mr_has_sl else 0.0
+                tp_pcts[i] = mr_tp_s.iloc[i] if mr_has_tp else 0.0
+            else:  # PhaseAware
+                phase = df['phase'].iloc[i]
+                if 'Trend' in phase:
+                    signals[i] = tf_sigs.iloc[i]
+                    sl_pcts[i] = tf_sl_s.iloc[i] if tf_has_sl else 0.0
+                    tp_pcts[i] = tf_tp_s.iloc[i] if tf_has_tp else 0.0
+                else:
+                    signals[i] = mr_sigs.iloc[i]
+                    sl_pcts[i] = mr_sl_s.iloc[i] if mr_has_sl else 0.0
+                    tp_pcts[i] = mr_tp_s.iloc[i] if mr_has_tp else 0.0
 
         # Log strategy selection distribution
         from collections import Counter
