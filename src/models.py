@@ -907,7 +907,9 @@ class StrategySelector:
         else:
             return None
 
-    def train(self, training_data: pd.DataFrame) -> dict:
+
+    def train(self, training_data: pd.DataFrame, do_cv: bool = True, cv_folds: int = 3) -> dict:
+
         """
         Train the strategy TYPE selector model.
 
@@ -961,8 +963,23 @@ class StrategySelector:
                 verbosity=0
             ))
         ])
-        skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=self.random_state)
-        cv_scores = cross_val_score(cv_pipeline, X, y_encoded, cv=skf, scoring='accuracy')
+
+        # Optional CV (skip during walk-forward; outer loop is the evaluation)
+        if do_cv:
+            skf = StratifiedKFold(
+                n_splits=cv_folds,
+                shuffle=True,
+                random_state=self.random_state
+            )
+            cv_scores = cross_val_score(
+                cv_pipeline, X, y_encoded, cv=skf, scoring='accuracy'
+            )
+            cv_mean = float(cv_scores.mean())
+            cv_std = float(cv_scores.std())
+        else:
+            cv_scores = None
+            cv_mean = float("nan")
+            cv_std = float("nan")
 
         # Fit final scaler and model on full training set
         self.scaler = StandardScaler()
@@ -982,7 +999,8 @@ class StrategySelector:
 
         print(f'\n  StrategySelector Training (3-class):')
         print(f'    Samples: {len(X)}')
-        print(f'    Accuracy (CV): {cv_scores.mean():.4f} (±{cv_scores.std():.4f})')
+        # print(f'    Accuracy (CV): {cv_scores.mean():.4f} (±{cv_scores.std():.4f})')
+        print(f'    Accuracy (CV): {cv_mean:.4f} (±{cv_std:.4f})' if do_cv else '    Accuracy (CV): skipped (walk-forward)')
         print(f'    Categories: {list(self.label_encoder.classes_)}')
 
         # Feature importance
@@ -996,8 +1014,8 @@ class StrategySelector:
             print(f'    {row["feature"]:<20} {row["importance"]:.4f}')
 
         return {
-            'cv_accuracy': cv_scores.mean(),
-            'cv_std': cv_scores.std(),
+            'cv_accuracy': cv_mean,
+            'cv_std': cv_std,
             'n_samples': len(X),
             'categories': list(self.label_encoder.classes_)
         }
@@ -1054,3 +1072,12 @@ class StrategySelector:
             strategy: prob
             for strategy, prob in zip(self.label_encoder.classes_, probs)
         }
+
+    def predict_proba_df(self, X_df: pd.DataFrame) -> np.ndarray:
+        """
+        Vectorized predict_proba for a feature DataFrame with columns = feature_cols.
+        Returns ndarray shape (n_samples, n_classes).
+        """
+        X = X_df[self.feature_cols].copy()
+        X_scaled = self.scaler.transform(X)
+        return self.model.predict_proba(X_scaled)

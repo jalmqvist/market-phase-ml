@@ -1748,4 +1748,7 @@ class StrategySelector_Dynamic:
             pct = 100 * count / len(selected_strategies)
             print(f"      {stype:<20} {count:5d} bars ({pct:5.1f}%)")
 
-        return signals, sl_pcts, tp_pcts
+        signals_s = pd.Series(signals, index=df.index)
+        sl_s = pd.Series(sl_pcts, index=df.index)
+        tp_s = pd.Series(tp_pcts, index=df.index)
+        return signals_s, sl_s, tp_s
