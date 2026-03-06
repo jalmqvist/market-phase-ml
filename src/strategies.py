@@ -1650,13 +1650,34 @@ class StrategySelector_Dynamic:
 
     This reduces computation and tests if ML selection improves performance.
     """
+    def __init__(
+        self,
+        selector_trained: dict,
+        tf_strategies: dict,
+        mr_strategies: dict,
+        default_tf: str = "TF4",
+        default_mr: str = "MR42",
+        tau_enter: float = 0.55,
+        tau_exit: float = 0.50,
+        min_hold_bars: int = 5,
+        use_hysteresis: bool = True,
+        use_min_hold: bool = True,
+    ):
+        self.selector_trained = selector_trained
+        self.tf_strategies = tf_strategies
+        self.mr_strategies = mr_strategies
+        self.default_tf = default_tf
+        self.default_mr = default_mr
 
-    def __init__(self,
-                 selector_trained: dict,
-                 tf_strategies: dict,
-                 mr_strategies: dict,
-                 default_tf: str = 'TF4',
-                 default_mr: str = 'MR42'):
+        self.tau_enter = float(tau_enter)
+        self.tau_exit = float(tau_exit)
+        self.min_hold_bars = int(min_hold_bars)
+        self.use_hysteresis = bool(use_hysteresis)
+        self.use_min_hold = bool(use_min_hold)
+
+        if self.use_hysteresis and not (self.tau_exit < self.tau_enter):
+            raise ValueError("Hysteresis requires tau_exit < tau_enter.")
+
         """
         Args:
             selector_trained: Dict of trained StrategySelector models per pair
@@ -1706,32 +1727,73 @@ class StrategySelector_Dynamic:
         mr_has_sl = not mr_sl_s.empty
         mr_has_tp = not mr_tp_s.empty
 
+        current_type = "PhaseAware"
+        bars_since_switch = 0
+
         for i in range(len(df)):
-            # Predict strategy type
-            strategy_type = 'PhaseAware'  # default fallback
+            pmax = -1.0
+            pred_type = None
+
             if selector is not None:
                 features_df = df.loc[df.index[[i]], selector.feature_cols].copy()
                 if not features_df.isnull().any().any():
                     try:
-                        strategy_type = selector.predict(features_df)
+                        probs = selector.predict_proba(features_df)
+                        pred_type = max(probs, key=probs.get)
+                        pmax = float(probs[pred_type])
                     except Exception as e:
                         print(f"  ⚠️  Selector prediction failed at bar {i}: {e}")
-                        strategy_type = 'PhaseAware'
+                        pred_type = None
+                        pmax = -1.0
 
-            selected_strategies.append(strategy_type)
+            # 1) Propose a type based on gating policy (ignoring min-hold)
+            proposed_type = current_type
 
-            # Read precomputed signal at position i
-            if strategy_type == 'TrendFollowing':
+            if self.use_hysteresis:
+                if current_type == "PhaseAware":
+                    if pred_type is not None and pmax >= self.tau_enter:
+                        proposed_type = pred_type
+                else:
+                    # in TF/MR: revert to PhaseAware if confidence drops
+                    if pred_type is None or pmax < self.tau_exit:
+                        proposed_type = "PhaseAware"
+                    else:
+                        # allow TF<->MR switch only when confident
+                        if pred_type != current_type and pmax >= self.tau_enter:
+                            proposed_type = pred_type
+            else:
+                if pred_type is not None and pmax >= self.tau_enter:
+                    proposed_type = pred_type
+                else:
+                    proposed_type = "PhaseAware"
+
+            # 2) Apply min-hold ONLY if the type would change
+            next_type = proposed_type
+            if self.use_min_hold and (proposed_type != current_type):
+                if bars_since_switch < self.min_hold_bars:
+                    next_type = current_type  # block the switch
+
+            # 3) Bookkeeping
+            if next_type != current_type:
+                current_type = next_type
+                bars_since_switch = 0
+            else:
+                bars_since_switch += 1
+
+            selected_strategies.append(current_type)
+
+            # Emit signal using current_type
+            if current_type == "TrendFollowing":
                 signals[i] = tf_sigs.iloc[i]
                 sl_pcts[i] = tf_sl_s.iloc[i] if tf_has_sl else 0.0
                 tp_pcts[i] = tf_tp_s.iloc[i] if tf_has_tp else 0.0
-            elif strategy_type == 'MeanReversion':
+            elif current_type == "MeanReversion":
                 signals[i] = mr_sigs.iloc[i]
                 sl_pcts[i] = mr_sl_s.iloc[i] if mr_has_sl else 0.0
                 tp_pcts[i] = mr_tp_s.iloc[i] if mr_has_tp else 0.0
-            else:  # PhaseAware
-                phase = df['phase'].iloc[i]
-                if 'Trend' in phase:
+            else:
+                phase = df["phase"].iloc[i]
+                if "Trend" in str(phase):
                     signals[i] = tf_sigs.iloc[i]
                     sl_pcts[i] = tf_sl_s.iloc[i] if tf_has_sl else 0.0
                     tp_pcts[i] = tf_tp_s.iloc[i] if tf_has_tp else 0.0
@@ -1739,6 +1801,7 @@ class StrategySelector_Dynamic:
                     signals[i] = mr_sigs.iloc[i]
                     sl_pcts[i] = mr_sl_s.iloc[i] if mr_has_sl else 0.0
                     tp_pcts[i] = mr_tp_s.iloc[i] if mr_has_tp else 0.0
+
 
         # Log strategy selection distribution
         from collections import Counter

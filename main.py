@@ -17,12 +17,10 @@ from src.data import (
 from src.phases import MarketPhaseDetector
 from src.strategies import run_backtests
 from src.strategies import (
-    Backtester,
     TF1Strategy, TF2Strategy, TF3Strategy, TF4Strategy, TF5Strategy,
     MR1Strategy, MR2Strategy, MR32Strategy, MR42Strategy, MR5Strategy,
     TradeResult  # if needed for reporting
 )
-from src.models import PhaseMLExperiment
 from src import visualization as viz
 from src.visualization import PhaseVisualizer
 from src.cache import (
@@ -32,7 +30,7 @@ from src.cache import (
 from src.models import PhaseMLExperiment, PhaseMLPredictor
 from src.strategies import Backtester as BT, PhaseAwareStrategy
 
-os.makedirs("results", exist_ok=True)
+
 
 # ── Uncomment to force cache refresh ─────
 # clear_cache('processed_data')
@@ -42,8 +40,23 @@ os.makedirs("results", exist_ok=True)
 # clear_cache('ml_backtest_results')
 # clear_cache()   # clears everything
 # ─────────────────────────────────────────
-DEBUG_BASELINE_KEYS = False
 
+# ────────────────────────────────────────
+# RUN FLAGS (toggle expensive experiments)
+# ─────────────────────────────────────────
+RUN_IN_SAMPLE_ABLATION = True
+RUN_WALKFORWARD = True
+
+# Expensive sweeps (disable by default)
+RUN_TAU_SWEEP = False
+RUN_POLICY_SWEEP = False
+
+# Debug
+DEBUG_BASELINE_KEYS = False
+DEBUG_FEATURE_COLUMNS = False
+DEBUG_SIGNAL_TYPES = False
+
+os.makedirs("results", exist_ok=True)
 # ─────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────
@@ -505,13 +518,14 @@ def main():
 
         print(f"\n✓ Processed {len(processed_data)} pairs")
 
-        print("\n[debug] processed_data columns check (first pair):")
-        first_pair = next(iter(processed_data))
-        print("  first_pair:", first_pair)
-        print("  columns contains returns_recent:", "returns_recent" in processed_data[first_pair].columns)
-        print("  columns contains volatility_recent:", "volatility_recent" in processed_data[first_pair].columns)
-        print("  missing:",
-              [c for c in ["returns_recent", "volatility_recent"] if c not in processed_data[first_pair].columns])
+        if DEBUG_FEATURE_COLUMNS:
+            print("\n[debug] processed_data columns check (first pair):")
+            first_pair = next(iter(processed_data))
+            print("  first_pair:", first_pair)
+            print("  columns contains returns_recent:", "returns_recent" in processed_data[first_pair].columns)
+            print("  columns contains volatility_recent:", "volatility_recent" in processed_data[first_pair].columns)
+            print("  missing:", [c for c in ["returns_recent", "volatility_recent"]
+                                 if c not in processed_data[first_pair].columns])
 
         # then the script continues into backtests / ML / etc.
     else:
@@ -993,10 +1007,14 @@ def main():
                         'MR42': MR42Strategy(),
                         'MR5': MR5Strategy(),
                     },
-                    default_tf='TF4',
-                    default_mr='MR42'
+                    default_tf="TF4",
+                    default_mr="MR42",
+                    tau_enter=0.55,
+                    tau_exit=0.50,
+                    min_hold_bars=5,
+                    use_hysteresis=True,
+                    use_min_hold=True,
                 )
-
                 # Run backtest
                 backtester = BT(
                     initial_capital=10000.0,
@@ -1005,16 +1023,13 @@ def main():
 
                 signals, sl_pcts, tp_pcts = dynamic_strategy.generate_signals(df, pair_name)
 
-                print("[debug] signal types:",
-                      type(signals),
-                      type(sl_pcts),
-                      type(tp_pcts))
-                print("[debug] has .iloc:",
-                      hasattr(signals, "iloc"),
-                      hasattr(sl_pcts, "iloc"),
-                      hasattr(tp_pcts, "iloc"))
+                if DEBUG_SIGNAL_TYPES:
+                    print("[debug] signal types:", type(signals), type(sl_pcts), type(tp_pcts))
+                    print("[debug] has .iloc:",
+                          hasattr(signals, "iloc"), hasattr(sl_pcts, "iloc"), hasattr(tp_pcts, "iloc"))
 
-                result = backtester.run(df, signals, 'StrategySelector_Dynamic', sl_pcts, tp_pcts)
+                dyn_name = "StrategySelector_Dynamic_tau0.55_exit0.50_hold5"
+                result = backtester.run(df, signals, dyn_name, sl_pcts, tp_pcts)
 
                 dynamic_results[pair_name] = result
 
@@ -1102,14 +1117,17 @@ def main():
     # ─────────────────────────────────────────
     # 4e. ABLATION TABLE (TF-only vs MR-only vs PhaseAware vs Dynamic)
     # ─────────────────────────────────────────
-    if dynamic_results:
+    if RUN_IN_SAMPLE_ABLATION and dynamic_results:
         print("\n[4e/5] Building ablation summary (A0-A3)...")
 
         variants = {
             "A0_TF4": ("hardcoded", "TF4"),
             "A1_MR42": ("hardcoded", "MR42"),
             "A2_PhaseAware_TF4_MR42": ("hardcoded", "PhaseAware_TF4_MR42"),
-            "A3_DynamicSelector": ("dynamic", "StrategySelector_Dynamic"),
+            "A3_DynamicSelector_tau0.55_exit0.50_hold5": (
+                "dynamic",
+                "StrategySelector_Dynamic_tau0.55_exit0.50_hold5"
+            ),
         }
 
         ablation_rows = []
@@ -1171,359 +1189,533 @@ def main():
     # ─────────────────────────────────────────
     # 4f. WALK-FORWARD EVALUATION (FULL OOS)
     # ─────────────────────────────────────────
-    print("\n[4f/5] Walk-forward evaluation (out-of-sample)...")
+    if RUN_WALKFORWARD:
+        print("\n[4f/5] Walk-forward evaluation (out-of-sample)...")
 
-    from src.models import StrategyPerformanceTracker, StrategySelector
-    from src.strategies import StrategySelector_Dynamic  # your dynamic strategy
+        from src.models import StrategyPerformanceTracker, StrategySelector
+        from src.strategies import StrategySelector_Dynamic
 
-    WF_TRAIN_YEARS = 7
-    WF_TEST_MONTHS = 6
-    WF_STEP_MONTHS = 6
-    LABEL_HORIZON_BARS = 20  # must match StrategyPerformanceTracker(window_days=...)
+        WF_TRAIN_YEARS = 7
+        WF_TEST_MONTHS = 6
+        WF_STEP_MONTHS = 6
+        LABEL_HORIZON_BARS = 20  # must match StrategyPerformanceTracker(window_days=...)
 
-    walkforward_rows = []
+        walkforward_rows = []
 
-    for pair_name, df_full in processed_data.items():
-        print(f"\n  --- {pair_name} ---")
+        for pair_name, df_full in processed_data.items():
+            print(f"\n  --- {pair_name} ---")
 
-        pair_results_full = hardcoded_results.get(pair_name, {})
-        if not pair_results_full:
-            print("    ✗ Missing hardcoded_results for pair; skipping")
-            continue
-
-        folds = generate_walkforward_folds_by_pos(
-            df_full.index,
-            train_years=WF_TRAIN_YEARS,
-            test_months=WF_TEST_MONTHS,
-            step_months=WF_STEP_MONTHS,
-        )
-
-        if not folds:
-            print("    ✗ No folds generated; skipping")
-            continue
-
-        for f in folds:
-            fold_id = f["fold"]
-            train_start_pos = f["train_start_pos"]
-            train_end_pos = f["train_end_pos"]
-            test_start_pos = f["test_start_pos"]
-            test_end_pos = f["test_end_pos"]
-
-            # Need enough room to label training rows with lookahead horizon
-            label_end_pos = train_end_pos + LABEL_HORIZON_BARS
-            if label_end_pos >= len(df_full):
+            pair_results_full = hardcoded_results.get(pair_name, {})
+            if not pair_results_full:
+                print("    ✗ Missing hardcoded_results for pair; skipping")
                 continue
 
-            # --- Build label DF (up to label_end_pos so labels don't touch test) ---
-            df_for_labels = df_full.iloc[train_start_pos:label_end_pos + 1].copy()
+            folds = generate_walkforward_folds_by_pos(
+                df_full.index,
+                train_years=WF_TRAIN_YEARS,
+                test_months=WF_TEST_MONTHS,
+                step_months=WF_STEP_MONTHS,
+            )
 
-            # Slice strategy equity curves to match df_for_labels.index
-            strat_results_for_labels = {}
-            for sname, res in pair_results_full.items():
-                eq = res.get("equity_curve", None)
-                if eq is None:
+            if not folds:
+                print("    ✗ No folds generated; skipping")
+                continue
+
+            for f in folds:
+                fold_id = f["fold"]
+                train_start_pos = f["train_start_pos"]
+                train_end_pos = f["train_end_pos"]
+                test_start_pos = f["test_start_pos"]
+                test_end_pos = f["test_end_pos"]
+
+                # Need enough room to label training rows with lookahead horizon
+                label_end_pos = train_end_pos + LABEL_HORIZON_BARS
+                if label_end_pos >= len(df_full):
                     continue
-                sliced_eq = eq.loc[df_for_labels.index]
-                strat_results_for_labels[sname] = dict(res)
-                strat_results_for_labels[sname]["equity_curve"] = sliced_eq
 
-            tracker = StrategyPerformanceTracker(window_days=LABEL_HORIZON_BARS)
-            training_data_all = tracker.compute_strategy_returns(
-                df_for_labels,
-                strat_results_for_labels
-            )
+                # --- Build label DF (up to label_end_pos so labels don't touch test) ---
+                df_for_labels = df_full.iloc[train_start_pos:label_end_pos + 1].copy()
 
-            # Train rows must be within the training end (avoid using labels whose "date" is beyond train_end_pos)
-            train_end_dt = df_full.index[train_end_pos]
-            train_start_dt = df_full.index[train_start_pos]
-            train_mask = (
-                    (training_data_all["date"] >= train_start_dt) &
-                    (training_data_all["date"] <= train_end_dt)
-            )
-            training_data = training_data_all.loc[train_mask].copy()
+                # Slice strategy equity curves to match df_for_labels.index
+                strat_results_for_labels = {}
+                for sname, res in pair_results_full.items():
+                    eq = res.get("equity_curve", None)
+                    if eq is None:
+                        continue
+                    sliced_eq = eq.loc[df_for_labels.index]
+                    strat_results_for_labels[sname] = dict(res)
+                    strat_results_for_labels[sname]["equity_curve"] = sliced_eq
 
-            if len(training_data) < 200:
-                print(f"    fold {fold_id}: ✗ too few training rows ({len(training_data)}); skipping")
-                continue
+                tracker = StrategyPerformanceTracker(window_days=LABEL_HORIZON_BARS)
+                training_data_all = tracker.compute_strategy_returns(
+                    df_for_labels,
+                    strat_results_for_labels
+                )
 
-            # --- Train selector on this fold ---
-            selector = StrategySelector()
-            selector.train(training_data, do_cv=False)  # outer WF is evaluation
+                # Train rows must be within the training end (avoid using labels whose "date" is beyond train_end_pos)
+                train_end_dt = df_full.index[train_end_pos]
+                train_start_dt = df_full.index[train_start_pos]
+                train_mask = (
+                        (training_data_all["date"] >= train_start_dt) &
+                        (training_data_all["date"] <= train_end_dt)
+                )
+                training_data = training_data_all.loc[train_mask].copy()
 
-            # --- Test slice ---
-            df_test = df_full.iloc[test_start_pos:test_end_pos + 1].copy()
-            if len(df_test) < 50:
-                continue
-
-            # Dynamic selector strategy (per-fold)
-            selector_trained_fold = {pair_name: selector}
-            dynamic_strategy = StrategySelector_Dynamic(
-                selector_trained=selector_trained_fold,
-                tf_strategies={
-                    'TF1': TF1Strategy(),
-                    'TF2': TF2Strategy(),
-                    'TF3': TF3Strategy(),
-                    'TF4': TF4Strategy(),
-                    'TF5': TF5Strategy(),
-                },
-                mr_strategies={
-                    'MR1': MR1Strategy(),
-                    'MR2': MR2Strategy(),
-                    'MR32': MR32Strategy(),
-                    'MR42': MR42Strategy(),
-                    'MR5': MR5Strategy(),
-                },
-                default_tf='TF4',
-                default_mr='MR42'
-            )
-
-            backtester = BT(
-                initial_capital=INITIAL_CAPITAL,
-                use_atr_sizing=False
-            )
-
-            dyn_signals, dyn_sl, dyn_tp = dynamic_strategy.generate_signals(df_test, pair_name)
-            dyn_res = backtester.run(df_test, dyn_signals, 'StrategySelector_Dynamic_WF', dyn_sl, dyn_tp)
-
-            # Baseline on same test slice
-            pa = PhaseAwareStrategy('TF4', 'MR42')
-            pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
-            base_res = backtester.run(df_test, pa_signals, 'PhaseAware_TF4_MR42_WF', pa_sl, pa_tp)
-
-            walkforward_rows.append({
-                "Pair": pair_name,
-                "Fold": fold_id,
-                "Train Start": f["train_start_dt"],
-                "Train End": f["train_end_dt"],
-                "Test Start": f["test_start_dt"],
-                "Test End": f["test_end_dt"],
-                "Train Rows": int(len(training_data)),
-                "Test Bars": int(len(df_test)),
-                "Baseline Return (%)": base_res.get("total_return", np.nan),
-                "Dynamic Return (%)": dyn_res.get("total_return", np.nan),
-                "Return Δ": dyn_res.get("total_return", np.nan) - base_res.get("total_return", np.nan),
-                "Baseline Sharpe": base_res.get("sharpe_ratio", np.nan),
-                "Dynamic Sharpe": dyn_res.get("sharpe_ratio", np.nan),
-                "Sharpe Δ": dyn_res.get("sharpe_ratio", np.nan) - base_res.get("sharpe_ratio", np.nan),
-                "Baseline Max DD (%)": base_res.get("max_drawdown", np.nan),
-                "Dynamic Max DD (%)": dyn_res.get("max_drawdown", np.nan),
-                "DD Δ": dyn_res.get("max_drawdown", np.nan) - base_res.get("max_drawdown", np.nan),
-            })
-
-            print(
-                f"    fold {fold_id}: Sharpe base={base_res['sharpe_ratio']:+.3f} "
-                f"dyn={dyn_res['sharpe_ratio']:+.3f} (Δ {dyn_res['sharpe_ratio'] - base_res['sharpe_ratio']:+.3f})"
-            )
-
-    wf_df = pd.DataFrame(walkforward_rows)
-    if wf_df.empty:
-        print("✗ Walk-forward produced no results.")
-    else:
-        os.makedirs("results", exist_ok=True)
-        wf_df.to_csv("results/walkforward_results_per_fold.csv", index=False)
-        print("Saved: results/walkforward_results_per_fold.csv")
-
-        # Per-pair aggregation (mean across folds)
-        wf_pair = (wf_df.groupby("Pair", as_index=False)
-                   .agg({
-            "Return Δ": "mean",
-            "Sharpe Δ": "mean",
-            "DD Δ": "mean",
-            "Fold": "count",
-        })
-                   .rename(columns={"Fold": "Folds"}))
-        wf_pair.to_csv("results/walkforward_results_per_pair.csv", index=False)
-        print("Saved: results/walkforward_results_per_pair.csv")
-
-        # Overall summary
-        overall = {
-            "Pairs": int(wf_df["Pair"].nunique()),
-            "Folds": int(len(wf_df)),
-            "Avg Return Δ": float(wf_df["Return Δ"].mean()),
-            "Avg Sharpe Δ": float(wf_df["Sharpe Δ"].mean()),
-            "Avg Max DD Δ": float(wf_df["DD Δ"].mean()),
-            "Folds Sharpe Improved": int((wf_df["Sharpe Δ"] > 0).sum()),
-        }
-        pd.DataFrame([overall]).to_csv("results/walkforward_results_summary.csv", index=False)
-        print("Saved: results/walkforward_results_summary.csv")
-
-        print("\nWalk-forward summary:")
-        print(pd.DataFrame([overall]).to_string(index=False))
-
-    # ─────────────────────────────────────────
-    print("\n[4g/5] Walk-forward global tau sweep (out-of-sample)...")
-
-    # TAUS = [0.45, 0.50, 0.55, 0.60, 0.65]
-    TAUS = [0.50, 0.55, 0.60]
-    LABEL_HORIZON_BARS = 20
-
-    tau_rows = []
-
-    for pair_name, df_full in processed_data.items():
-        print(f"\n  --- {pair_name} ---")
-
-        pair_results_full = hardcoded_results.get(pair_name, {})
-        if not pair_results_full:
-            print("    ✗ Missing hardcoded_results for pair; skipping")
-            continue
-
-        folds = generate_walkforward_folds_by_pos(
-            df_full.index,
-            train_years=WF_TRAIN_YEARS,
-            test_months=WF_TEST_MONTHS,
-            step_months=WF_STEP_MONTHS,
-        )
-        if not folds:
-            continue
-
-        for f in folds:
-            fold_id = f["fold"]
-            train_start_pos = f["train_start_pos"]
-            train_end_pos = f["train_end_pos"]
-            test_start_pos = f["test_start_pos"]
-            test_end_pos = f["test_end_pos"]
-
-            label_end_pos = train_end_pos + LABEL_HORIZON_BARS
-            if label_end_pos >= len(df_full):
-                continue
-
-            # Label slice
-            df_for_labels = df_full.iloc[train_start_pos:label_end_pos + 1].copy()
-
-            strat_results_for_labels = {}
-            for sname, res in pair_results_full.items():
-                eq = res.get("equity_curve", None)
-                if eq is None:
+                if len(training_data) < 200:
+                    print(f"    fold {fold_id}: ✗ too few training rows ({len(training_data)}); skipping")
                     continue
-                strat_results_for_labels[sname] = dict(res)
-                strat_results_for_labels[sname]["equity_curve"] = eq.loc[df_for_labels.index]
 
-            tracker = StrategyPerformanceTracker(window_days=LABEL_HORIZON_BARS)
-            training_data_all = tracker.compute_strategy_returns(df_for_labels, strat_results_for_labels)
+                # --- Train selector on this fold ---
+                selector = StrategySelector()
+                selector.train(training_data, do_cv=False)  # outer WF is evaluation
 
-            train_end_dt = df_full.index[train_end_pos]
-            train_start_dt = df_full.index[train_start_pos]
-            train_mask = (
-                    (training_data_all["date"] >= train_start_dt) &
-                    (training_data_all["date"] <= train_end_dt)
-            )
-            training_data = training_data_all.loc[train_mask].copy()
-            if len(training_data) < 200:
-                continue
+                # --- Test slice ---
+                df_test = df_full.iloc[test_start_pos:test_end_pos + 1].copy()
+                if len(df_test) < 50:
+                    continue
 
-            selector = StrategySelector()
-            selector.train(training_data, do_cv=False)
+                # Dynamic selector strategy (per-fold)
+                selector_trained_fold = {pair_name: selector}
+                dynamic_strategy = StrategySelector_Dynamic(
+                    selector_trained=selector_trained_fold,
+                    tf_strategies={
+                        'TF1': TF1Strategy(),
+                        'TF2': TF2Strategy(),
+                        'TF3': TF3Strategy(),
+                        'TF4': TF4Strategy(),
+                        'TF5': TF5Strategy(),
+                    },
+                    mr_strategies={
+                        'MR1': MR1Strategy(),
+                        'MR2': MR2Strategy(),
+                        'MR32': MR32Strategy(),
+                        'MR42': MR42Strategy(),
+                        'MR5': MR5Strategy(),
+                    },
+                    default_tf='TF4',
+                    default_mr='MR42'
+                )
 
-            # Test slice
-            df_test = df_full.iloc[test_start_pos:test_end_pos + 1].copy()
-            if len(df_test) < 50:
-                continue
+                backtester = BT(
+                    initial_capital=INITIAL_CAPITAL,
+                    use_atr_sizing=False
+                )
 
-            # Precompute default TF/MR signals (tau-independent)
-            tf_sigs, tf_sl_s, tf_tp_s = TF4Strategy().generate_signals(df_test)
-            mr_sigs, mr_sl_s, mr_tp_s = MR42Strategy().generate_signals(df_test)
+                dyn_signals, dyn_sl, dyn_tp = dynamic_strategy.generate_signals(df_test, pair_name)
+                dyn_res = backtester.run(df_test, dyn_signals, 'StrategySelector_Dynamic_WF', dyn_sl, dyn_tp)
 
-            # Baseline PhaseAware (tau-independent)
-            backtester = BT(initial_capital=INITIAL_CAPITAL, use_atr_sizing=False)
-            pa = PhaseAwareStrategy("TF4", "MR42")
-            pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
-            base_res = backtester.run(df_test, pa_signals, "PhaseAware_TF4_MR42_WF", pa_sl, pa_tp)
+                # Baseline on same test slice
+                pa = PhaseAwareStrategy('TF4', 'MR42')
+                pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
+                base_res = backtester.run(df_test, pa_signals, 'PhaseAware_TF4_MR42_WF', pa_sl, pa_tp)
 
-            # Vectorized probabilities on test slice
-            feat_cols = selector.feature_cols
-            X_test = df_test[feat_cols].copy()
-
-            # Bars with NaNs -> force PhaseAware (fallback)
-            valid_mask = ~X_test.isnull().any(axis=1)
-
-            probs = np.full((len(df_test), len(selector.label_encoder.classes_)), np.nan)
-            if valid_mask.any():
-                probs_valid = selector.predict_proba_df(X_test.loc[valid_mask])
-                probs[valid_mask.values] = probs_valid
-
-            classes = list(selector.label_encoder.classes_)
-            # index of predicted class for each bar (only meaningful where valid_mask)
-            pred_idx = np.nanargmax(probs, axis=1)
-            pmax = np.nanmax(probs, axis=1)
-
-            # For each tau: generate signals + backtest
-            for tau in TAUS:
-                signals = pd.Series(0, index=df_test.index, dtype=int)
-                sl = pd.Series(0.0, index=df_test.index)
-                tp = pd.Series(0.0, index=df_test.index)
-
-                # Determine strategy type per bar
-                for i in range(len(df_test)):
-                    # fallback if invalid features or not confident
-                    if (not valid_mask.iloc[i]) or (pmax[i] < tau):
-                        stype = "PhaseAware"
-                    else:
-                        stype = classes[int(pred_idx[i])]
-
-                    if stype == "TrendFollowing":
-                        signals.iloc[i] = int(tf_sigs.iloc[i])
-                        sl.iloc[i] = float(tf_sl_s.iloc[i])
-                        tp.iloc[i] = float(tf_tp_s.iloc[i])
-                    elif stype == "MeanReversion":
-                        signals.iloc[i] = int(mr_sigs.iloc[i])
-                        sl.iloc[i] = float(mr_sl_s.iloc[i])
-                        tp.iloc[i] = float(mr_tp_s.iloc[i])
-                    else:
-                        # PhaseAware fallback by phase
-                        phase = str(df_test["phase"].iloc[i])
-                        if "Trend" in phase:
-                            signals.iloc[i] = int(tf_sigs.iloc[i])
-                            sl.iloc[i] = float(tf_sl_s.iloc[i])
-                            tp.iloc[i] = float(tf_tp_s.iloc[i])
-                        else:
-                            signals.iloc[i] = int(mr_sigs.iloc[i])
-                            sl.iloc[i] = float(mr_sl_s.iloc[i])
-                            tp.iloc[i] = float(mr_tp_s.iloc[i])
-
-                dyn_res = backtester.run(df_test, signals, f"Dynamic_tau_{tau}", sl, tp)
-
-                tau_rows.append({
-                    "Tau": tau,
+                walkforward_rows.append({
                     "Pair": pair_name,
                     "Fold": fold_id,
                     "Train Start": f["train_start_dt"],
                     "Train End": f["train_end_dt"],
                     "Test Start": f["test_start_dt"],
                     "Test End": f["test_end_dt"],
-                    "Baseline Sharpe": base_res.get("sharpe_ratio", np.nan),
-                    "Dynamic Sharpe": dyn_res.get("sharpe_ratio", np.nan),
-                    "Sharpe Δ": dyn_res.get("sharpe_ratio", np.nan) - base_res.get("sharpe_ratio", np.nan),
+                    "Train Rows": int(len(training_data)),
+                    "Test Bars": int(len(df_test)),
                     "Baseline Return (%)": base_res.get("total_return", np.nan),
                     "Dynamic Return (%)": dyn_res.get("total_return", np.nan),
                     "Return Δ": dyn_res.get("total_return", np.nan) - base_res.get("total_return", np.nan),
+                    "Baseline Sharpe": base_res.get("sharpe_ratio", np.nan),
+                    "Dynamic Sharpe": dyn_res.get("sharpe_ratio", np.nan),
+                    "Sharpe Δ": dyn_res.get("sharpe_ratio", np.nan) - base_res.get("sharpe_ratio", np.nan),
                     "Baseline Max DD (%)": base_res.get("max_drawdown", np.nan),
                     "Dynamic Max DD (%)": dyn_res.get("max_drawdown", np.nan),
                     "DD Δ": dyn_res.get("max_drawdown", np.nan) - base_res.get("max_drawdown", np.nan),
-                    "Confident Bars (%)": float((valid_mask & (pmax >= tau)).mean() * 100.0),
                 })
 
-    tau_df = pd.DataFrame(tau_rows)
-    if tau_df.empty:
-        print("✗ Tau sweep produced no results.")
-    else:
-        os.makedirs("results", exist_ok=True)
-        tau_df.to_csv("results/walkforward_tau_sweep_per_fold.csv", index=False)
-        print("Saved: results/walkforward_tau_sweep_per_fold.csv")
+                print(
+                    f"    fold {fold_id}: Sharpe base={base_res['sharpe_ratio']:+.3f} "
+                    f"dyn={dyn_res['sharpe_ratio']:+.3f} (Δ {dyn_res['sharpe_ratio'] - base_res['sharpe_ratio']:+.3f})"
+                )
 
-        # Global summary per tau
-        summary = (tau_df.groupby("Tau", as_index=False)
-                   .agg({
-            "Sharpe Δ": "mean",
-            "Return Δ": "mean",
-            "DD Δ": "mean",
-            "Confident Bars (%)": "mean",
-            "Fold": "count",
-        })
-                   .rename(columns={"Fold": "Rows"}))
-        summary.to_csv("results/walkforward_tau_sweep_summary.csv", index=False)
-        print("Saved: results/walkforward_tau_sweep_summary.csv")
-        print("\nTau sweep summary:")
-        print(summary.to_string(index=False))
+        wf_df = pd.DataFrame(walkforward_rows)
+        if wf_df.empty:
+            print("✗ Walk-forward produced no results.")
+        else:
+            os.makedirs("results", exist_ok=True)
+            wf_df.to_csv("results/walkforward_results_per_fold.csv", index=False)
+            print("Saved: results/walkforward_results_per_fold.csv")
+
+            # Per-pair aggregation (mean across folds)
+            wf_pair = (wf_df.groupby("Pair", as_index=False)
+                       .agg({
+                "Return Δ": "mean",
+                "Sharpe Δ": "mean",
+                "DD Δ": "mean",
+                "Fold": "count",
+            })
+                       .rename(columns={"Fold": "Folds"}))
+            wf_pair.to_csv("results/walkforward_results_per_pair.csv", index=False)
+            print("Saved: results/walkforward_results_per_pair.csv")
+
+            # Overall summary
+            overall = {
+                "Pairs": int(wf_df["Pair"].nunique()),
+                "Folds": int(len(wf_df)),
+                "Avg Return Δ": float(wf_df["Return Δ"].mean()),
+                "Avg Sharpe Δ": float(wf_df["Sharpe Δ"].mean()),
+                "Avg Max DD Δ": float(wf_df["DD Δ"].mean()),
+                "Folds Sharpe Improved": int((wf_df["Sharpe Δ"] > 0).sum()),
+            }
+            pd.DataFrame([overall]).to_csv("results/walkforward_results_summary.csv", index=False)
+            print("Saved: results/walkforward_results_summary.csv")
+
+            print("\nWalk-forward summary:")
+            print(pd.DataFrame([overall]).to_string(index=False))
+
+    # ─────────────────────────────────────────
+    if RUN_TAU_SWEEP:
+        print("\n[4g/5] Walk-forward global tau sweep (out-of-sample)...")
+
+        # TAUS = [0.45, 0.50, 0.55, 0.60, 0.65]
+        TAUS = [0.50, 0.55, 0.60]
+        LABEL_HORIZON_BARS = 20
+
+        tau_rows = []
+
+        for pair_name, df_full in processed_data.items():
+            print(f"\n  --- {pair_name} ---")
+
+            pair_results_full = hardcoded_results.get(pair_name, {})
+            if not pair_results_full:
+                print("    ✗ Missing hardcoded_results for pair; skipping")
+                continue
+
+            folds = generate_walkforward_folds_by_pos(
+                df_full.index,
+                train_years=WF_TRAIN_YEARS,
+                test_months=WF_TEST_MONTHS,
+                step_months=WF_STEP_MONTHS,
+            )
+            if not folds:
+                continue
+
+            for f in folds:
+                fold_id = f["fold"]
+                train_start_pos = f["train_start_pos"]
+                train_end_pos = f["train_end_pos"]
+                test_start_pos = f["test_start_pos"]
+                test_end_pos = f["test_end_pos"]
+
+                label_end_pos = train_end_pos + LABEL_HORIZON_BARS
+                if label_end_pos >= len(df_full):
+                    continue
+
+                # Label slice
+                df_for_labels = df_full.iloc[train_start_pos:label_end_pos + 1].copy()
+
+                strat_results_for_labels = {}
+                for sname, res in pair_results_full.items():
+                    eq = res.get("equity_curve", None)
+                    if eq is None:
+                        continue
+                    strat_results_for_labels[sname] = dict(res)
+                    strat_results_for_labels[sname]["equity_curve"] = eq.loc[df_for_labels.index]
+
+                tracker = StrategyPerformanceTracker(window_days=LABEL_HORIZON_BARS)
+                training_data_all = tracker.compute_strategy_returns(df_for_labels, strat_results_for_labels)
+
+                train_end_dt = df_full.index[train_end_pos]
+                train_start_dt = df_full.index[train_start_pos]
+                train_mask = (
+                        (training_data_all["date"] >= train_start_dt) &
+                        (training_data_all["date"] <= train_end_dt)
+                )
+                training_data = training_data_all.loc[train_mask].copy()
+                if len(training_data) < 200:
+                    continue
+
+                selector = StrategySelector()
+                selector.train(training_data, do_cv=False)
+
+                # Test slice
+                df_test = df_full.iloc[test_start_pos:test_end_pos + 1].copy()
+                if len(df_test) < 50:
+                    continue
+
+                # Precompute default TF/MR signals (tau-independent)
+                tf_sigs, tf_sl_s, tf_tp_s = TF4Strategy().generate_signals(df_test)
+                mr_sigs, mr_sl_s, mr_tp_s = MR42Strategy().generate_signals(df_test)
+
+                # Baseline PhaseAware (tau-independent)
+                backtester = BT(initial_capital=INITIAL_CAPITAL, use_atr_sizing=False)
+                pa = PhaseAwareStrategy("TF4", "MR42")
+                pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
+                base_res = backtester.run(df_test, pa_signals, "PhaseAware_TF4_MR42_WF", pa_sl, pa_tp)
+
+                # Vectorized probabilities on test slice
+                feat_cols = selector.feature_cols
+                X_test = df_test[feat_cols].copy()
+
+                # Bars with NaNs -> force PhaseAware (fallback)
+                valid_mask = ~X_test.isnull().any(axis=1)
+
+                probs = np.full((len(df_test), len(selector.label_encoder.classes_)), np.nan)
+                if valid_mask.any():
+                    probs_valid = selector.predict_proba_df(X_test.loc[valid_mask])
+                    probs[valid_mask.values] = probs_valid
+
+                classes = list(selector.label_encoder.classes_)
+                # index of predicted class for each bar (only meaningful where valid_mask)
+                pred_idx = np.nanargmax(probs, axis=1)
+                pmax = np.nanmax(probs, axis=1)
+
+                # For each tau: generate signals + backtest
+                for tau in TAUS:
+                    signals = pd.Series(0, index=df_test.index, dtype=int)
+                    sl = pd.Series(0.0, index=df_test.index)
+                    tp = pd.Series(0.0, index=df_test.index)
+
+                    # Determine strategy type per bar
+                    for i in range(len(df_test)):
+                        # fallback if invalid features or not confident
+                        if (not valid_mask.iloc[i]) or (pmax[i] < tau):
+                            stype = "PhaseAware"
+                        else:
+                            stype = classes[int(pred_idx[i])]
+
+                        if stype == "TrendFollowing":
+                            signals.iloc[i] = int(tf_sigs.iloc[i])
+                            sl.iloc[i] = float(tf_sl_s.iloc[i])
+                            tp.iloc[i] = float(tf_tp_s.iloc[i])
+                        elif stype == "MeanReversion":
+                            signals.iloc[i] = int(mr_sigs.iloc[i])
+                            sl.iloc[i] = float(mr_sl_s.iloc[i])
+                            tp.iloc[i] = float(mr_tp_s.iloc[i])
+                        else:
+                            # PhaseAware fallback by phase
+                            phase = str(df_test["phase"].iloc[i])
+                            if "Trend" in phase:
+                                signals.iloc[i] = int(tf_sigs.iloc[i])
+                                sl.iloc[i] = float(tf_sl_s.iloc[i])
+                                tp.iloc[i] = float(tf_tp_s.iloc[i])
+                            else:
+                                signals.iloc[i] = int(mr_sigs.iloc[i])
+                                sl.iloc[i] = float(mr_sl_s.iloc[i])
+                                tp.iloc[i] = float(mr_tp_s.iloc[i])
+
+                    dyn_res = backtester.run(df_test, signals, f"Dynamic_tau_{tau}", sl, tp)
+
+                    tau_rows.append({
+                        "Tau": tau,
+                        "Pair": pair_name,
+                        "Fold": fold_id,
+                        "Train Start": f["train_start_dt"],
+                        "Train End": f["train_end_dt"],
+                        "Test Start": f["test_start_dt"],
+                        "Test End": f["test_end_dt"],
+                        "Baseline Sharpe": base_res.get("sharpe_ratio", np.nan),
+                        "Dynamic Sharpe": dyn_res.get("sharpe_ratio", np.nan),
+                        "Sharpe Δ": dyn_res.get("sharpe_ratio", np.nan) - base_res.get("sharpe_ratio", np.nan),
+                        "Baseline Return (%)": base_res.get("total_return", np.nan),
+                        "Dynamic Return (%)": dyn_res.get("total_return", np.nan),
+                        "Return Δ": dyn_res.get("total_return", np.nan) - base_res.get("total_return", np.nan),
+                        "Baseline Max DD (%)": base_res.get("max_drawdown", np.nan),
+                        "Dynamic Max DD (%)": dyn_res.get("max_drawdown", np.nan),
+                        "DD Δ": dyn_res.get("max_drawdown", np.nan) - base_res.get("max_drawdown", np.nan),
+                        "Confident Bars (%)": float((valid_mask & (pmax >= tau)).mean() * 100.0),
+                    })
+
+        tau_df = pd.DataFrame(tau_rows)
+        if tau_df.empty:
+            print("✗ Tau sweep produced no results.")
+        else:
+            os.makedirs("results", exist_ok=True)
+            tau_df.to_csv("results/walkforward_tau_sweep_per_fold.csv", index=False)
+            print("Saved: results/walkforward_tau_sweep_per_fold.csv")
+
+            # Global summary per tau
+            summary = (tau_df.groupby("Tau", as_index=False)
+                       .agg({
+                "Sharpe Δ": "mean",
+                "Return Δ": "mean",
+                "DD Δ": "mean",
+                "Confident Bars (%)": "mean",
+                "Fold": "count",
+            })
+                       .rename(columns={"Fold": "Rows"}))
+            summary.to_csv("results/walkforward_tau_sweep_summary.csv", index=False)
+            print("Saved: results/walkforward_tau_sweep_summary.csv")
+            print("\nTau sweep summary:")
+            print(summary.to_string(index=False))
+
+    # ─────────────────────────────────────────
+    if RUN_POLICY_SWEEP:
+        print("\n[4h/5] Walk-forward policy sweep (tau=0.55) ...")
+
+        POLICIES = [
+            {
+                "name": "tau0.55_only",
+                "tau_enter": 0.55,
+                "tau_exit": 0.50,  # unused when hysteresis=False
+                "min_hold_bars": 0,  # unused when use_min_hold=False
+                "use_hysteresis": False,
+                "use_min_hold": False,
+            },
+            {
+                "name": "tau0.55_hold5",
+                "tau_enter": 0.55,
+                "tau_exit": 0.50,  # unused when hysteresis=False
+                "min_hold_bars": 5,
+                "use_hysteresis": False,
+                "use_min_hold": True,
+            },
+            {
+                "name": "tau0.55_exit0.50_hold5",
+                "tau_enter": 0.55,
+                "tau_exit": 0.50,
+                "min_hold_bars": 5,
+                "use_hysteresis": True,
+                "use_min_hold": True,
+            },
+        ]
+
+        LABEL_HORIZON_BARS = 20
+
+        policy_rows = []
+
+        for pair_name, df_full in processed_data.items():
+            print(f"\n  --- {pair_name} ---")
+
+            pair_results_full = hardcoded_results.get(pair_name, {})
+            if not pair_results_full:
+                print("    ✗ Missing hardcoded_results for pair; skipping")
+                continue
+
+            folds = generate_walkforward_folds_by_pos(
+                df_full.index,
+                train_years=WF_TRAIN_YEARS,
+                test_months=WF_TEST_MONTHS,
+                step_months=WF_STEP_MONTHS,
+            )
+            if not folds:
+                continue
+
+            for f in folds:
+                fold_id = f["fold"]
+                train_start_pos = f["train_start_pos"]
+                train_end_pos = f["train_end_pos"]
+                test_start_pos = f["test_start_pos"]
+                test_end_pos = f["test_end_pos"]
+
+                label_end_pos = train_end_pos + LABEL_HORIZON_BARS
+                if label_end_pos >= len(df_full):
+                    continue
+
+                # ---- training data ----
+                df_for_labels = df_full.iloc[train_start_pos:label_end_pos + 1].copy()
+
+                strat_results_for_labels = {}
+                for sname, res in pair_results_full.items():
+                    eq = res.get("equity_curve", None)
+                    if eq is None:
+                        continue
+                    strat_results_for_labels[sname] = dict(res)
+                    strat_results_for_labels[sname]["equity_curve"] = eq.loc[df_for_labels.index]
+
+                tracker = StrategyPerformanceTracker(window_days=LABEL_HORIZON_BARS)
+                training_data_all = tracker.compute_strategy_returns(df_for_labels, strat_results_for_labels)
+
+                train_end_dt = df_full.index[train_end_pos]
+                train_start_dt = df_full.index[train_start_pos]
+                train_mask = (
+                        (training_data_all["date"] >= train_start_dt) &
+                        (training_data_all["date"] <= train_end_dt)
+                )
+                training_data = training_data_all.loc[train_mask].copy()
+                if len(training_data) < 200:
+                    continue
+
+                selector = StrategySelector()
+                selector.train(training_data, do_cv=False)
+
+                # ---- test slice ----
+                df_test = df_full.iloc[test_start_pos:test_end_pos + 1].copy()
+                if len(df_test) < 50:
+                    continue
+
+                # baseline PhaseAware on test slice (shared across policies)
+                backtester = BT(initial_capital=INITIAL_CAPITAL, use_atr_sizing=False)
+                pa = PhaseAwareStrategy("TF4", "MR42")
+                pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
+                base_res = backtester.run(df_test, pa_signals, "PhaseAware_TF4_MR42_WF", pa_sl, pa_tp)
+
+                # run each policy (dynamic selector backtest)
+                for pol in POLICIES:
+                    dyn_name = f"Dynamic_{pol['name']}"
+                    dynamic_strategy = StrategySelector_Dynamic(
+                        selector_trained={pair_name: selector},
+                        tf_strategies={
+                            'TF1': TF1Strategy(),
+                            'TF2': TF2Strategy(),
+                            'TF3': TF3Strategy(),
+                            'TF4': TF4Strategy(),
+                            'TF5': TF5Strategy(),
+                        },
+                        mr_strategies={
+                            'MR1': MR1Strategy(),
+                            'MR2': MR2Strategy(),
+                            'MR32': MR32Strategy(),
+                            'MR42': MR42Strategy(),
+                            'MR5': MR5Strategy(),
+                        },
+                        default_tf="TF4",
+                        default_mr="MR42",
+                        tau_enter=pol["tau_enter"],
+                        tau_exit=pol["tau_exit"],
+                        min_hold_bars=pol["min_hold_bars"],
+                        use_hysteresis=pol["use_hysteresis"],
+                        use_min_hold=pol["use_min_hold"],
+                    )
+
+                    dyn_signals, dyn_sl, dyn_tp = dynamic_strategy.generate_signals(df_test, pair_name)
+                    dyn_res = backtester.run(df_test, dyn_signals, dyn_name, dyn_sl, dyn_tp)
+
+                    policy_rows.append({
+                        "Policy": pol["name"],
+                        "Pair": pair_name,
+                        "Fold": fold_id,
+                        "Train Start": f["train_start_dt"],
+                        "Train End": f["train_end_dt"],
+                        "Test Start": f["test_start_dt"],
+                        "Test End": f["test_end_dt"],
+                        "Baseline Sharpe": base_res.get("sharpe_ratio", np.nan),
+                        "Dynamic Sharpe": dyn_res.get("sharpe_ratio", np.nan),
+                        "Sharpe Δ": dyn_res.get("sharpe_ratio", np.nan) - base_res.get("sharpe_ratio", np.nan),
+                        "Baseline Return (%)": base_res.get("total_return", np.nan),
+                        "Dynamic Return (%)": dyn_res.get("total_return", np.nan),
+                        "Return Δ": dyn_res.get("total_return", np.nan) - base_res.get("total_return", np.nan),
+                        "Baseline Max DD (%)": base_res.get("max_drawdown", np.nan),
+                        "Dynamic Max DD (%)": dyn_res.get("max_drawdown", np.nan),
+                        "DD Δ": dyn_res.get("max_drawdown", np.nan) - base_res.get("max_drawdown", np.nan),
+                    })
+
+        pol_df = pd.DataFrame(policy_rows)
+        if pol_df.empty:
+            print("✗ Policy sweep produced no results.")
+        else:
+            os.makedirs("results", exist_ok=True)
+            pol_df.to_csv("results/walkforward_policy_sweep_per_fold.csv", index=False)
+            print("Saved: results/walkforward_policy_sweep_per_fold.csv")
+
+            summary = (pol_df.groupby("Policy", as_index=False)
+                       .agg({
+                "Sharpe Δ": "mean",
+                "Return Δ": "mean",
+                "DD Δ": "mean",
+                "Fold": "count",
+            })
+                       .rename(columns={"Fold": "Rows"}))
+            summary.to_csv("results/walkforward_policy_sweep_summary.csv", index=False)
+            print("Saved: results/walkforward_policy_sweep_summary.csv")
+            print("\nPolicy sweep summary:")
+            print(summary.to_string(index=False))
     # ─────────────────────────────────────────
     # VISUALIZATIONS
     # ─────────────────────────────────────────
