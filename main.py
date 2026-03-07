@@ -30,6 +30,7 @@ from src.cache import (
 from src.models import PhaseMLExperiment, PhaseMLPredictor
 from src.strategies import Backtester as BT, PhaseAwareStrategy
 
+from src.repro import set_global_seed, build_run_config, write_manifest
 
 
 # ── Uncomment to force cache refresh ─────
@@ -40,7 +41,10 @@ from src.strategies import Backtester as BT, PhaseAwareStrategy
 # clear_cache('ml_backtest_results')
 # clear_cache()   # clears everything
 # ─────────────────────────────────────────
-
+WF_TRAIN_YEARS = 7
+WF_TEST_MONTHS = 6
+WF_STEP_MONTHS = 6
+LABEL_HORIZON_BARS = 20  # must match StrategyPerformanceTracker(window_days=...)
 # ────────────────────────────────────────
 # RUN FLAGS (toggle expensive experiments)
 # ─────────────────────────────────────────
@@ -57,6 +61,13 @@ DEBUG_FEATURE_COLUMNS = False
 DEBUG_SIGNAL_TYPES = False
 
 os.makedirs("results", exist_ok=True)
+
+# ─────────────────────────────────────────
+# REPRODUCIBILITY
+# ─────────────────────────────────────────
+SEED = 42
+RUN_ID = None  # set to a string to force a specific id; otherwise auto-generated
+
 # ─────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────
@@ -449,6 +460,42 @@ def generate_walkforward_folds_by_pos(
 # ─────────────────────────────────────────────────────
 
 def main():
+    run_cfg = build_run_config(seed=SEED, run_id=RUN_ID)
+    set_global_seed(run_cfg.seed)
+
+    manifest = {
+        "run": {
+            **run_cfg.__dict__,
+            "timestamp_utc": run_cfg.run_id.replace("run_", ""),  # optional; run_id already includes time
+        },
+        "flags": {
+            "RUN_IN_SAMPLE_ABLATION": RUN_IN_SAMPLE_ABLATION,
+            "RUN_WALKFORWARD": RUN_WALKFORWARD,
+            "RUN_TAU_SWEEP": RUN_TAU_SWEEP,
+            "RUN_POLICY_SWEEP": RUN_POLICY_SWEEP,
+            "DEBUG_FEATURE_COLUMNS": DEBUG_FEATURE_COLUMNS,
+            "DEBUG_SIGNAL_TYPES": DEBUG_SIGNAL_TYPES,
+        },
+        "walkforward": {
+            "train_years": WF_TRAIN_YEARS,
+            "test_months": WF_TEST_MONTHS,
+            "step_months": WF_STEP_MONTHS,
+            "label_horizon_bars": LABEL_HORIZON_BARS,
+        },
+        "dynamic_policy": {
+            "tau_enter": 0.55,
+            "tau_exit": 0.50,
+            "min_hold_bars": 5,
+            "use_hysteresis": True,
+            "use_min_hold": True,
+        },
+        # add costs when configurable
+    }
+
+    manifest_path = os.path.join("results", f"run_manifest_{run_cfg.run_id}.json")
+    write_manifest(manifest_path, manifest)
+    print(f"Saved: {manifest_path}")
+
     print('=' * 60)
     print('MARKET PHASE ML - MULTI-PAIR ANALYSIS')
     print('=' * 60)
@@ -1195,10 +1242,7 @@ def main():
         from src.models import StrategyPerformanceTracker, StrategySelector
         from src.strategies import StrategySelector_Dynamic
 
-        WF_TRAIN_YEARS = 7
-        WF_TEST_MONTHS = 6
-        WF_STEP_MONTHS = 6
-        LABEL_HORIZON_BARS = 20  # must match StrategyPerformanceTracker(window_days=...)
+
 
         walkforward_rows = []
 
@@ -1375,7 +1419,6 @@ def main():
 
         # TAUS = [0.45, 0.50, 0.55, 0.60, 0.65]
         TAUS = [0.50, 0.55, 0.60]
-        LABEL_HORIZON_BARS = 20
 
         tau_rows = []
 
@@ -1576,7 +1619,6 @@ def main():
             },
         ]
 
-        LABEL_HORIZON_BARS = 20
 
         policy_rows = []
 
