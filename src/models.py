@@ -34,17 +34,20 @@ class PhaseMLPredictor:
         random_state:      Random seed for reproducibility
     """
 
+
     def __init__(self,
                  train_window:      int  = 504,
                  retrain_freq:      int  = 21,
                  confirmation_bars: int  = 5,
                  smooth_labels:     bool = True,
-                 random_state:      int  = 42):
+                 random_state:      int  = 42,
+                 seed:              int = 42):
         self.train_window      = train_window
         self.retrain_freq      = retrain_freq
         self.confirmation_bars = confirmation_bars
         self.smooth_labels     = smooth_labels
         self.random_state      = random_state
+        self.seed              = int(seed)
         self._exclude_cols     = PhaseMLExperiment.EXCLUDE_COLS
         self._label_encoder    = None
 
@@ -65,10 +68,12 @@ class PhaseMLPredictor:
             learning_rate=0.1,
             subsample=0.8,
             colsample_bytree=0.8,
-            random_state=self.random_state,
+            random_state=self.seed,
+            n_jobs=1,
             eval_metric='mlogloss',    # multi-class log loss
             verbosity=0
         )
+
 
     def fit_predict(self, df: pd.DataFrame) -> pd.Series:
         """
@@ -430,6 +435,7 @@ class PhaseMLExperiment:
             subsample=0.8,
             colsample_bytree=0.8,
             random_state=self.random_state,
+            n_jobs=1,
             eval_metric='logloss',
             objective='binary:logistic',
             verbosity=0,
@@ -822,14 +828,21 @@ class StrategyPerformanceTracker:
             name: results['equity_curve']
             for name, results in strategy_results.items()
         }
-
-        # Align all equity curves to same index
+        # Align all equity curves to the bar index (df.index)
         eq_df = pd.concat(equity_curves, axis=1)
         eq_df.columns = list(equity_curves.keys())
-        eq_df = eq_df.ffill()
+
+        # Force equity curves to have exactly the same index as df (one value per bar)
+        eq_df = eq_df.reindex(df.index).ffill().bfill()
+
+        # Use the aligned length (should match len(df) after reindex, but keep it explicit)
+        n_bars = len(eq_df)
+        last_i = n_bars - self.window_days - 1
+        if last_i <= 0:
+            return pd.DataFrame()
 
         # For each bar, look ahead window_days
-        for i in range(len(df) - self.window_days - 1):
+        for i in range(last_i):
             current_idx = df.index[i]
             lookahead_idx = df.index[i + self.window_days]
 
@@ -876,12 +889,15 @@ class StrategySelector:
     (3-class problem, much more learnable than 31-class)
     """
 
-    def __init__(self, random_state: int = 42):
+    def __init__(self, seed: int = 42):
+        self.seed = int(seed)
         self.model = None
         self.label_encoder = None
         self.feature_cols = None
         self.scaler = None
-        self.random_state = random_state
+        self.random_state = seed
+
+
 
     def get_feature_columns(self) -> list:
         """Features used for prediction."""
@@ -958,9 +974,10 @@ class StrategySelector:
                 learning_rate=0.1,
                 subsample=0.8,
                 colsample_bytree=0.8,
-                random_state=self.random_state,
                 eval_metric='mlogloss',
-                verbosity=0
+                verbosity=0,
+                random_state=self.seed,
+                n_jobs=1
             ))
         ])
 
@@ -969,7 +986,7 @@ class StrategySelector:
             skf = StratifiedKFold(
                 n_splits=cv_folds,
                 shuffle=True,
-                random_state=self.random_state
+                random_state=self.seed
             )
             cv_scores = cross_val_score(
                 cv_pipeline, X, y_encoded, cv=skf, scoring='accuracy'
@@ -990,10 +1007,12 @@ class StrategySelector:
             learning_rate=0.1,
             subsample=0.8,
             colsample_bytree=0.8,
-            random_state=self.random_state,
             eval_metric='mlogloss',
-            verbosity=0
+            verbosity=0,
+            random_state=self.seed,
+            n_jobs=1,
         )
+
         self.model.fit(X_scaled, y_encoded)
         self.feature_cols = self.get_feature_columns()
 
