@@ -194,3 +194,9 @@ models/saved/
 
 # Cache files
 data/cache/
+
+# Run artifacts
+results/run_manifest_*.json
+results/run_manifest_latest.json
+results/*.csv
+results/*.png

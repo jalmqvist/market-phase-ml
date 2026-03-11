@@ -1013,11 +1013,11 @@ class Backtester:
     """
 
     def __init__(self,
-                 initial_capital: float = 10000.0,
+                 initial_capital: float = 10_000.0,
                  spread_pips: float = 1.0,
+                 slippage_pips: float = 0.5,
                  pip_value: float = 0.0001,
                  commission_per_trade: float = 0.0,
-                 slippage_pips: float = 0.5,
                  use_atr_sizing: bool = False,
                  risk_pct: float = 0.01):
         """
@@ -1034,22 +1034,34 @@ class Backtester:
                                   Only used when use_atr_sizing=True.
         """
         self.initial_capital = initial_capital
-        self.spread_pips = spread_pips
-        self.pip_value = pip_value
-        self.commission = commission_per_trade
-        self.slippage = slippage_pips
+        self.spread_pips = float(spread_pips)
+        self.slippage_pips = float(slippage_pips)
+        self.slippage = self.slippage_pips
+        self.commission_per_trade = float(commission_per_trade)
+        self.commission = self.commission_per_trade
+        self.pip_value = float(pip_value)
         self.use_atr_sizing = use_atr_sizing
         self.risk_pct = risk_pct
 
     def _calculate_trade_cost(self, price: float) -> float:
         """
-        Calculate round-trip cost as fraction of price.
+        Calculate ONE-WAY transaction cost as fraction of price.
 
-        Includes spread, slippage and commission.
+        We apply this once on entry and once on exit, so:
+          - spread_pips is treated as the full bid/ask spread (round-trip), split half per side
+          - slippage_pips is treated as per-side slippage
+          - commission_per_trade is treated as round-trip, split half per side
         """
-        spread_cost = self.spread_pips * self.pip_value / price
-        slippage_cost = self.slippage * self.pip_value / price
-        commission_cost = self.commission / self.initial_capital
+        spread_one_way = 0.5 * self.spread_pips
+        slippage_one_way = self.slippage_pips  # or self.slippage if you keep alias
+        commission_one_way = 0.5 * self.commission_per_trade  # or self.commission
+
+        spread_cost = (spread_one_way * self.pip_value) / price
+        slippage_cost = (slippage_one_way * self.pip_value) / price
+
+        # Commission as fraction of notional/equity is a simplification; keep for now.
+        commission_cost = commission_one_way / self.initial_capital
+
         return spread_cost + slippage_cost + commission_cost
 
     def _get_position_size(self,
@@ -1127,27 +1139,24 @@ class Backtester:
         use_sl = False        # whether SL is active for current trade
         use_tp = False        # whether TP is active for current trade
         trades = []
-        equity_curve = [capital]
 
-        # Verify required columns
-        required_cols = ['Close', 'High', 'Low', 'phase', 'atr', 'stop_atr_mult']
-        missing = [c for c in required_cols if c not in df.columns]
-        if missing:
-            raise ValueError(f"DataFrame missing required columns: {missing}")
+        equity_curve = []
 
         try:
-            for i in range(1, len(df)):
-                current_date  = df.index[i]
+            for i in range(len(df)):
+                current_date = df.index[i]
                 current_close = float(df['Close'].iloc[i])
-                current_high  = float(df['High'].iloc[i])
-                current_low   = float(df['Low'].iloc[i])
-                # If signals is a pandas Series/DataFrame column use positional indexing; else list/np array works with []
-                if hasattr(signals, "iloc"):
-                    signal = float(signals.iloc[i - 1])
+                current_high = float(df['High'].iloc[i])
+                current_low = float(df['Low'].iloc[i])
+
+                # Use previous bar's signal (your existing convention)
+                if i == 0:
+                    signal = 0.0
                 else:
-                    signal = float(signals[i - 1])
-                phase         = str(df['phase'].iloc[i])
-                atr           = float(df['atr'].iloc[i])
+                    signal = float(signals.iloc[i - 1]) if hasattr(signals, "iloc") else float(signals[i - 1])
+
+                phase = str(df['phase'].iloc[i])
+                atr = float(df['atr'].iloc[i])
                 stop_atr_mult = float(df['stop_atr_mult'].iloc[i])
 
                 exit_price    = None
@@ -1318,36 +1327,24 @@ class Backtester:
                         sl_price = entry_price * (1.0 + bar_sl_pct) if use_sl else 0.0
                         tp_price = entry_price * (1.0 - bar_tp_pct) if use_tp else 0.0
                 equity_curve.append(capital)
-
-        except Exception as e:
+        except Exception:
             import traceback
             traceback.print_exc()
+            raise
 
         # ── Close any open position at end of data ────────────────────────────
         if position != 0:
             final_price = float(df['Close'].iloc[-1])
-            exit_cost   = self._calculate_trade_cost(final_price)
+            exit_cost = self._calculate_trade_cost(final_price)
 
             if position == 1:
-                pnl_pct = (
-                    (final_price - entry_price) /
-                    entry_price - exit_cost
-                )
+                pnl_pct = ((final_price - entry_price) / entry_price - exit_cost)
             else:
-                pnl_pct = (
-                    (entry_price - final_price) /
-                    entry_price - exit_cost
-                )
+                pnl_pct = ((entry_price - final_price) / entry_price - exit_cost)
 
             if self.use_atr_sizing:
-                price_move = (
-                    final_price - entry_price
-                    if position == 1
-                    else entry_price - final_price
-                )
-                pnl = entry_position_size * price_move - (
-                    entry_position_size * entry_price * exit_cost
-                )
+                price_move = (final_price - entry_price) if position == 1 else (entry_price - final_price)
+                pnl = entry_position_size * price_move - (entry_position_size * entry_price * exit_cost)
             else:
                 pnl = capital * pnl_pct * entry_size_mult
 
@@ -1369,18 +1366,22 @@ class Backtester:
                 exit_reason='end_of_data'
             ))
 
-            equity_curve.append(capital)
-
+            # update the last bar equity to reflect final close
+            if equity_curve:
+                equity_curve[-1] = capital
 
 
         # Build metrics
         metrics = self._calculate_metrics(trades, equity_curve, df.index)
         metrics['strategy']     = strategy_name
         metrics['trades']       = trades
+        metrics['equity_curve'] = pd.Series(equity_curve, index=df.index)
+        """
         metrics['equity_curve'] = pd.Series(
             equity_curve[1:],  # drop the initial capital entry
             index=df.index[:len(equity_curve) - 1]
         )
+        """
         metrics['sizing_method'] = (
             'atr_constant_risk' if self.use_atr_sizing else 'hardcoded_multiplier'
         )
@@ -1435,7 +1436,7 @@ class Backtester:
             'exit_reason': t.exit_reason,
         } for t in trades])
 
-        equity = pd.Series(equity_curve)
+        equity = pd.Series(equity_curve, index=dates)
         returns = equity.pct_change().dropna()
 
         start_equity = float(equity_curve[0])
@@ -1460,14 +1461,13 @@ class Backtester:
 
         profit_factor = (
             gross_profit / gross_loss
-            if gross_loss > 0 else np.inf
+            if gross_loss > 0 else 0.0
         )
 
         win_rate = (
-                len(trades_df[trades_df['pnl'] > 0]) /
-                len(trades_df) * 100
+            (trades_df['pnl'] > 0).mean() * 100
+            if len(trades_df) > 0 else 0.0
         )
-
         phase_performance = trades_df.groupby('phase').agg(
             n_trades=('pnl', 'count'),
             total_pnl=('pnl', 'sum'),
@@ -1519,11 +1519,17 @@ class Backtester:
 #  UPDATED run_backtests
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_backtests(df: pd.DataFrame,
-                  initial_capital: float = 10000.0,
-                  use_atr_sizing:  bool  = False,
-                  tf_strategy_name: str  = 'TF3',
-                  mr_strategy_name: str  = 'MR3') -> dict:
+def run_backtests(
+        df: pd.DataFrame,
+        initial_capital: float = 10000.0,
+        use_atr_sizing:  bool  = False,
+        tf_strategy_name: str  = 'TF3',
+        mr_strategy_name: str  = 'MR3',
+        spread_pips: float = 1.0,
+        slippage_pips: float = 0.5,
+        commission_per_trade: float = 0.0,
+        pip_value: float = 0.0001,
+) -> dict:
     """
     Run all strategies and return combined results.
 
@@ -1558,10 +1564,13 @@ def run_backtests(df: pd.DataFrame,
             f"DataFrame missing required columns: {missing}\n"
             f"Available columns: {list(df.columns)}"
         )
-
     backtester = Backtester(
         initial_capital=initial_capital,
-        use_atr_sizing=use_atr_sizing
+        spread_pips=spread_pips,
+        pip_value=pip_value,
+        commission_per_trade=commission_per_trade,
+        slippage_pips=slippage_pips,
+        use_atr_sizing=use_atr_sizing,
     )
 
     tf_strategies = {
@@ -1594,6 +1603,7 @@ def run_backtests(df: pd.DataFrame,
         results[name] = backtester.run(df, signals, name, sl_pct, tp_pct)
 
     # ── [C] All PhaseAware combinations ──────────────────────────────────────
+    """
     for tf_name in tf_strategies.keys():
         for mr_name in mr_strategies.keys():
             pa = PhaseAwareStrategy(tf_name, mr_name)
@@ -1602,7 +1612,11 @@ def run_backtests(df: pd.DataFrame,
             results[pa.name] = backtester.run(
                 df, pa_signals, pa.name, pa_sl, pa_tp
             )
-
+    """
+    pa = PhaseAwareStrategy(tf_strategy_name, mr_strategy_name)
+    print(f'[PA] Running PhaseAware ({tf_strategy_name} + {mr_strategy_name})...')
+    pa_signals, pa_sl, pa_tp = pa.generate_signals(df)
+    results[pa.name] = backtester.run(df, pa_signals, pa.name, pa_sl, pa_tp)
     # ── Summary table ─────────────────────────────────────────────────────────
     print('\n' + '=' * 70)
     print('STRATEGY COMPARISON RESULTS')
@@ -1650,18 +1664,21 @@ class StrategySelector_Dynamic:
 
     This reduces computation and tests if ML selection improves performance.
     """
+
     def __init__(
-        self,
-        selector_trained: dict,
-        tf_strategies: dict,
-        mr_strategies: dict,
-        default_tf: str = "TF4",
-        default_mr: str = "MR42",
-        tau_enter: float = 0.55,
-        tau_exit: float = 0.50,
-        min_hold_bars: int = 5,
-        use_hysteresis: bool = True,
-        use_min_hold: bool = True,
+            self,
+            selector_trained: dict,
+            tf_strategies: dict,
+            mr_strategies: dict,
+            default_tf: str = "TF4",
+            default_mr: str = "MR42",
+            tau_enter: float = 0.55,
+            tau_exit: float = 0.50,
+            min_hold_bars: int = 5,
+            use_hysteresis: bool = True,
+            use_min_hold: bool = True,
+            p_margin: float = 0.15,
+            use_prob_margin: bool = True,
     ):
         self.selector_trained = selector_trained
         self.tf_strategies = tf_strategies
@@ -1674,6 +1691,9 @@ class StrategySelector_Dynamic:
         self.min_hold_bars = int(min_hold_bars)
         self.use_hysteresis = bool(use_hysteresis)
         self.use_min_hold = bool(use_min_hold)
+
+        self.p_margin = float(p_margin)
+        self.use_prob_margin = bool(use_prob_margin)
 
         if self.use_hysteresis and not (self.tau_exit < self.tau_enter):
             raise ValueError("Hysteresis requires tau_exit < tau_enter.")
@@ -1693,7 +1713,7 @@ class StrategySelector_Dynamic:
         self.default_mr = default_mr
         self.name = 'StrategySelector_Dynamic'
 
-    def generate_signals(self, df: pd.DataFrame, pair_name: str):
+    def generate_signals(self, df: pd.DataFrame, pair_name: str, return_selected: bool = False):
         """
         Generate signals by dynamically selecting strategy at each bar.
 
@@ -1730,28 +1750,48 @@ class StrategySelector_Dynamic:
         current_type = "PhaseAware"
         bars_since_switch = 0
 
+        use_vol_guard = getattr(self, "use_vol_guard", True)
+        atr_guard_q = getattr(self, "atr_pct_guard_quantile", 0.95)
+
+        atr_guard = None
+        if use_vol_guard and "atr_pct" in df.columns:
+            atr_guard = float(df["atr_pct"].quantile(atr_guard_q))
+
         for i in range(len(df)):
             pmax = -1.0
+            p2 = -1.0
             pred_type = None
 
             if selector is not None:
                 features_df = df.loc[df.index[[i]], selector.feature_cols].copy()
                 if not features_df.isnull().any().any():
                     try:
-                        probs = selector.predict_proba(features_df)
-                        pred_type = max(probs, key=probs.get)
-                        pmax = float(probs[pred_type])
+                        probs = selector.predict_proba(features_df)  # dict: class -> prob
+
+                        # sort probs descending to get best and runner-up
+                        sorted_probs = sorted(probs.items(), key=lambda kv: kv[1], reverse=True)
+
+                        pred_type = sorted_probs[0][0]
+                        pmax = float(sorted_probs[0][1])
+                        p2 = float(sorted_probs[1][1]) if len(sorted_probs) > 1 else -1.0
+
                     except Exception as e:
                         print(f"  ⚠️  Selector prediction failed at bar {i}: {e}")
                         pred_type = None
                         pmax = -1.0
+                        p2 = -1.0
 
             # 1) Propose a type based on gating policy (ignoring min-hold)
             proposed_type = current_type
 
+            margin_ok = True
+            if self.use_prob_margin:
+                # require clear separation between top-1 and top-2 classes
+                margin_ok = (pred_type is not None) and (p2 >= 0.0) and ((pmax - p2) >= self.p_margin)
+
             if self.use_hysteresis:
                 if current_type == "PhaseAware":
-                    if pred_type is not None and pmax >= self.tau_enter:
+                    if pred_type is not None and pmax >= self.tau_enter and margin_ok:
                         proposed_type = pred_type
                 else:
                     # in TF/MR: revert to PhaseAware if confidence drops
@@ -1759,19 +1799,27 @@ class StrategySelector_Dynamic:
                         proposed_type = "PhaseAware"
                     else:
                         # allow TF<->MR switch only when confident
-                        if pred_type != current_type and pmax >= self.tau_enter:
+                        if pred_type != current_type and pmax >= self.tau_enter and margin_ok:
                             proposed_type = pred_type
             else:
-                if pred_type is not None and pmax >= self.tau_enter:
+                if pred_type is not None and pmax >= self.tau_enter and margin_ok:
                     proposed_type = pred_type
                 else:
+                    proposed_type = "PhaseAware"
+
+
+            # Volatility spike guard: force baseline behavior
+            if atr_guard is not None:
+                atr_pct_i = float(df["atr_pct"].iloc[i])
+                if np.isfinite(atr_pct_i) and atr_pct_i >= atr_guard:
                     proposed_type = "PhaseAware"
 
             # 2) Apply min-hold ONLY if the type would change
             next_type = proposed_type
             if self.use_min_hold and (proposed_type != current_type):
-                if bars_since_switch < self.min_hold_bars:
-                    next_type = current_type  # block the switch
+                # allow reverting to PhaseAware at any time (risk-off)
+                if proposed_type != "PhaseAware" and bars_since_switch < self.min_hold_bars:
+                    next_type = current_type
 
             # 3) Bookkeeping
             if next_type != current_type:
@@ -1814,4 +1862,7 @@ class StrategySelector_Dynamic:
         signals_s = pd.Series(signals, index=df.index)
         sl_s = pd.Series(sl_pcts, index=df.index)
         tp_s = pd.Series(tp_pcts, index=df.index)
+        if return_selected:
+            selected_s = pd.Series(selected_strategies, index=df.index, dtype="object")
+            return signals_s, sl_s, tp_s, selected_s
         return signals_s, sl_s, tp_s

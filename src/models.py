@@ -828,14 +828,21 @@ class StrategyPerformanceTracker:
             name: results['equity_curve']
             for name, results in strategy_results.items()
         }
-
-        # Align all equity curves to same index
+        # Align all equity curves to the bar index (df.index)
         eq_df = pd.concat(equity_curves, axis=1)
         eq_df.columns = list(equity_curves.keys())
-        eq_df = eq_df.ffill()
+
+        # Force equity curves to have exactly the same index as df (one value per bar)
+        eq_df = eq_df.reindex(df.index).ffill().bfill()
+
+        # Use the aligned length (should match len(df) after reindex, but keep it explicit)
+        n_bars = len(eq_df)
+        last_i = n_bars - self.window_days - 1
+        if last_i <= 0:
+            return pd.DataFrame()
 
         # For each bar, look ahead window_days
-        for i in range(len(df) - self.window_days - 1):
+        for i in range(last_i):
             current_idx = df.index[i]
             lookahead_idx = df.index[i + self.window_days]
 
