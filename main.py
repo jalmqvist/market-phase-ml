@@ -1,6 +1,8 @@
 # main.py
-
+import sys
+import importlib.metadata as importlib_metadata
 import matplotlib
+import platform
 #matplotlib.use('TkAgg')
 matplotlib.use('Agg')
 
@@ -83,6 +85,12 @@ DYNAMIC_POLICY_KWARGS = dict(
     use_min_hold=True,
 )
 WF_TAU = 0.62
+
+# vol guard settings
+VOL_GUARD_Q = 0.80
+# VOL_GUARD_MODE = "force_phaseaware"
+VOL_GUARD_MODE = "no_mr"
+VOL_FEATURE = "atr_pct"
 # ─────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────
@@ -97,6 +105,34 @@ USE_ATR_SIZING      = False     # Set True to compare ATR-based sizing
 # ─────────────────────────────────────────────────────
 # HELPER FUNCTIONS
 # ─────────────────────────────────────────────────────
+def _pkg_version(name: str):
+    try:
+        return importlib_metadata.version(name)
+    except Exception:
+        return None
+
+
+def _versions_block(run_cfg):
+    return {
+        "python": sys.version,
+        # these are already captured in RunConfig, but keeping them here makes the manifest self-contained
+        "python_version": getattr(run_cfg, "python_version", None),
+        "platform": getattr(run_cfg, "platform", None),
+        "git_sha": getattr(run_cfg, "git_sha", None),
+        "packages": {
+            "numpy": _pkg_version("numpy"),
+            "pandas": _pkg_version("pandas"),
+            "scikit-learn": _pkg_version("scikit-learn"),
+            "xgboost": _pkg_version("xgboost"),
+            "yfinance": _pkg_version("yfinance"),
+            "ta": _pkg_version("ta"),
+            "matplotlib": _pkg_version("matplotlib"),
+            "seaborn": _pkg_version("seaborn"),
+            "jupyter": _pkg_version("jupyter"),
+            "notebook": _pkg_version("notebook"),
+            "ipykernel": _pkg_version("ipykernel"),
+        },
+    }
 
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -487,7 +523,7 @@ def main():
     manifest = {
         "run": {
             **run_cfg.__dict__,
-            "timestamp_utc": run_cfg.run_id.replace("run_", ""),  # optional; run_id already includes time
+            "timestamp_utc": run_cfg.run_id.replace("run_", ""),
         },
         "flags": {
             "RUN_IN_SAMPLE_ABLATION": RUN_IN_SAMPLE_ABLATION,
@@ -502,13 +538,38 @@ def main():
             "test_months": WF_TEST_MONTHS,
             "step_months": WF_STEP_MONTHS,
             "label_horizon_bars": LABEL_HORIZON_BARS,
+            "wf_tau": WF_TAU,
+            "wf_tau_exit": max(0.0, WF_TAU - 0.05),
         },
         "dynamic_policy": {
-            "tau_enter": 0.62,
-            "tau_exit": 0.57,
-            "min_hold_bars": 10,
-            "use_hysteresis": True,
-            "use_min_hold": True,
+            **DYNAMIC_POLICY_KWARGS,
+            "tau_enter": WF_TAU,
+            "tau_exit": max(0.0, WF_TAU - 0.05),
+        },
+        "vol_guard": {
+            "feature": VOL_FEATURE,
+            "quantile": VOL_GUARD_Q,
+            "mode": VOL_GUARD_MODE,
+            "threshold_source": "per-fold train slice quantile (no leakage)",
+            "comparison": f"{VOL_FEATURE} >= vol_thr",
+        },
+        "versions": {
+            "python_full": sys.version,
+            "python_version": platform.python_version(),
+            "platform": platform.platform(),
+            "packages": {
+                "numpy": _pkg_version("numpy"),
+                "pandas": _pkg_version("pandas"),
+                "scikit-learn": _pkg_version("scikit-learn"),
+                "xgboost": _pkg_version("xgboost"),
+                "yfinance": _pkg_version("yfinance"),
+                "ta": _pkg_version("ta"),
+                "matplotlib": _pkg_version("matplotlib"),
+                "seaborn": _pkg_version("seaborn"),
+                "jupyter": _pkg_version("jupyter"),
+                "notebook": _pkg_version("notebook"),
+                "ipykernel": _pkg_version("ipykernel"),
+            },
         },
         "costs": {
             "spread_pips": SPREAD_PIPS,
@@ -1387,7 +1448,6 @@ def main():
                     if eq is None:
                         continue
                     missing = df_for_labels.index.difference(eq.index)
-                    missing = df_for_labels.index.difference(eq.index)
                     if len(missing) > 0:
                         print("Missing in eq:", list(missing[:10]), "count:", len(missing))
                         print("eq index range:", eq.index.min(), eq.index.max(), "len:", len(eq))
@@ -1429,6 +1489,29 @@ def main():
                 if len(df_test) < 50:
                     continue
 
+                # ---- Volatility guard (compute ONCE per fold; no leakage; bar-level scale) ----
+                df_train_bars = df_full.iloc[train_start_pos:train_end_pos + 1].copy()
+
+                vol_thr = None
+                if "atr_pct" in df_train_bars.columns:
+                    s_train = df_train_bars["atr_pct"].dropna()
+                    if len(s_train) > 0:
+                        vol_thr = float(s_train.quantile(VOL_GUARD_Q))
+
+                vol_threshold_by_pair = {pair_name: vol_thr} if vol_thr is not None else {}
+
+                # (optional) DEBUG once per fold
+                print(f"[vol-guard] {pair_name=} {fold_id=} vol_thr is None? {vol_thr is None}")
+                if vol_thr is not None and "atr_pct" in df_test.columns:
+                    s_test = df_test["atr_pct"].dropna()
+                    if len(s_test) and len(s_train):
+                        print(
+                            f"    [vol-guard] train atr_pct min/med/max="
+                            f"{float(s_train.min()):.6f}/{float(s_train.median()):.6f}/{float(s_train.max()):.6f} | "
+                            f"test min/med/max="
+                            f"{float(s_test.min()):.6f}/{float(s_test.median()):.6f}/{float(s_test.max()):.6f} | "
+                            f"thr(q={VOL_GUARD_Q:.2f})={vol_thr:.6f} frac>thr={float((s_test >= vol_thr).mean()):.3f}"
+                        )
                 # Dynamic selector strategy (per-fold)
                 selector_trained_fold = {pair_name: selector}
                 dynamic_strategy = StrategySelector_Dynamic(
@@ -1452,6 +1535,10 @@ def main():
                     tau_enter=WF_TAU,
                     tau_exit=max(0.0, WF_TAU - 0.05),
                     **DYNAMIC_POLICY_KWARGS,
+                    use_vol_guard=True,
+                    vol_feature=VOL_FEATURE,
+                    vol_threshold_by_pair=vol_threshold_by_pair,
+                    vol_guard_mode=VOL_GUARD_MODE,
                 )
                 pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
                 backtester = BT(
@@ -1619,9 +1706,33 @@ def main():
                 if len(df_test) < 50:
                     continue
 
-                # Precompute default TF/MR signals (tau-independent)
-                tf_sigs, tf_sl_s, tf_tp_s = TF4Strategy().generate_signals(df_test)
-                mr_sigs, mr_sl_s, mr_tp_s = MR42Strategy().generate_signals(df_test)
+                # ---- Volatility guard (compute ONCE per fold; tau-independent) ----
+                df_train_bars = df_full.iloc[train_start_pos:train_end_pos + 1].copy()
+
+                vol_thr = None
+                if "atr_pct" in df_train_bars.columns:
+                    s_train = df_train_bars["atr_pct"].dropna()
+                    if len(s_train) > 0:
+                        vol_thr = float(s_train.quantile(VOL_GUARD_Q))
+
+                vol_threshold_by_pair = {pair_name: vol_thr} if vol_thr is not None else {}
+
+                # DEBUG (optional; once per fold, not per tau)
+                print(f"[vol-guard] {pair_name=} {fold_id=} vol_thr is None? {vol_thr is None}")
+                if vol_thr is not None and "atr_pct" in df_test.columns:
+                    s_test = df_test["atr_pct"].dropna()
+                    if len(s_test) and len(s_train):
+                        print(
+                            f"    [vol-guard] train atr_pct min/med/max="
+                            f"{float(s_train.min()):.6f}/{float(s_train.median()):.6f}/{float(s_train.max()):.6f} | "
+                            f"test min/med/max="
+                            f"{float(s_test.min()):.6f}/{float(s_test.median()):.6f}/{float(s_test.max()):.6f} | "
+                            f"thr(q={VOL_GUARD_Q:.2f})={vol_thr:.6f} frac>thr={float((s_test >= vol_thr).mean()):.3f}"
+                        )
+
+                # (optional) remove these if unused; currently you precompute but do not use:
+                # tf_sigs, tf_sl_s, tf_tp_s = TF4Strategy().generate_signals(df_test)
+                # mr_sigs, mr_sl_s, mr_tp_s = MR42Strategy().generate_signals(df_test)
 
                 # Baseline PhaseAware (tau-independent)
                 pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
@@ -1660,6 +1771,10 @@ def main():
                         tau_enter=tau,
                         tau_exit=max(0.0, tau - 0.05),
                         **DYNAMIC_POLICY_KWARGS,
+                        use_vol_guard=True,
+                        vol_feature=VOL_FEATURE,
+                        vol_threshold_by_pair=vol_threshold_by_pair,
+                        vol_guard_mode=VOL_GUARD_MODE
                     )
 
                     dyn_signals, dyn_sl, dyn_tp, selected_s = dyn_strategy.generate_signals(df_test, pair_name,
@@ -1692,6 +1807,8 @@ def main():
                         "Trades Δ": dyn_res.get("n_trades", np.nan) - base_res.get("n_trades", np.nan),
                         "Confident Bars (%)": conf_pct,
                     })
+
+
 
         tau_df = pd.DataFrame(tau_rows)
         if tau_df.empty:
@@ -1828,6 +1945,16 @@ def main():
                 if len(df_test) < 50:
                     continue
 
+                # ---- train bars slice (for vol-guard calibration; no leakage) ----
+                df_train_bars = df_full.iloc[train_start_pos:train_end_pos + 1].copy()
+
+                vol_thr = None
+                if "atr_pct" in df_train_bars.columns:
+                    s_train = df_train_bars["atr_pct"].dropna()
+                    if len(s_train) > 0:
+                        vol_thr = float(s_train.quantile(VOL_GUARD_Q))
+
+
                 # baseline PhaseAware on test slice (shared across policies)
                 pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
 
@@ -1843,9 +1970,13 @@ def main():
                 pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
                 base_res = backtester.run(df_test, pa_signals, "PhaseAware_TF4_MR42_WF", pa_sl, pa_tp)
 
+                # ---- vol guard per fold (optional, but consistent with 4f/4g) ----
+                vol_threshold_by_pair = {pair_name: vol_thr} if vol_thr is not None else {}
+
                 # run each policy (dynamic selector backtest)
                 for pol in POLICIES:
                     dyn_name = f"Dynamic_{pol['name']}"
+
                     dynamic_strategy = StrategySelector_Dynamic(
                         selector_trained={pair_name: selector},
                         tf_strategies={
@@ -1864,12 +1995,29 @@ def main():
                         },
                         default_tf="TF4",
                         default_mr="MR42",
-                        **{**DYNAMIC_POLICY_KWARGS, "tau_enter": tau, "tau_exit": max(0.0, tau - 0.05)},
+
+                        # policy-specific gating params (override defaults)
+                        tau_enter=pol["tau_enter"],
+                        tau_exit=pol["tau_exit"],
+                        min_hold_bars=pol["min_hold_bars"],
+                        use_hysteresis=pol["use_hysteresis"],
+                        use_min_hold=pol["use_min_hold"],
+
+                        # keep your prob margin settings etc
+                        p_margin=DYNAMIC_POLICY_KWARGS.get("p_margin", 0.20),
+                        use_prob_margin=DYNAMIC_POLICY_KWARGS.get("use_prob_margin", True),
+
+                        # vol guard (optional)
+                        use_vol_guard=True,
+                        vol_feature=VOL_FEATURE,
+                        vol_threshold_by_pair=vol_threshold_by_pair,
+                        vol_guard_mode=VOL_GUARD_MODE,
                     )
 
-                    dyn_signals, dyn_sl, dyn_tp, selected_s = dyn_strategy.generate_signals(df_test, pair_name,
-                                                                                            return_selected=True)
-                    dyn_res = backtester.run(df_test, dyn_signals, f"Dynamic_tau_{tau}", dyn_sl, dyn_tp)
+                    dyn_signals, dyn_sl, dyn_tp, selected_s = dynamic_strategy.generate_signals(
+                        df_test, pair_name, return_selected=True
+                    )
+                    dyn_res = backtester.run(df_test, dyn_signals, dyn_name, dyn_sl, dyn_tp)
 
                     conf_pct = float((selected_s != "PhaseAware").mean() * 100.0)
 
