@@ -1679,6 +1679,11 @@ class StrategySelector_Dynamic:
             use_min_hold: bool = True,
             p_margin: float = 0.15,
             use_prob_margin: bool = True,
+            # --- volatility guard ---
+            use_vol_guard: bool = False,
+            vol_feature: str = "atr_pct",
+            vol_threshold_by_pair: dict | None = None,
+            vol_guard_mode: str = "force_phaseaware",  # or "no_mr"
     ):
         self.selector_trained = selector_trained
         self.tf_strategies = tf_strategies
@@ -1712,6 +1717,10 @@ class StrategySelector_Dynamic:
         self.default_tf = default_tf
         self.default_mr = default_mr
         self.name = 'StrategySelector_Dynamic'
+        self.use_vol_guard = bool(use_vol_guard)
+        self.vol_feature = str(vol_feature)
+        self.vol_threshold_by_pair = vol_threshold_by_pair or {}
+        self.vol_guard_mode = str(vol_guard_mode)
 
     def generate_signals(self, df: pd.DataFrame, pair_name: str, return_selected: bool = False):
         """
@@ -1750,12 +1759,19 @@ class StrategySelector_Dynamic:
         current_type = "PhaseAware"
         bars_since_switch = 0
 
-        use_vol_guard = getattr(self, "use_vol_guard", True)
-        atr_guard_q = getattr(self, "atr_pct_guard_quantile", 0.95)
+        # --- Volatility guard config (threshold provided externally per fold)
+        use_vol_guard = getattr(self, "use_vol_guard", False)
+        vol_feature = getattr(self, "vol_feature", "atr_pct")
+        vol_threshold_by_pair = getattr(self, "vol_threshold_by_pair", {}) or {}
+        vol_guard_mode = getattr(self, "vol_guard_mode", "force_phaseaware")
 
-        atr_guard = None
-        if use_vol_guard and "atr_pct" in df.columns:
-            atr_guard = float(df["atr_pct"].quantile(atr_guard_q))
+        vol_thr = None
+        if use_vol_guard:
+            vol_thr = vol_threshold_by_pair.get(pair_name, None)
+
+        # DEBUG
+        if use_vol_guard and vol_thr is None:
+            print(f"[vol-guard] No threshold for {pair_name} (guard inactive)")
 
         for i in range(len(df)):
             pmax = -1.0
@@ -1808,11 +1824,14 @@ class StrategySelector_Dynamic:
                     proposed_type = "PhaseAware"
 
 
-            # Volatility spike guard: force baseline behavior
-            if atr_guard is not None:
-                atr_pct_i = float(df["atr_pct"].iloc[i])
-                if np.isfinite(atr_pct_i) and atr_pct_i >= atr_guard:
-                    proposed_type = "PhaseAware"
+            # Volatility spike guard (Option B): force baseline behavior when vol is extreme
+            if use_vol_guard and (vol_thr is not None) and (vol_feature in df.columns):
+                v = df[vol_feature].iloc[i]
+                if pd.notna(v) and float(v) >= float(vol_thr):
+                    if vol_guard_mode == "force_phaseaware":
+                        proposed_type = "PhaseAware"
+                    elif vol_guard_mode == "no_mr" and proposed_type == "MeanReversion":
+                        proposed_type = "PhaseAware"
 
             # 2) Apply min-hold ONLY if the type would change
             next_type = proposed_type
