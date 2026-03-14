@@ -1684,13 +1684,8 @@ class StrategySelector_Dynamic:
             vol_feature: str = "atr_pct",
             vol_threshold_by_pair: dict | None = None,
             vol_guard_mode: str = "force_phaseaware",  # or "no_mr"
+            disable_vol_guard_usd_quote: bool = False,
     ):
-        self.selector_trained = selector_trained
-        self.tf_strategies = tf_strategies
-        self.mr_strategies = mr_strategies
-        self.default_tf = default_tf
-        self.default_mr = default_mr
-
         self.tau_enter = float(tau_enter)
         self.tau_exit = float(tau_exit)
         self.min_hold_bars = int(min_hold_bars)
@@ -1700,7 +1695,9 @@ class StrategySelector_Dynamic:
         self.p_margin = float(p_margin)
         self.use_prob_margin = bool(use_prob_margin)
 
-        if self.use_hysteresis and not (self.tau_exit < self.tau_enter):
+        self.disable_vol_guard_usd_quote = bool(disable_vol_guard_usd_quote)
+
+        if use_hysteresis and not (tau_exit < tau_enter):
             raise ValueError("Hysteresis requires tau_exit < tau_enter.")
 
         """
@@ -1721,6 +1718,16 @@ class StrategySelector_Dynamic:
         self.vol_feature = str(vol_feature)
         self.vol_threshold_by_pair = vol_threshold_by_pair or {}
         self.vol_guard_mode = str(vol_guard_mode)
+
+    @staticmethod
+    def _usd_role(pair_name: str) -> str:
+        if pair_name.startswith("USD"):
+            return "USD-base"
+        if pair_name.endswith("USD"):
+            return "USD-quote"
+        if "USD" in pair_name:
+            return "USD-in-cross"
+        return "No-USD"
 
     def generate_signals(self, df: pd.DataFrame, pair_name: str, return_selected: bool = False):
         """
@@ -1764,6 +1771,14 @@ class StrategySelector_Dynamic:
         vol_feature = getattr(self, "vol_feature", "atr_pct")
         vol_threshold_by_pair = getattr(self, "vol_threshold_by_pair", {}) or {}
         vol_guard_mode = getattr(self, "vol_guard_mode", "force_phaseaware")
+
+        # Disable guard for USD-quote pairs (global robustness knob)
+        if use_vol_guard and getattr(self, "disable_vol_guard_usd_quote", False):
+            if self._usd_role(pair_name) == "USD-quote":
+                use_vol_guard = False
+
+        if getattr(self, "disable_vol_guard_usd_quote", False) and self._usd_role(pair_name) == "USD-quote":
+            print(f"[vol-guard] {pair_name}: USD-quote -> guard disabled")
 
         vol_thr = None
         if use_vol_guard:
@@ -1823,7 +1838,7 @@ class StrategySelector_Dynamic:
                 else:
                     proposed_type = "PhaseAware"
 
-
+            """
             # Volatility spike guard (Option B): force baseline behavior when vol is extreme
             if use_vol_guard and (vol_thr is not None) and (vol_feature in df.columns):
                 v = df[vol_feature].iloc[i]
@@ -1832,6 +1847,23 @@ class StrategySelector_Dynamic:
                         proposed_type = "PhaseAware"
                     elif vol_guard_mode == "no_mr" and proposed_type == "MeanReversion":
                         proposed_type = "PhaseAware"
+            """
+            # Volatility spike guard: group-aware action when vol is extreme
+            if use_vol_guard and (vol_thr is not None) and (vol_feature in df.columns):
+                v = df[vol_feature].iloc[i]
+                if pd.notna(v) and float(v) >= float(vol_thr):
+                    usd_role = self._usd_role(pair_name)
+
+                    # (1) USD-quote pairs: always revert to TrendFollowing in volatility spikes
+                    if usd_role == "USD-quote":
+                        proposed_type = "TrendFollowing"
+
+                    # Non-USD-quote: keep your best-performing guard action
+                    else:
+                        if vol_guard_mode == "force_phaseaware":
+                            proposed_type = "PhaseAware"
+                        elif vol_guard_mode == "no_mr" and proposed_type == "MeanReversion":
+                            proposed_type = "PhaseAware"
 
             # 2) Apply min-hold ONLY if the type would change
             next_type = proposed_type

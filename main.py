@@ -86,11 +86,16 @@ DYNAMIC_POLICY_KWARGS = dict(
 )
 WF_TAU = 0.62
 
+# ─────────────────────────────────────────────────────
+# VOLATILITY GUARD (global knobs)
+# ─────────────────────────────────────────────────────
+USE_VOL_GUARD = True
+
 # vol guard settings
 VOL_GUARD_Q = 0.80
-# VOL_GUARD_MODE = "force_phaseaware"
-VOL_GUARD_MODE = "no_mr"
+VOL_GUARD_MODE = "no_mr"          # "force_phaseaware" or "no_mr"
 VOL_FEATURE = "atr_pct"
+DISABLE_VOL_GUARD_USD_QUOTE = False  # we are NOT disabling anymore
 # ─────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────
@@ -549,9 +554,13 @@ def main():
         "vol_guard": {
             "feature": VOL_FEATURE,
             "quantile": VOL_GUARD_Q,
-            "mode": VOL_GUARD_MODE,
+            "mode_default": VOL_GUARD_MODE,  # e.g. "no_mr"
             "threshold_source": "per-fold train slice quantile (no leakage)",
             "comparison": f"{VOL_FEATURE} >= vol_thr",
+            "overrides": {
+                # run31: USD-quote pairs force TF on volatility spikes
+                "USD-quote": "force_tf",
+            },
         },
         "versions": {
             "python_full": sys.version,
@@ -1535,10 +1544,11 @@ def main():
                     tau_enter=WF_TAU,
                     tau_exit=max(0.0, WF_TAU - 0.05),
                     **DYNAMIC_POLICY_KWARGS,
-                    use_vol_guard=True,
+                    use_vol_guard=USE_VOL_GUARD,
                     vol_feature=VOL_FEATURE,
                     vol_threshold_by_pair=vol_threshold_by_pair,
                     vol_guard_mode=VOL_GUARD_MODE,
+                    disable_vol_guard_usd_quote=DISABLE_VOL_GUARD_USD_QUOTE,
                 )
                 pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
                 backtester = BT(
@@ -1771,10 +1781,11 @@ def main():
                         tau_enter=tau,
                         tau_exit=max(0.0, tau - 0.05),
                         **DYNAMIC_POLICY_KWARGS,
-                        use_vol_guard=True,
+                        use_vol_guard=USE_VOL_GUARD,
                         vol_feature=VOL_FEATURE,
                         vol_threshold_by_pair=vol_threshold_by_pair,
-                        vol_guard_mode=VOL_GUARD_MODE
+                        vol_guard_mode=VOL_GUARD_MODE,
+                        disable_vol_guard_usd_quote=DISABLE_VOL_GUARD_USD_QUOTE,
                     )
 
                     dyn_signals, dyn_sl, dyn_tp, selected_s = dyn_strategy.generate_signals(df_test, pair_name,
@@ -2008,10 +2019,11 @@ def main():
                         use_prob_margin=DYNAMIC_POLICY_KWARGS.get("use_prob_margin", True),
 
                         # vol guard (optional)
-                        use_vol_guard=True,
+                        use_vol_guard=USE_VOL_GUARD,
                         vol_feature=VOL_FEATURE,
                         vol_threshold_by_pair=vol_threshold_by_pair,
                         vol_guard_mode=VOL_GUARD_MODE,
+                        disable_vol_guard_usd_quote=DISABLE_VOL_GUARD_USD_QUOTE,
                     )
 
                     dyn_signals, dyn_sl, dyn_tp, selected_s = dynamic_strategy.generate_signals(
