@@ -54,7 +54,7 @@ RUN_IN_SAMPLE_ABLATION = True
 RUN_WALKFORWARD = True
 
 # Expensive sweeps (disable by default)
-RUN_TAU_SWEEP = False
+RUN_TAU_SWEEP = True
 RUN_POLICY_SWEEP = False
 
 # Debug
@@ -91,11 +91,15 @@ WF_TAU = 0.62
 # ─────────────────────────────────────────────────────
 USE_VOL_GUARD = True
 
-# vol guard settings
 VOL_GUARD_Q = 0.80
-VOL_GUARD_MODE = "no_mr"          # "force_phaseaware" or "no_mr"
+VOL_GUARD_MODE = "no_mr"          # default action for non-USD-quote pairs on spike
 VOL_FEATURE = "atr_pct"
-DISABLE_VOL_GUARD_USD_QUOTE = False  # we are NOT disabling anymore
+
+# Group-aware override (implemented inside StrategySelector_Dynamic):
+# - USD-quote pairs (e.g., EURUSD, GBPUSD, AUDUSD, NZDUSD): force TF on volatility spikes
+# - All other pairs: apply VOL_GUARD_MODE on spikes
+USD_QUOTE_VOL_SPIKE_OVERRIDE = "force_tf"
+
 # ─────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────
@@ -1548,7 +1552,6 @@ def main():
                     vol_feature=VOL_FEATURE,
                     vol_threshold_by_pair=vol_threshold_by_pair,
                     vol_guard_mode=VOL_GUARD_MODE,
-                    disable_vol_guard_usd_quote=DISABLE_VOL_GUARD_USD_QUOTE,
                 )
                 pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
                 backtester = BT(
@@ -1785,7 +1788,6 @@ def main():
                         vol_feature=VOL_FEATURE,
                         vol_threshold_by_pair=vol_threshold_by_pair,
                         vol_guard_mode=VOL_GUARD_MODE,
-                        disable_vol_guard_usd_quote=DISABLE_VOL_GUARD_USD_QUOTE,
                     )
 
                     dyn_signals, dyn_sl, dyn_tp, selected_s = dyn_strategy.generate_signals(df_test, pair_name,
@@ -2023,7 +2025,6 @@ def main():
                         vol_feature=VOL_FEATURE,
                         vol_threshold_by_pair=vol_threshold_by_pair,
                         vol_guard_mode=VOL_GUARD_MODE,
-                        disable_vol_guard_usd_quote=DISABLE_VOL_GUARD_USD_QUOTE,
                     )
 
                     dyn_signals, dyn_sl, dyn_tp, selected_s = dynamic_strategy.generate_signals(

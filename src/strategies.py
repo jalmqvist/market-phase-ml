@@ -1683,8 +1683,7 @@ class StrategySelector_Dynamic:
             use_vol_guard: bool = False,
             vol_feature: str = "atr_pct",
             vol_threshold_by_pair: dict | None = None,
-            vol_guard_mode: str = "force_phaseaware",  # or "no_mr"
-            disable_vol_guard_usd_quote: bool = False,
+            vol_guard_mode: str = "no_mr", # or "force_phaseaware",
     ):
         self.tau_enter = float(tau_enter)
         self.tau_exit = float(tau_exit)
@@ -1694,8 +1693,6 @@ class StrategySelector_Dynamic:
 
         self.p_margin = float(p_margin)
         self.use_prob_margin = bool(use_prob_margin)
-
-        self.disable_vol_guard_usd_quote = bool(disable_vol_guard_usd_quote)
 
         if use_hysteresis and not (tau_exit < tau_enter):
             raise ValueError("Hysteresis requires tau_exit < tau_enter.")
