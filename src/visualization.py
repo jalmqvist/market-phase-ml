@@ -1565,4 +1565,405 @@ def plot_sizing_comparison(hardcoded_results: dict,
     out_path = FIGURES_DIR / f'sizing_comparison_{pair_name}.png'
     plt.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f'✓ Saved {out_path}')
+
+
+# ---------------------------------------------------------------------------
+# Vol-guard / switching diagnostics plots
+# ---------------------------------------------------------------------------
+
+import os as _os
+import re as _re
+
+_SELECTED_MAP = {
+    "PhaseAware": 0,
+    "TrendFollowing": 1,
+    "MeanReversion": 2,
+}
+_SELECTED_LABELS = ["PhaseAware", "TrendFollowing", "MeanReversion"]
+
+# Colours consistent with existing spike/near-spike convention
+_COL_SPIKE = "#e63946"
+_COL_NEAR_SPIKE = "#f4a261"
+_COL_VOL_LINE = "#457b9d"
+
+
+def _parse_pair_fold(path: str):
+    """Extract (pair, fold) from filenames like selected_series_EURUSD_fold0.csv
+    or equity_debug_EURUSD_fold0.csv.  Returns None on no match."""
+    base = _os.path.basename(path)
+    m = _re.match(
+        r"(?:selected_series|equity_debug)_(?P<pair>[A-Z]{6})_fold(?P<fold>\d+)\.csv$",
+        base,
+    )
+    if not m:
+        return None
+    return m.group("pair"), int(m.group("fold"))
+
+
+def _shade_regions(ax, x, mask: "pd.Series", color: str, alpha: float, label: str) -> None:
+    """Shade contiguous True runs of *mask* on *ax* using axvspan."""
+    in_run = False
+    start = None
+    for i in range(len(mask)):
+        val = bool(mask.iloc[i])
+        if val and not in_run:
+            in_run = True
+            start = x.iloc[i] if hasattr(x, "iloc") else x[i]
+        elif not val and in_run:
+            end = x.iloc[i] if hasattr(x, "iloc") else x[i]
+            ax.axvspan(start, end, color=color, alpha=alpha, label=label)
+            in_run = False
+            start = None
+    # Close any run still open at the end of the series
+    if in_run:
+        end = x.iloc[-1] if hasattr(x, "iloc") else x[-1]
+        ax.axvspan(start, end, color=color, alpha=alpha, label=label)
+
+
+def plot_selected_timeline_from_csv(
+    csv_path: str,
+    out_dir: str = "figures",
+    title_prefix: str = "Selected strategy timeline",
+) -> str:
+    """Read a ``selected_series_{PAIR}_fold{N}.csv`` produced by main.py and
+    write a switch-timeline PNG to *out_dir*.
+
+    Expected CSV columns: date, selected, atr_pct, vol_thr, near_thr, spike,
+    near_spike.  Missing columns are handled gracefully.
+
+    Returns the path of the written PNG.
+    """
+    df = pd.read_csv(csv_path)
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date").reset_index(drop=True)
+
+    info = _parse_pair_fold(csv_path)
+    pair, fold = info if info else ("PAIR", -1)
+
+    if "selected" not in df.columns:
+        raise ValueError(f"{csv_path}: missing required column 'selected'")
+
+    df["selected_code"] = df["selected"].map(
+        lambda v: _SELECTED_MAP.get(str(v), np.nan)
+    ).astype("float")
+
+    spike = (
+        df["spike"].astype(bool)
+        if "spike" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    near_spike = (
+        df["near_spike"].astype(bool)
+        if "near_spike" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    sw = df["selected"] != df["selected"].shift(1)
+    sw.iloc[0] = False
+
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    out_path = _os.path.join(out_dir, f"switch_timeline_{pair}_fold{fold}.png")
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+
+    x = df["date"] if "date" in df.columns else pd.Series(range(len(df)))
+    _shade_regions(ax, x, near_spike, _COL_NEAR_SPIKE, 0.15, "near-spike")
+    _shade_regions(ax, x, spike, _COL_SPIKE, 0.18, "spike")
+
+    ax.step(x, df["selected_code"], where="post", linewidth=2, color="black", label="selected")
+    if sw.any():
+        ax.scatter(
+            x[sw.values], df.loc[sw.values, "selected_code"],
+            s=14, color="#1d3557", alpha=0.8, label="switch",
+        )
+
+    ax.set_yticks([0, 1, 2])
+    ax.set_yticklabels(_SELECTED_LABELS)
+    ax.set_ylim(-0.3, 2.3)
+    ax.set_title(f"{title_prefix}: {pair} fold={fold}")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Selected policy type")
+
+    # Secondary axis: volatility feature
+    vol_col = next(
+        (c for c in ["atr_pct", "VOL_FEATURE", "vol"] if c in df.columns),
+        None,
+    )
+    if vol_col:
+        ax2 = ax.twinx()
+        ax2.plot(x, df[vol_col].astype(float), color=_COL_VOL_LINE, alpha=0.35, linewidth=1.2, label=vol_col)
+        ax2.set_ylabel(vol_col)
+        if "vol_thr" in df.columns:
+            thr_val = pd.to_numeric(df["vol_thr"], errors="coerce").iloc[0]
+            if np.isfinite(thr_val):
+                ax2.axhline(thr_val, color=_COL_SPIKE, linestyle="--", linewidth=1.0, alpha=0.8)
+        if "near_thr" in df.columns:
+            nthr_val = pd.to_numeric(df["near_thr"], errors="coerce").iloc[0]
+            if np.isfinite(nthr_val):
+                ax2.axhline(nthr_val, color=_COL_NEAR_SPIKE, linestyle="--", linewidth=1.0, alpha=0.8)
+
+    # Deduplicate legend entries
+    handles, labels = ax.get_legend_handles_labels()
+    uniq: dict = {}
+    for h, lbl in zip(handles, labels):
+        if lbl not in uniq:
+            uniq[lbl] = h
+    ax.legend(list(uniq.values()), list(uniq.keys()), loc="upper left", frameon=True)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    return out_path
+
+
+def plot_selected_timelines(
+    selected_series_dir: str = "results",
+    out_dir: str = "figures",
+) -> list:
+    """Generate switch-timeline PNGs for every ``selected_series_*.csv`` in
+    *selected_series_dir*.  Returns list of written image paths."""
+    out_paths = []
+    if not _os.path.isdir(selected_series_dir):
+        return out_paths
+    for fn in sorted(_os.listdir(selected_series_dir)):
+        if fn.startswith("selected_series_") and fn.endswith(".csv"):
+            try:
+                p = plot_selected_timeline_from_csv(
+                    _os.path.join(selected_series_dir, fn), out_dir=out_dir
+                )
+                out_paths.append(p)
+            except Exception as exc:
+                print(f"[plot_selected_timelines] skipped {fn}: {exc}")
+    return out_paths
+
+
+def plot_vol_guard_group_bars(
+    summary_csv: str = "results/vol_guard_diagnostics_summary.csv",
+    out_dir: str = "figures",
+) -> str:
+    """Bar plots summarising vol-guard diagnostics by USD role.
+
+    Reads ``summary_csv`` (GroupBy / Group / spike_pct / near_spike_pct /
+    switches_per_1000_bars / mr_on_spike_pct / tf_on_spike_pct /
+    phaseaware_on_spike_pct columns) and writes a 3-panel PNG.
+
+    Returns the path of the written PNG or an empty string if the file is
+    missing / contains no usable rows.
+    """
+    if not _os.path.isfile(summary_csv):
+        print(f"[plot_vol_guard_group_bars] {summary_csv} not found; skipping")
+        return ""
+
+    try:
+        df = pd.read_csv(summary_csv)
+    except Exception as exc:
+        print(f"[plot_vol_guard_group_bars] could not read {summary_csv}: {exc}")
+        return ""
+
+    usd = df[df["GroupBy"] == "USD_role"].copy() if "GroupBy" in df.columns else pd.DataFrame()
+    if usd.empty:
+        print(f"[plot_vol_guard_group_bars] no 'USD_role' rows in {summary_csv}; skipping")
+        return ""
+
+    order = ["No-USD", "USD-base", "USD-quote", "USD-in-cross"]
+    usd["Group"] = pd.Categorical(usd["Group"], categories=order, ordered=True)
+    usd = usd.sort_values("Group").reset_index(drop=True)
+
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    out_path = _os.path.join(out_dir, "vol_guard_diagnostics_usd_role.png")
+
+    fig, axes = plt.subplots(3, 1, figsize=(11, 12), sharex=True)
+    x = np.arange(len(usd))
+    labels = usd["Group"].astype(str).tolist()
+
+    # Panel 1: spike frequency
+    axes[0].bar(x - 0.15, usd["spike_pct"], width=0.3, label="spike_pct", color=_COL_SPIKE, alpha=0.75)
+    axes[0].bar(x + 0.15, usd["near_spike_pct"], width=0.3, label="near_spike_pct", color=_COL_NEAR_SPIKE, alpha=0.75)
+    axes[0].set_ylabel("% bars")
+    axes[0].set_title("Volatility spike frequency (by USD role)")
+    axes[0].legend()
+
+    # Panel 2: switching rate
+    axes[1].bar(x, usd["switches_per_1000_bars"], width=0.5, color="#1d3557", alpha=0.8)
+    axes[1].set_ylabel("switches / 1000 bars")
+    axes[1].set_title("Switching rate (by USD role)")
+
+    # Panel 3: selection on spike bars
+    axes[2].bar(x - 0.2, usd["tf_on_spike_pct"], width=0.2, label="TF on spike", color="#2a9d8f", alpha=0.85)
+    axes[2].bar(x,       usd["mr_on_spike_pct"], width=0.2, label="MR on spike", color="#e76f51", alpha=0.85)
+    axes[2].bar(x + 0.2, usd["phaseaware_on_spike_pct"], width=0.2, label="PhaseAware on spike", color=_COL_VOL_LINE, alpha=0.85)
+    axes[2].set_ylabel("% of spike bars")
+    axes[2].set_title("Selected policy type on spike bars (by USD role)")
+    axes[2].legend()
+
+    axes[2].set_xticks(x)
+    axes[2].set_xticklabels(labels, rotation=0)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    return out_path
+
+
+def plot_equity_debug_from_csv(
+    csv_path: str,
+    out_dir: str = "figures",
+) -> str:
+    """Read an ``equity_debug_{PAIR}_fold{N}.csv`` produced by main.py and
+    write a 2-panel PNG showing:
+
+    - Panel 1: baseline vs dynamic equity curves with near-spike / spike shading.
+    - Panel 2: drawdown of both curves and ATR% with threshold lines.
+
+    Returns the path of the written PNG.
+    """
+    df = pd.read_csv(csv_path)
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date").reset_index(drop=True)
+
+    info = _parse_pair_fold(csv_path)
+    pair, fold = info if info else ("PAIR", -1)
+
+    x = df["date"] if "date" in df.columns else pd.Series(range(len(df)))
+
+    spike = (
+        df["spike"].astype(bool)
+        if "spike" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    near_spike = (
+        df["near_spike"].astype(bool)
+        if "near_spike" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+
+    has_eq = "equity_baseline" in df.columns and "equity_dynamic" in df.columns
+
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    out_path = _os.path.join(out_dir, f"equity_debug_{pair}_fold{fold}.png")
+
+    fig, axes = plt.subplots(2, 1, figsize=(14, 9), sharex=True)
+
+    # ── Panel 1: equity curves ──────────────────────────────────────────────
+    ax1 = axes[0]
+    _shade_regions(ax1, x, near_spike, _COL_NEAR_SPIKE, 0.12, "near-spike")
+    _shade_regions(ax1, x, spike, _COL_SPIKE, 0.16, "spike")
+
+    if has_eq:
+        eq_base = pd.to_numeric(df["equity_baseline"], errors="coerce")
+        eq_dyn  = pd.to_numeric(df["equity_dynamic"],  errors="coerce")
+        ax1.plot(x, eq_base, color="#1d3557", linewidth=1.5, label="baseline (PhaseAware)")
+        ax1.plot(x, eq_dyn,  color="#2a9d8f", linewidth=1.5, label="dynamic (selector)")
+    else:
+        ax1.text(0.5, 0.5, "No equity data", ha="center", va="center", transform=ax1.transAxes)
+
+    handles, labels = ax1.get_legend_handles_labels()
+    uniq: dict = {}
+    for h, lbl in zip(handles, labels):
+        if lbl not in uniq:
+            uniq[lbl] = h
+    ax1.legend(list(uniq.values()), list(uniq.keys()), loc="upper left", frameon=True)
+    ax1.set_title(f"Equity vs volatility spikes: {pair} fold={fold}")
+    ax1.set_ylabel("Equity ($)")
+    ax1.grid(True, alpha=0.3)
+
+    # ── Panel 2: drawdown + ATR% ────────────────────────────────────────────
+    ax2 = axes[1]
+    _shade_regions(ax2, x, near_spike, _COL_NEAR_SPIKE, 0.12, "near-spike")
+    _shade_regions(ax2, x, spike, _COL_SPIKE, 0.16, "spike")
+
+    if has_eq:
+        def _drawdown(s: "pd.Series") -> "pd.Series":
+            s = pd.to_numeric(s, errors="coerce")
+            roll_max = s.expanding().max()
+            return (s - roll_max) / roll_max * 100
+
+        ax2.plot(x, _drawdown(df["equity_baseline"]), color="#1d3557", linewidth=1.2,
+                 linestyle="--", alpha=0.7, label="DD baseline")
+        ax2.plot(x, _drawdown(df["equity_dynamic"]),  color="#2a9d8f", linewidth=1.2,
+                 linestyle="--", alpha=0.7, label="DD dynamic")
+        ax2.axhline(0, color="black", linewidth=0.6, alpha=0.5)
+        ax2.set_ylabel("Drawdown (%)", color="black")
+        ax2.grid(True, alpha=0.3)
+
+    # Overlay ATR% on secondary axis if present
+    vol_col = next(
+        (c for c in ["atr_pct", "VOL_FEATURE", "vol"] if c in df.columns),
+        None,
+    )
+    if vol_col:
+        ax2r = ax2.twinx()
+        ax2r.plot(x, pd.to_numeric(df[vol_col], errors="coerce"),
+                  color=_COL_VOL_LINE, alpha=0.4, linewidth=1.0, label=vol_col)
+        ax2r.set_ylabel(vol_col, color=_COL_VOL_LINE)
+        if "vol_thr" in df.columns:
+            thr_val = pd.to_numeric(df["vol_thr"], errors="coerce").iloc[0]
+            if np.isfinite(thr_val):
+                ax2r.axhline(thr_val, color=_COL_SPIKE, linestyle="--", linewidth=1.0, alpha=0.8)
+        if "near_thr" in df.columns:
+            nthr_val = pd.to_numeric(df["near_thr"], errors="coerce").iloc[0]
+            if np.isfinite(nthr_val):
+                ax2r.axhline(nthr_val, color=_COL_NEAR_SPIKE, linestyle="--", linewidth=1.0, alpha=0.8)
+
+    ax2.set_xlabel("Date")
+    handles2, labels2 = ax2.get_legend_handles_labels()
+    uniq2: dict = {}
+    for h, lbl in zip(handles2, labels2):
+        if lbl not in uniq2:
+            uniq2[lbl] = h
+    ax2.legend(list(uniq2.values()), list(uniq2.keys()), loc="lower left", frameon=True)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    return out_path
+
+
+def plot_equity_debug_all(
+    results_dir: str = "results",
+    out_dir: str = "figures",
+) -> list:
+    """Generate equity-debug PNGs for every ``equity_debug_*.csv`` in
+    *results_dir*.  Returns list of written image paths."""
+    out_paths = []
+    if not _os.path.isdir(results_dir):
+        return out_paths
+    for fn in sorted(_os.listdir(results_dir)):
+        if fn.startswith("equity_debug_") and fn.endswith(".csv"):
+            try:
+                p = plot_equity_debug_from_csv(
+                    _os.path.join(results_dir, fn), out_dir=out_dir
+                )
+                out_paths.append(p)
+            except Exception as exc:
+                print(f"[plot_equity_debug_all] skipped {fn}: {exc}")
+    return out_paths
+
+
+def plot_vol_guard_diagnostics_all(
+    results_dir: str = "results",
+    figures_dir: str = "figures",
+) -> dict:
+    """Convenience wrapper: generate all vol-guard diagnostics plots.
+
+    Generates:
+    - Switch timeline plots from ``selected_series_*.csv``
+    - USD-role summary bar plot from ``vol_guard_diagnostics_summary.csv``
+    - Equity-vs-spikes plots from ``equity_debug_*.csv``
+
+    Missing input files are handled gracefully.  Returns a dict mapping
+    plot category to the list (or path) of written files.
+    """
+    out: dict = {}
+    out["switch_timelines"] = plot_selected_timelines(
+        selected_series_dir=results_dir, out_dir=figures_dir
+    )
+    out["usd_role_bars"] = plot_vol_guard_group_bars(
+        summary_csv=_os.path.join(results_dir, "vol_guard_diagnostics_summary.csv"),
+        out_dir=figures_dir,
+    )
+    out["equity_debug"] = plot_equity_debug_all(
+        results_dir=results_dir, out_dir=figures_dir
+    )
+    return out

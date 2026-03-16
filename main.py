@@ -62,6 +62,11 @@ DEBUG_BASELINE_KEYS = False
 DEBUG_FEATURE_COLUMNS = False
 DEBUG_SIGNAL_TYPES = False
 
+# Equity-curve debug logging (per-fold CSV output for visualisation)
+DEBUG_SAVE_EQUITY_SERIES = True   # set False to suppress all equity_debug / selected_series output
+DEBUG_PAIRS = ["EURUSD", "AUDUSD", "USDCAD", "USDJPY"]  # pairs to save debug CSVs for
+DEBUG_MAX_EQUITY_FOLDS = 1        # save at most this many folds per pair (keeps artifacts small)
+
 os.makedirs("results", exist_ok=True)
 
 # ─────────────────────────────────────────
@@ -91,6 +96,7 @@ VOL_GUARD_Q = 0.80
 # VOL_GUARD_MODE = "force_phaseaware"
 VOL_GUARD_MODE = "no_mr"
 VOL_FEATURE = "atr_pct"
+VOL_GUARD_NEAR_MULT = 0.90   # near_thr = VOL_GUARD_NEAR_MULT * vol_thr; used for debug CSV shading only
 # ─────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────
@@ -1549,13 +1555,89 @@ def main():
                     pip_value=pip_value,
                     use_atr_sizing=False,
                 )
-                dyn_signals, dyn_sl, dyn_tp = dynamic_strategy.generate_signals(df_test, pair_name)
+                # Determine whether to capture per-bar selection for debug output
+                _save_debug = (
+                    DEBUG_SAVE_EQUITY_SERIES
+                    and pair_name in DEBUG_PAIRS
+                    and fold_id < DEBUG_MAX_EQUITY_FOLDS
+                )
+                if _save_debug:
+                    dyn_signals, dyn_sl, dyn_tp, _selected_s = dynamic_strategy.generate_signals(
+                        df_test, pair_name, return_selected=True
+                    )
+                else:
+                    dyn_signals, dyn_sl, dyn_tp = dynamic_strategy.generate_signals(df_test, pair_name)
+                    _selected_s = None
                 dyn_res = backtester.run(df_test, dyn_signals, 'StrategySelector_Dynamic_WF', dyn_sl, dyn_tp)
 
                 # Baseline on same test slice
                 pa = PhaseAwareStrategy('TF4', 'MR42')
                 pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
                 base_res = backtester.run(df_test, pa_signals, 'PhaseAware_TF4_MR42_WF', pa_sl, pa_tp)
+
+                # ── Debug CSV output: selected_series and equity_debug ─────────
+                if _save_debug:
+                    os.makedirs("results", exist_ok=True)
+                    near_thr_debug = (VOL_GUARD_NEAR_MULT * vol_thr) if vol_thr is not None else None
+                    _vol_s = (
+                        df_test[VOL_FEATURE]
+                        if VOL_FEATURE in df_test.columns
+                        else pd.Series(np.nan, index=df_test.index)
+                    )
+
+                    # selected_series CSV (for switch timeline plots)
+                    try:
+                        sel_df = pd.DataFrame({
+                            "date": df_test.index,
+                            "selected": (
+                                _selected_s.values if _selected_s is not None
+                                else np.full(len(df_test), np.nan)
+                            ),
+                            "atr_pct": _vol_s.values,
+                            "vol_thr": vol_thr if vol_thr is not None else np.nan,
+                            "near_thr": near_thr_debug if near_thr_debug is not None else np.nan,
+                            "spike": (
+                                (_vol_s >= vol_thr).values
+                                if vol_thr is not None else np.zeros(len(df_test), dtype=bool)
+                            ),
+                            "near_spike": (
+                                (_vol_s >= near_thr_debug).values
+                                if near_thr_debug is not None else np.zeros(len(df_test), dtype=bool)
+                            ),
+                        })
+                        sel_path = f"results/selected_series_{pair_name}_fold{fold_id}.csv"
+                        sel_df.to_csv(sel_path, index=False)
+                        print(f"    [debug] Saved {sel_path}")
+                    except Exception as _e:
+                        print(f"    [debug] selected_series save failed: {_e}")
+
+                    # equity_debug CSV (for equity-vs-spikes plots)
+                    try:
+                        eq_base = base_res.get("equity_curve")
+                        eq_dyn = dyn_res.get("equity_curve")
+                        if eq_base is not None and eq_dyn is not None:
+                            eq_df = pd.DataFrame({
+                                "date": df_test.index,
+                                "equity_baseline": eq_base.reindex(df_test.index).values,
+                                "equity_dynamic": eq_dyn.reindex(df_test.index).values,
+                                "atr_pct": _vol_s.values,
+                                "vol_thr": vol_thr if vol_thr is not None else np.nan,
+                                "near_thr": near_thr_debug if near_thr_debug is not None else np.nan,
+                                "spike": (
+                                    (_vol_s >= vol_thr).values
+                                    if vol_thr is not None else np.zeros(len(df_test), dtype=bool)
+                                ),
+                                "near_spike": (
+                                    (_vol_s >= near_thr_debug).values
+                                    if near_thr_debug is not None else np.zeros(len(df_test), dtype=bool)
+                                ),
+                            })
+                            eq_path = f"results/equity_debug_{pair_name}_fold{fold_id}.csv"
+                            eq_df.to_csv(eq_path, index=False)
+                            print(f"    [debug] Saved {eq_path}")
+                    except Exception as _e:
+                        print(f"    [debug] equity_debug save failed: {_e}")
+                # ──────────────────────────────────────────────────────────────
 
                 walkforward_rows.append({
                     "Pair": pair_name,
