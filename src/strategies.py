@@ -1683,14 +1683,11 @@ class StrategySelector_Dynamic:
             use_vol_guard: bool = False,
             vol_feature: str = "atr_pct",
             vol_threshold_by_pair: dict | None = None,
-            vol_guard_mode: str = "force_phaseaware",  # or "no_mr"
+            vol_guard_mode: str = "no_mr", # or "force_phaseaware",
+            # --- NEW: max-hold reset ---
+            max_hold_bars: int = 20,
+            use_max_hold: bool = True,
     ):
-        self.selector_trained = selector_trained
-        self.tf_strategies = tf_strategies
-        self.mr_strategies = mr_strategies
-        self.default_tf = default_tf
-        self.default_mr = default_mr
-
         self.tau_enter = float(tau_enter)
         self.tau_exit = float(tau_exit)
         self.min_hold_bars = int(min_hold_bars)
@@ -1700,7 +1697,10 @@ class StrategySelector_Dynamic:
         self.p_margin = float(p_margin)
         self.use_prob_margin = bool(use_prob_margin)
 
-        if self.use_hysteresis and not (self.tau_exit < self.tau_enter):
+        self.use_max_hold = bool(use_max_hold)
+        self.max_hold_bars = int(max_hold_bars)
+
+        if use_hysteresis and not (tau_exit < tau_enter):
             raise ValueError("Hysteresis requires tau_exit < tau_enter.")
 
         """
@@ -1721,6 +1721,16 @@ class StrategySelector_Dynamic:
         self.vol_feature = str(vol_feature)
         self.vol_threshold_by_pair = vol_threshold_by_pair or {}
         self.vol_guard_mode = str(vol_guard_mode)
+
+    @staticmethod
+    def _usd_role(pair_name: str) -> str:
+        if pair_name.startswith("USD"):
+            return "USD-base"
+        if pair_name.endswith("USD"):
+            return "USD-quote"
+        if "USD" in pair_name:
+            return "USD-in-cross"
+        return "No-USD"
 
     def generate_signals(self, df: pd.DataFrame, pair_name: str, return_selected: bool = False):
         """
@@ -1757,7 +1767,8 @@ class StrategySelector_Dynamic:
         mr_has_tp = not mr_tp_s.empty
 
         current_type = "PhaseAware"
-        bars_since_switch = 0
+        bars_in_state = 0  # counts consecutive bars in the current selected type
+        pos = 0            # tracked position using previous-bar signal convention (1/-1/0)
 
         # --- Volatility guard config (threshold provided externally per fold)
         use_vol_guard = getattr(self, "use_vol_guard", False)
@@ -1823,7 +1834,7 @@ class StrategySelector_Dynamic:
                 else:
                     proposed_type = "PhaseAware"
 
-
+            """
             # Volatility spike guard (Option B): force baseline behavior when vol is extreme
             if use_vol_guard and (vol_thr is not None) and (vol_feature in df.columns):
                 v = df[vol_feature].iloc[i]
@@ -1832,20 +1843,52 @@ class StrategySelector_Dynamic:
                         proposed_type = "PhaseAware"
                     elif vol_guard_mode == "no_mr" and proposed_type == "MeanReversion":
                         proposed_type = "PhaseAware"
+            """
+            # Volatility spike guard: group-aware action when vol is extreme
+            if use_vol_guard and (vol_thr is not None) and (vol_feature in df.columns):
+                v = df[vol_feature].iloc[i]
+                if pd.notna(v) and float(v) >= float(vol_thr):
+                    usd_role = self._usd_role(pair_name)
+
+                    # (1) USD-quote pairs: always revert to TrendFollowing in volatility spikes
+                    if usd_role == "USD-quote":
+                        proposed_type = "TrendFollowing"
+
+                    # Non-USD-quote: keep your best-performing guard action
+                    else:
+                        if vol_guard_mode == "force_phaseaware":
+                            proposed_type = "PhaseAware"
+                        elif vol_guard_mode == "no_mr" and proposed_type == "MeanReversion":
+                            proposed_type = "PhaseAware"
 
             # 2) Apply min-hold ONLY if the type would change
             next_type = proposed_type
             if self.use_min_hold and (proposed_type != current_type):
                 # allow reverting to PhaseAware at any time (risk-off)
-                if proposed_type != "PhaseAware" and bars_since_switch < self.min_hold_bars:
+                if proposed_type != "PhaseAware" and bars_in_state < self.min_hold_bars:
                     next_type = current_type
 
-            # 3) Bookkeeping
+            # 3) Track position using the same convention as Backtester.run():
+            # backtester uses previous bar's signal as today's executed position.
+            if i > 0:
+                prev_sig = signals[i - 1]
+                if prev_sig == 0:
+                    pos = 0
+                else:
+                    pos = int(np.sign(prev_sig))
+
+            # 4) Time-based reset (Version A), but ONLY when flat:
+            # Prevents interrupting a live trade (which can cause giveback / churn).
+            if self.use_max_hold and current_type != "PhaseAware":
+                if bars_in_state >= self.max_hold_bars and pos == 0:
+                    next_type = "PhaseAware"
+
+            # 5) Bookkeeping
             if next_type != current_type:
                 current_type = next_type
-                bars_since_switch = 0
+                bars_in_state = 0
             else:
-                bars_since_switch += 1
+                bars_in_state += 1
 
             selected_strategies.append(current_type)
 
