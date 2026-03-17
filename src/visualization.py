@@ -6,6 +6,401 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 
+# --------------------------------------------------------------------------------------
+# Equity curves with spike shading
+# --------------------------------------------------------------------------------------
+import os
+import re
+from typing import Optional
+
+
+def _parse_pair_fold_from_equity_filename(path: str) -> tuple[str, int] | None:
+    """
+    Expected: equity_debug_{PAIR}_fold{N}.csv
+    """
+    base = os.path.basename(path)
+    m = re.match(r"equity_debug_(?P<pair>[A-Z]{6})_fold(?P<fold>\d+)\.csv$", base)
+    if not m:
+        return None
+    return m.group("pair"), int(m.group("fold"))
+
+
+def _compute_drawdown(equity: pd.Series) -> pd.Series:
+    rm = equity.cummax()
+    dd = (equity / rm) - 1.0
+    return dd
+
+
+def plot_equity_vs_spikes_from_csv(
+    csv_path: str,
+    out_dir: str = "figures",
+    title_prefix: str = "Equity vs volatility spikes",
+    vol_col: str = "atr_pct",
+) -> str:
+    """
+    Reads equity_debug_*.csv and writes a 2-panel plot:
+      - top: baseline vs dynamic equity with spike/near-spike shading
+      - bottom: drawdown curves (baseline vs dynamic), same shading
+
+    Expected CSV columns:
+      date, equity_baseline, equity_dynamic, spike, near_spike
+      optional: atr_pct (or provided vol_col), vol_thr, near_thr
+    """
+    df = pd.read_csv(csv_path)
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date")
+
+    meta = _parse_pair_fold_from_equity_filename(csv_path)
+    if meta:
+        pair, fold = meta
+    else:
+        pair, fold = "PAIR", -1
+
+    req = ["equity_baseline", "equity_dynamic"]
+    for c in req:
+        if c not in df.columns:
+            raise ValueError(f"{csv_path}: missing column {c}")
+
+    x = df["date"] if "date" in df.columns else np.arange(len(df))
+
+    eq_b = pd.Series(df["equity_baseline"].astype(float).values, index=df.index)
+    eq_d = pd.Series(df["equity_dynamic"].astype(float).values, index=df.index)
+
+    dd_b = _compute_drawdown(eq_b)
+    dd_d = _compute_drawdown(eq_d)
+
+    spike = df["spike"].astype(bool) if "spike" in df.columns else pd.Series(False, index=df.index)
+    near_spike = df["near_spike"].astype(bool) if "near_spike" in df.columns else pd.Series(False, index=df.index)
+
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f"equity_vs_spikes_{pair}_fold{fold}.png")
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 7), sharex=True, gridspec_kw={"height_ratios": [2, 1]})
+
+    def _shade(ax, mask: pd.Series, color: str, alpha: float) -> None:
+        if "date" not in df.columns:
+            return
+        in_run = False
+        start = None
+        for i in range(len(mask)):
+            m = bool(mask.iloc[i])
+            if m and not in_run:
+                in_run = True
+                start = df["date"].iloc[i]
+            if in_run and (not m or i == len(mask) - 1):
+                end = df["date"].iloc[i] if not m else df["date"].iloc[i]
+                ax.axvspan(start, end, color=color, alpha=alpha)
+                in_run = False
+                start = None
+
+    # shade near-spike then spike
+    _shade(ax1, near_spike, color="#f4a261", alpha=0.15)
+    _shade(ax1, spike, color="#e63946", alpha=0.18)
+    _shade(ax2, near_spike, color="#f4a261", alpha=0.15)
+    _shade(ax2, spike, color="#e63946", alpha=0.18)
+
+    # equity
+    ax1.plot(x, eq_b.values, label="baseline", color="#457b9d", linewidth=1.8)
+    ax1.plot(x, eq_d.values, label="dynamic", color="#1d3557", linewidth=1.8)
+    ax1.set_title(f"{title_prefix}: {pair} fold={fold}")
+    ax1.set_ylabel("Equity")
+    ax1.legend(loc="upper left")
+
+    # drawdown
+    ax2.plot(x, dd_b.values * 100.0, label="baseline DD", color="#457b9d", linewidth=1.3, alpha=0.9)
+    ax2.plot(x, dd_d.values * 100.0, label="dynamic DD", color="#1d3557", linewidth=1.3, alpha=0.9)
+    ax2.set_ylabel("Drawdown (%)")
+    ax2.set_xlabel("Date")
+    ax2.axhline(0.0, color="black", linewidth=0.8, alpha=0.5)
+    ax2.legend(loc="lower left")
+
+    # Optional: show volatility on secondary axis on top panel
+    if vol_col in df.columns:
+        axv = ax1.twinx()
+        axv.plot(x, df[vol_col].astype(float), color="#2a9d8f", alpha=0.25, linewidth=1.0, label=vol_col)
+        axv.set_ylabel(vol_col)
+
+        if "vol_thr" in df.columns and np.isfinite(df["vol_thr"].iloc[0]):
+            axv.axhline(float(df["vol_thr"].iloc[0]), color="#e63946", linestyle="--", linewidth=1.0, alpha=0.7)
+        if "near_thr" in df.columns and np.isfinite(df["near_thr"].iloc[0]):
+            axv.axhline(float(df["near_thr"].iloc[0]), color="#f4a261", linestyle="--", linewidth=1.0, alpha=0.7)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    return out_path
+
+
+def plot_equity_vs_spikes_all(
+    results_dir: str = "results",
+    out_dir: str = "figures",
+) -> list[str]:
+    """
+    Finds equity_debug_*.csv in results_dir and plots each.
+    Returns list of written image paths.
+    """
+    paths = []
+    if not os.path.isdir(results_dir):
+        return []
+    for fn in sorted(os.listdir(results_dir)):
+        if fn.startswith("equity_debug_") and fn.endswith(".csv"):
+            paths.append(os.path.join(results_dir, fn))
+
+    out_paths = []
+    for p in paths:
+        try:
+            out_paths.append(plot_equity_vs_spikes_from_csv(p, out_dir=out_dir))
+        except Exception as e:
+            print(f"[plot_equity_vs_spikes_all] skipped {p}: {e}")
+    return out_paths
+
+# --------------------------------------------------------------------------------------
+# Vol-guard / switching diagnostics plots
+# --------------------------------------------------------------------------------------
+
+_SELECTED_MAP = {
+    "PhaseAware": 0,
+    "TrendFollowing": 1,
+    "MeanReversion": 2,
+}
+_SELECTED_LABELS = ["PhaseAware", "TrendFollowing", "MeanReversion"]
+
+
+def _ensure_dir(path: str) -> None:
+    os.makedirs(path, exist_ok=True)
+
+
+def _parse_pair_fold_from_filename(path: str) -> tuple[str, int] | None:
+    """
+    Expected: selected_series_{PAIR}_fold{N}.csv
+    """
+    base = os.path.basename(path)
+    m = re.match(r"selected_series_(?P<pair>[A-Z]{6})_fold(?P<fold>\d+)\.csv$", base)
+    if not m:
+        return None
+    return m.group("pair"), int(m.group("fold"))
+
+
+def plot_selected_timeline_from_csv(
+    csv_path: str,
+    out_dir: str = "figures",
+    title_prefix: str = "Selected strategy timeline",
+) -> str:
+    """
+    Reads a selected series CSV produced by main.py and writes a timeline plot.
+
+    CSV expected columns:
+      - date (string or datetime-like)
+      - selected (PhaseAware/TrendFollowing/MeanReversion)
+      - atr_pct (or whatever VOL_FEATURE was; we plot it as secondary axis if present)
+      - spike (bool)
+      - near_spike (bool)
+      - vol_thr (float)
+      - near_thr (float)
+    """
+    df = pd.read_csv(csv_path)
+
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date")
+
+    pair_fold = _parse_pair_fold_from_filename(csv_path)
+    if pair_fold:
+        pair, fold = pair_fold
+    else:
+        pair, fold = "PAIR", -1
+
+    # Encode selected
+    if "selected" not in df.columns:
+        raise ValueError(f"{csv_path}: missing required column 'selected'")
+
+    df["selected_code"] = df["selected"].map(_SELECTED_MAP).astype("float")
+    # handle unexpected labels gracefully
+    df.loc[df["selected_code"].isna(), "selected_code"] = np.nan
+
+    spike = df["spike"].astype(bool) if "spike" in df.columns else pd.Series(False, index=df.index)
+    near_spike = df["near_spike"].astype(bool) if "near_spike" in df.columns else pd.Series(False, index=df.index)
+
+    # Switching points (where selection changes)
+    sw = (df["selected"] != df["selected"].shift(1))
+    sw.iloc[0] = False
+
+    _ensure_dir(out_dir)
+    out_path = os.path.join(out_dir, f"switch_timeline_{pair}_fold{fold}.png")
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+
+    # Background shading: near-spike then spike (spike overrides visually)
+    # Use axvspan segments to avoid overplotting every bar (more efficient/readable).
+    def _shade(mask: pd.Series, color: str, alpha: float, label: str) -> None:
+        if "date" not in df.columns:
+            return
+        in_run = False
+        start = None
+        for i in range(len(mask)):
+            m = bool(mask.iloc[i])
+            if m and not in_run:
+                in_run = True
+                start = df["date"].iloc[i]
+            if in_run and (not m or i == len(mask) - 1):
+                end = df["date"].iloc[i] if not m else df["date"].iloc[i]
+                ax.axvspan(start, end, color=color, alpha=alpha, label=label)
+                in_run = False
+                start = None
+
+    # Shade near-spike first (lighter), then spike (stronger)
+    if "date" in df.columns:
+        _shade(near_spike, color="#f4a261", alpha=0.15, label="near-spike")
+        _shade(spike, color="#e63946", alpha=0.18, label="spike")
+
+    # Plot selection as step
+    x = df["date"] if "date" in df.columns else np.arange(len(df))
+    ax.step(x, df["selected_code"], where="post", linewidth=2, color="black", label="selected")
+
+    # Mark switch points
+    if sw.any():
+        ax.scatter(x[sw.values], df.loc[sw, "selected_code"], s=14, color="#1d3557", alpha=0.8, label="switch")
+
+    ax.set_yticks([0, 1, 2])
+    ax.set_yticklabels(_SELECTED_LABELS)
+    ax.set_ylim(-0.3, 2.3)
+    ax.set_title(f"{title_prefix}: {pair} fold={fold}")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Selected policy type")
+
+    # Secondary axis: volatility feature if present
+    vol_col = None
+    for c in ["atr_pct", "VOL_FEATURE", "vol"]:
+        if c in df.columns:
+            vol_col = c
+            break
+
+    # Prefer atr_pct if present
+    if "atr_pct" in df.columns:
+        vol_col = "atr_pct"
+
+    if vol_col is not None:
+        ax2 = ax.twinx()
+        ax2.plot(x, df[vol_col].astype(float), color="#457b9d", alpha=0.35, linewidth=1.2, label=vol_col)
+        ax2.set_ylabel(vol_col)
+
+        # Draw thresholds if present and finite
+        if "vol_thr" in df.columns and np.isfinite(df["vol_thr"].iloc[0]):
+            ax2.axhline(float(df["vol_thr"].iloc[0]), color="#e63946", linestyle="--", linewidth=1.0, alpha=0.8)
+        if "near_thr" in df.columns and np.isfinite(df["near_thr"].iloc[0]):
+            ax2.axhline(float(df["near_thr"].iloc[0]), color="#f4a261", linestyle="--", linewidth=1.0, alpha=0.8)
+
+    # Deduplicate legend entries (axvspan adds duplicates)
+    handles, labels = ax.get_legend_handles_labels()
+    uniq = {}
+    for h, l in zip(handles, labels):
+        if l not in uniq:
+            uniq[l] = h
+    ax.legend(list(uniq.values()), list(uniq.keys()), loc="upper left", frameon=True)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    return out_path
+
+
+def plot_selected_timelines(
+    selected_series_dir: str = "results",
+    out_dir: str = "figures",
+) -> list[str]:
+    """
+    Finds selected_series_*.csv in selected_series_dir and plots each.
+    Returns list of written image paths.
+    """
+    paths = []
+    for fn in sorted(os.listdir(selected_series_dir)):
+        if fn.startswith("selected_series_") and fn.endswith(".csv"):
+            paths.append(os.path.join(selected_series_dir, fn))
+
+    out_paths = []
+    for p in paths:
+        try:
+            out_paths.append(plot_selected_timeline_from_csv(p, out_dir=out_dir))
+        except Exception as e:
+            print(f"[plot_selected_timelines] skipped {p}: {e}")
+    return out_paths
+
+
+def plot_vol_guard_group_bars(
+    summary_csv: str = "results/vol_guard_diagnostics_summary.csv",
+    out_dir: str = "figures",
+) -> str:
+    """
+    Bar plots by group showing:
+      - spike_pct and near_spike_pct
+      - switches_per_1000_bars
+      - mr_on_spike_pct and tf_on_spike_pct and phaseaware_on_spike_pct
+
+    Uses rows where GroupBy == 'USD_role' for the main plot (most interpretable).
+    """
+    df = pd.read_csv(summary_csv)
+
+    # Focus on USD_role for the main “what changes across structure” view.
+    usd = df[df["GroupBy"] == "USD_role"].copy()
+    if usd.empty:
+        raise ValueError(f"{summary_csv}: no rows with GroupBy == 'USD_role'")
+
+    # stable ordering
+    order = ["No-USD", "USD-base", "USD-quote", "USD-in-cross"]
+    usd["Group"] = pd.Categorical(usd["Group"], categories=order, ordered=True)
+    usd = usd.sort_values("Group")
+
+    _ensure_dir(out_dir)
+    out_path = os.path.join(out_dir, "vol_guard_diagnostics_usd_role.png")
+
+    fig, axes = plt.subplots(3, 1, figsize=(11, 12), sharex=True)
+
+    x = np.arange(len(usd))
+    labels = usd["Group"].astype(str).tolist()
+
+    # 1) spike frequency
+    axes[0].bar(x - 0.15, usd["spike_pct"], width=0.3, label="spike_pct", color="#e63946", alpha=0.75)
+    axes[0].bar(x + 0.15, usd["near_spike_pct"], width=0.3, label="near_spike_pct", color="#f4a261", alpha=0.75)
+    axes[0].set_ylabel("% bars")
+    axes[0].set_title("Volatility spike frequency (by USD role)")
+    axes[0].legend()
+
+    # 2) switching
+    axes[1].bar(x, usd["switches_per_1000_bars"], width=0.5, color="#1d3557", alpha=0.8)
+    axes[1].set_ylabel("switches / 1000 bars")
+    axes[1].set_title("Switching rate (by USD role)")
+
+    # 3) selection distribution on spike bars
+    axes[2].bar(x - 0.2, usd["tf_on_spike_pct"], width=0.2, label="TF on spike", color="#2a9d8f", alpha=0.85)
+    axes[2].bar(x, usd["mr_on_spike_pct"], width=0.2, label="MR on spike", color="#e76f51", alpha=0.85)
+    axes[2].bar(x + 0.2, usd["phaseaware_on_spike_pct"], width=0.2, label="PhaseAware on spike", color="#457b9d", alpha=0.85)
+    axes[2].set_ylabel("% of spike bars")
+    axes[2].set_title("Selected policy type on spike bars (by USD role)")
+    axes[2].legend()
+
+    axes[2].set_xticks(x)
+    axes[2].set_xticklabels(labels, rotation=0)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    return out_path
+
+
+def plot_vol_guard_diagnostics_all(
+    results_dir: str = "results",
+    figures_dir: str = "figures",
+) -> dict:
+    out = {}
+    out["switch_timelines"] = plot_selected_timelines(selected_series_dir=results_dir, out_dir=figures_dir)
+    out["usd_role_bars"] = plot_vol_guard_group_bars(
+        summary_csv=os.path.join(results_dir, "vol_guard_diagnostics_summary.csv"),
+        out_dir=figures_dir,
+    )
+    out["equity_vs_spikes"] = plot_equity_vs_spikes_all(results_dir=results_dir, out_dir=figures_dir)
+    return out
+
 # ---------------------------------------------------------------------------
 # Color scheme for the 4-phase scheme
 # ---------------------------------------------------------------------------

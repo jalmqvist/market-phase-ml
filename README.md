@@ -7,9 +7,30 @@
 
 ---
 
-A regime-aware **time-series ML pipeline** that combines **rule-based regime labeling** with an **XGBoost gating model** (mixture-of-experts) to route between expert policies (trend-following vs mean-reversion). Includes caching, ablations, and **leakage-safe walk-forward evaluation** with reproducible CSV artifacts.
+## TL;DR
 
-> Goal: demonstrate end-to-end ML engineering + experimental discipline on a non-stationary time series decision problem, not “promise profits”.
+A regime-aware **time-series ML pipeline** that combines:
+
+- **Rule-based regime labeling** (market “phases”), and
+- an **XGBoost gating model** (mixture-of-experts)
+
+…to route between expert policies (**trend-following** vs **mean-reversion**) with **leakage-safe walk-forward evaluation** and reproducible CSV artifacts.
+
+> Goal: demonstrate end-to-end ML engineering + experimental discipline on a non-stationary time series decision problem (not “promise profits”).
+
+---
+
+## Why this project
+
+This repo is intentionally built as an end-to-end ML engineering project for **non-stationary time series**:
+
+- Mixture-of-experts style **policy routing** (gating model)
+- A realistic **leakage-safe evaluation** design (walk-forward)
+- Reproducible experimentation (CSV artifacts + caching)
+- Failure-mode driven iteration (volatility guard, max-hold reset)
+- Code that’s structured like a small production pipeline (data → features → labels → model → evaluation)
+
+Trading is simply the “toy domain”; the underlying pattern generalizes to many real ML systems where the best decision policy depends on context (e.g., demand forecasting regimes, anomaly handling, recommender exploration/exploitation, etc.).
 
 ---
 
@@ -24,27 +45,25 @@ Key outputs (written to `results/`):
 - `ablation_summary_aggregate.csv` — headline in-sample ablation numbers
 - `ablation_summary_per_pair.csv` — per-pair breakdown
 - `walkforward_results_summary.csv` — walk-forward (OOS) summary vs baseline
+- `walkforward_results_per_pair.csv` — walk-forward per-pair deltas
+- `walkforward_results_per_fold.csv` — walk-forward deltas per fold (debuggable)
 - `walkforward_tau_sweep_summary.csv` — τ sweep summary (optional)
 - `walkforward_policy_sweep_summary.csv` — policy sweep summary (optional)
 
-> Note: Expensive sweeps (τ/policy sweeps) are gated behind flags in `main.py`.
+> Note: expensive sweeps (τ/policy sweeps) are gated behind flags in `main.py`.
 
 ---
 
-## Why this project
+## What is a “fold” (walk-forward terminology)
 
-This repository implements a **regime-aware time series decision pipeline** that routes between multiple “expert” policies using:
+A **fold** is one out-of-sample (OOS) evaluation step in a walk-forward backtest.
 
-1) **Rule-based regime detection** (trend strength + volatility), and  
-2) An **ML gating model** (XGBoost) trained to predict which policy family is likely to perform best over a fixed horizon.
+In each fold:
+1. Train the gating model on an **expanding** historical window (e.g., the prior 7 years).
+2. Test on the **next** time window (e.g., the next 6 months).
+3. Advance the window and repeat.
 
-Although the domain is trading, the core pattern is broadly applicable to real-world ML systems:
-
-- context-aware policy selection
-- mixture-of-experts / gating networks
-- non-stationary time series evaluation
-- leakage-safe model training
-- reproducible experiment artifacts (CSV outputs + cached pipeline)
+So “361 folds” means 361 sequential train/test evaluations over time. Each fold produces a separate OOS result, which makes failure modes inspectable instead of hiding them in one aggregate number.
 
 ---
 
@@ -59,75 +78,109 @@ Although the domain is trading, the core pattern is broadly applicable to real-w
 5. Build supervised dataset: features → best strategy type label (horizon-based)
 6. Train **StrategySelector** (XGBoost) with leakage-safe preprocessing
 7. Run **StrategySelector_Dynamic** in the backtester (mixture-of-experts routing)
-8. Export results to CSV + generate figures
+8. Export results to CSV + (optionally) generate figures
 
-This is essentially a **gating model** that decides which expert policy to execute at each time step.
+This is a **gating model** that decides which expert policy to execute at each time step.
 
 ---
 
-## Key results
+## Key results (how to read these)
+
+- “Dynamic − PhaseAware(TF4/MR42)” means: *out-of-sample performance difference* between the ML-gated routing and the rule-based baseline.
+- In-sample ablations are primarily for debugging/intuition; the main generalization check is the walk-forward evaluation.
 
 ### A) In-sample ablation (A0–A3)
 
-Across **14 FX pairs** using ~20 years of daily data, the ML gating approach improves risk-adjusted performance versus fixed-policy and rule-based routing baselines:
+Across **14 FX pairs** using ~20 years of daily data:
 
-| Variant                                   | Description                                                     | Avg Return | Avg Sharpe | Avg Max DD | Pairs |
-| ----------------------------------------- | --------------------------------------------------------------- | ---------: | ---------: | ---------: | ----: |
-| A0_TF4                                    | Fixed policy (TrendFollowing only)                              |     -3.31% |     -0.05  |    -25.28% |    14 |
-| A1_MR42                                   | Fixed policy (MeanReversion only)                               |    +20.38% |     +0.07  |    -41.82% |    14 |
-| A2_PhaseAware_TF4_MR42                    | Rule-based routing using detected regimes                       |    +22.01% |     +0.14  |    -29.13% |    14 |
-| A3_DynamicSelector_tau0.62_exit0.57_hold10 | **ML gating** with confidence threshold + hysteresis + min-hold |    +56.17% |     +0.21  |    -31.61% |    14 |
+| Variant                                    | Description                                                  | Avg Return | Avg Sharpe | Avg Max DD | Pairs |
+| ------------------------------------------ | ------------------------------------------------------------ | ---------: | ---------: | ---------: | ----: |
+| A0_TF4                                     | Fixed policy (TrendFollowing only)                           |     -3.31% |      -0.05 |    -25.28% |    14 |
+| A1_MR42                                    | Fixed policy (MeanReversion only)                            |    +20.38% |      +0.07 |    -41.82% |    14 |
+| A2_PhaseAware_TF4_MR42                     | Rule-based routing using detected regimes                    |    +22.01% |      +0.14 |    -29.13% |    14 |
+| A3_DynamicSelector_tau0.62_exit0.57_hold10 | **ML gating** with confidence threshold + hysteresis + min-hold |    +56.17% |      +0.21 |    -31.61% |    14 |
 
-Reproducible artifacts (generated by `python main.py`):
+Artifacts:
 - `results/ablation_summary_per_pair.csv`
 - `results/ablation_summary_aggregate.csv`
 - `results/dynamic_selector_results_per_pair.csv`
 - `results/baseline_vs_dynamic_comparison.csv`
 
-> Note: In-sample ablations are useful for debugging and intuition. The primary generalization check is the walk-forward evaluation below.
-
 ---
 
 ### B) Walk-forward evaluation (out-of-sample)
 
-To validate generalization under non-stationarity, the selector is evaluated with an **expanding-window walk-forward** setup (train 7y, test 6m, step 6m; horizon=20 bars). The dynamic selector uses **confidence gating + hysteresis + minimum hold**:
+Walk-forward setup (example):
+- Train: 7y (expanding)
+- Test: 6m
+- Step: 6m
+- Horizon: 20 bars
 
-- τ_enter = 0.62  
-- τ_exit = 0.57  
-- min_hold_bars = 10
-
-#### Volatility guard (recent work)
-
-A key drawdown failure mode for mixture-of-experts routing is **selecting mean-reversion during volatility spikes**. To address this, the dynamic selector supports a leakage-safe **volatility guard**:
-
-- Feature: ATR% (`atr_pct`)
-- Threshold: per-fold training quantile `q` (computed on the expanding training slice only)
-- Default action on trigger: `no_mr` (block MR selections when volatility is extreme)
-
-**Current best config found so far (walk-forward):**
-- `VOL_GUARD_Q = 0.80`
-- `VOL_GUARD_MODE = "no_mr"`
-- **USD-quote override:** on volatility spikes, force `TrendFollowing` (USD-quote pairs are structurally different in our results)
+The dynamic selector uses:
+- confidence gating + hysteresis:
+  - τ_enter = 0.62
+  - τ_exit = 0.57
+- minimum hold:
+  - min_hold_bars = 10
 
 **Headline result (14 pairs, 361 folds) vs PhaseAware(TF4/MR42):**
 
-| Metric (Dynamic − PhaseAware TF4/MR42) | Value |
-| --- | ---: |
-| Avg Return Δ | **+0.21%** |
-| Avg Sharpe Δ | **+0.07** |
-| Avg Max DD Δ | **-0.11** |
-| Folds with Sharpe improvement | **190 / 361 (~53%)** |
+| Metric (Dynamic − PhaseAware TF4/MR42) |                Value |
+| -------------------------------------- | -------------------: |
+| Avg Return Δ                           |           **+0.21%** |
+| Avg Sharpe Δ                           |            **+0.08** |
+| Avg Max DD Δ                           |            **-0.19** |
+| Folds with Sharpe improvement          | **194 / 361 (~54%)** |
 
 Outputs:
 - `results/walkforward_results_per_fold.csv`
 - `results/walkforward_results_per_pair.csv`
 - `results/walkforward_results_summary.csv`
 
-> Note: The exact numbers in the README are snapshots from recent runs (run31/run32). Re-run `python main.py` to reproduce the latest artifacts on your machine.
+> Note: The exact numbers in this README are snapshots from recent runs (run43). Re-run `python main.py` to reproduce the latest artifacts on your machine.
 
 ---
 
-### C) Evidence for group-aware gating (instead of per-pair tuning)
+## Practical failure modes and mitigations (why the extra guards exist)
+
+Mixture-of-experts gating can fail in predictable ways on non-stationary time series. This project includes two lightweight mitigations that were added after inspecting walk-forward fold failures (debug plots + per-fold CSVs).
+
+### C) Volatility guard (leakage-safe)
+
+**Problem:** the gating model can select mean-reversion during volatility spikes, producing large drawdowns.
+
+**Mitigation:** a per-fold, leakage-safe volatility guard:
+- Feature: ATR% (`atr_pct`)
+- Threshold: per-fold training quantile `q` (computed using *only the training slice*)
+- Default action on trigger: `no_mr` (block MR selections when volatility is extreme)
+- Extra safety: **USD-quote override** — on spike bars, force `TrendFollowing` for USD-quote pairs
+
+**Current best config found so far (walk-forward):**
+- `VOL_GUARD_Q = 0.80`
+- `VOL_GUARD_MODE = "no_mr"`
+- USD-quote override: force `TrendFollowing` on spike bars
+
+This is designed to be global + group-aware (not per-pair tuned).
+
+---
+
+### D) Time-based reset (max-hold)
+
+**Problem:** with hysteresis + min-hold, the selector can get “stuck” in one non-default expert (TrendFollowing/MeanReversion) long after conditions change.
+
+**Mitigation:** a simple time-based reset:
+- `max_hold_bars`: after N consecutive bars in a non-PhaseAware state, force a reset back to `PhaseAware`.
+- To avoid cutting winners / interrupting live trades, the reset is applied **only when flat** (i.e., when the executed position is 0, using the same previous-bar signal convention as the backtester).
+
+**Current default (D1):**
+- `max_hold_bars = 40`
+- reset only when flat
+
+This acts as a general “deadman switch” against prolonged misclassification while keeping the policy global and lightweight.
+
+---
+
+### E) Evidence for group-aware gating (instead of per-pair tuning)
 
 Pair-specific parameter tuning can improve metrics but is intrusive and may overfit. A middle ground is **group-aware gating** based on simple market-structure categories (JPY vs non-JPY, USD role, major vs minor).
 
@@ -135,35 +188,37 @@ When we aggregated walk-forward deltas for the `q=0.80` volatility guard run wit
 
 #### Majors vs minors
 | Group | Return Δ | Sharpe Δ | Max DD Δ |
-| --- | ---: | ---: | ---: |
-| Major | +0.07 | +0.09 | -0.30 |
-| Minor | +0.34 | +0.05 | +0.08 |
+| ----- | -------: | -------: | -------: |
+| Major |    +0.07 |    +0.09 |    -0.30 |
+| Minor |    +0.34 |    +0.05 |    +0.08 |
 
 #### JPY vs non-JPY
-| Group | Return Δ | Sharpe Δ | Max DD Δ |
-| --- | ---: | ---: | ---: |
-| JPY | +0.34 | +0.01 | +0.53 |
-| non-JPY | +0.15 | +0.10 | -0.37 |
+| Group   | Return Δ | Sharpe Δ | Max DD Δ |
+| ------- | -------: | -------: | -------: |
+| JPY     |    +0.34 |    +0.01 |    +0.53 |
+| non-JPY |    +0.15 |    +0.10 |    -0.37 |
 
 #### USD role (base/quote)
-| Group | Return Δ | Sharpe Δ | Max DD Δ |
-| --- | ---: | ---: | ---: |
-| USD-base | +0.28 | +0.15 | +0.03 |
-| USD-quote | -0.09 | +0.05 | -0.55 |
-| No-USD | +0.34 | +0.05 | +0.08 |
+| Group     | Return Δ | Sharpe Δ | Max DD Δ |
+| --------- | -------: | -------: | -------: |
+| USD-base  |    +0.28 |    +0.15 |    +0.03 |
+| USD-quote |    -0.09 |    +0.05 |    -0.55 |
+| No-USD    |    +0.34 |    +0.05 |    +0.08 |
 
 Interpretation:
 - JPY pairs show large drawdown improvements (tail-risk suppression) but limited Sharpe uplift.
 - USD-quote majors are a challenging bucket: a group-aware volatility action (force TF on spike bars) materially improves drawdowns versus simpler guards.
 - Crosses (“No-USD”) benefit strongly on average.
 
-These findings motivate keeping **global `q`** but using **group-conditioned guard actions** rather than bespoke per-pair thresholds.
+These findings motivate keeping a **global** threshold `q` while using **group-conditioned** guard actions rather than bespoke per-pair thresholds.
 
 ---
 
-### D) Confidence gating: τ sweep (optional experiment)
+### F) Confidence gating: τ sweep (optional experiment)
 
-A global τ sweep evaluates trade-off between “coverage” (confident bars) and performance. When max predicted probability < τ, the system falls back to PhaseAware.
+A global τ sweep evaluates the trade-off between:
+- **coverage** (how many bars the selector is “confident” enough to override PhaseAware)
+- and performance
 
 Example sweep (14 pairs, 361 folds; run33, rounded):
 - τ=0.60 → Avg Sharpe Δ **+0.02**, Avg Return Δ **+0.17%**, confident bars **~52%**
@@ -189,7 +244,7 @@ Markets are classified into four phases using two dimensions:
   - **Low Volatility (LV):**  ATR% < rolling median ATR%
 
 ### 2) Trend strength (ADX)
-- **Trending:** ADX(14) > 25  
+- **Trending:** ADX(14) > 25
 - **Ranging:**  ADX(14) ≤ 25
 
 This yields: `HV_Trend`, `LV_Trend`, `HV_Ranging`, `LV_Ranging`.
@@ -351,7 +406,7 @@ This project is based on a trading system I originally implemented in MQL4 (Meta
 
 I’m Jonas Almqvist — a Data Scientist / ML Engineer with a PhD and 15+ years of applied computational research, focused on building end-to-end data/ML pipelines and reproducible experimentation. Remote preferred.
 
-- LinkedIn: https://linkedin.com/in/jalmqvist  
+- LinkedIn: https://linkedin.com/in/jalmqvist
 - GitHub: https://github.com/jalmqvist
 
 ---

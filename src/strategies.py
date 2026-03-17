@@ -1684,6 +1684,9 @@ class StrategySelector_Dynamic:
             vol_feature: str = "atr_pct",
             vol_threshold_by_pair: dict | None = None,
             vol_guard_mode: str = "no_mr", # or "force_phaseaware",
+            # --- NEW: max-hold reset ---
+            max_hold_bars: int = 20,
+            use_max_hold: bool = True,
     ):
         self.tau_enter = float(tau_enter)
         self.tau_exit = float(tau_exit)
@@ -1693,6 +1696,9 @@ class StrategySelector_Dynamic:
 
         self.p_margin = float(p_margin)
         self.use_prob_margin = bool(use_prob_margin)
+
+        self.use_max_hold = bool(use_max_hold)
+        self.max_hold_bars = int(max_hold_bars)
 
         if use_hysteresis and not (tau_exit < tau_enter):
             raise ValueError("Hysteresis requires tau_exit < tau_enter.")
@@ -1761,21 +1767,14 @@ class StrategySelector_Dynamic:
         mr_has_tp = not mr_tp_s.empty
 
         current_type = "PhaseAware"
-        bars_since_switch = 0
+        bars_in_state = 0  # counts consecutive bars in the current selected type
+        pos = 0            # tracked position using previous-bar signal convention (1/-1/0)
 
         # --- Volatility guard config (threshold provided externally per fold)
         use_vol_guard = getattr(self, "use_vol_guard", False)
         vol_feature = getattr(self, "vol_feature", "atr_pct")
         vol_threshold_by_pair = getattr(self, "vol_threshold_by_pair", {}) or {}
         vol_guard_mode = getattr(self, "vol_guard_mode", "force_phaseaware")
-
-        # Disable guard for USD-quote pairs (global robustness knob)
-        if use_vol_guard and getattr(self, "disable_vol_guard_usd_quote", False):
-            if self._usd_role(pair_name) == "USD-quote":
-                use_vol_guard = False
-
-        if getattr(self, "disable_vol_guard_usd_quote", False) and self._usd_role(pair_name) == "USD-quote":
-            print(f"[vol-guard] {pair_name}: USD-quote -> guard disabled")
 
         vol_thr = None
         if use_vol_guard:
@@ -1866,15 +1865,30 @@ class StrategySelector_Dynamic:
             next_type = proposed_type
             if self.use_min_hold and (proposed_type != current_type):
                 # allow reverting to PhaseAware at any time (risk-off)
-                if proposed_type != "PhaseAware" and bars_since_switch < self.min_hold_bars:
+                if proposed_type != "PhaseAware" and bars_in_state < self.min_hold_bars:
                     next_type = current_type
 
-            # 3) Bookkeeping
+            # 3) Track position using the same convention as Backtester.run():
+            # backtester uses previous bar's signal as today's executed position.
+            if i > 0:
+                prev_sig = signals[i - 1]
+                if prev_sig == 0:
+                    pos = 0
+                else:
+                    pos = int(np.sign(prev_sig))
+
+            # 4) Time-based reset (Version A), but ONLY when flat:
+            # Prevents interrupting a live trade (which can cause giveback / churn).
+            if self.use_max_hold and current_type != "PhaseAware":
+                if bars_in_state >= self.max_hold_bars and pos == 0:
+                    next_type = "PhaseAware"
+
+            # 5) Bookkeeping
             if next_type != current_type:
                 current_type = next_type
-                bars_since_switch = 0
+                bars_in_state = 0
             else:
-                bars_since_switch += 1
+                bars_in_state += 1
 
             selected_strategies.append(current_type)
 

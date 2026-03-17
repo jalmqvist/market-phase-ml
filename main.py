@@ -54,7 +54,7 @@ RUN_IN_SAMPLE_ABLATION = True
 RUN_WALKFORWARD = True
 
 # Expensive sweeps (disable by default)
-RUN_TAU_SWEEP = True
+RUN_TAU_SWEEP = False
 RUN_POLICY_SWEEP = False
 
 # Debug
@@ -83,6 +83,8 @@ DYNAMIC_POLICY_KWARGS = dict(
     min_hold_bars=10,
     use_hysteresis=True,
     use_min_hold=True,
+    use_max_hold=True,
+    max_hold_bars=40, # D1: ~1 trading month
 )
 WF_TAU = 0.62
 
@@ -101,6 +103,17 @@ VOL_FEATURE = "atr_pct"
 USD_QUOTE_VOL_SPIKE_OVERRIDE = "force_tf"
 
 # ─────────────────────────────────────────────────────
+# Diagnostics / debug artifacts
+# ─────────────────────────────────────────────────────
+DEBUG_SAVE_SELECTED_SERIES = True
+DEBUG_SAVE_EQUITY_SERIES = True
+DEBUG_SELECTED_PAIRS = {"EURUSD", "AUDUSD", "USDCAD", "USDJPY", "GBPJPY"}
+# DEBUG_SELECTED_MAX_FOLDS_PER_PAIR = 1  # keep outputs small
+# DEBUG_SELECTED_PAIRS = {"GBPJPY"}
+DEBUG_SELECTED_MAX_FOLDS_PER_PAIR = 9
+# Diagnostics: "near-spike" threshold for analysis/plots (does not affect trading logic)
+VOL_GUARD_NEAR_MULT = 0.90  # near_thr = VOL_GUARD_NEAR_MULT * vol_thr
+# ─────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────
 
@@ -114,6 +127,147 @@ USE_ATR_SIZING      = False     # Set True to compare ATR-based sizing
 # ─────────────────────────────────────────────────────
 # HELPER FUNCTIONS
 # ─────────────────────────────────────────────────────
+
+def usd_role(pair: str) -> str:
+    if pair.startswith("USD"):
+        return "USD-base"
+    if pair.endswith("USD"):
+        return "USD-quote"
+    if "USD" in pair:
+        return "USD-in-cross"
+    return "No-USD"
+
+
+def is_jpy_pair(pair: str) -> bool:
+    return "JPY" in pair
+
+
+def major_minor_group(pair: str, majors: list[str]) -> str:
+    return "Major" if pair in majors else "Minor"
+
+
+def _switch_count_from_selected(selected_s: pd.Series) -> int:
+    """Count how many times the selected strategy type changes bar-to-bar."""
+    if selected_s is None or len(selected_s) < 2:
+        return 0
+    # boolean series of changes; ignore first NaN from shift
+    return int((selected_s != selected_s.shift(1)).iloc[1:].sum())
+
+
+def compute_vol_guard_diagnostics(
+    *,
+    pair_name: str,
+    fold_id: int,
+    df_test: pd.DataFrame,
+    selected_s: pd.Series,
+    vol_feature: str,
+    vol_thr: float | None,
+    near_mult: float,
+    majors: list[str],
+    tau: float | None = None,
+    tag: str = "wf",
+) -> dict:
+    """
+    Compute per-fold diagnostics for volatility spike frequency and strategy-type switching.
+    Does not require instrumenting StrategySelector_Dynamic internals.
+    """
+    n_bars = int(len(df_test))
+    out = {
+        "tag": tag,  # e.g. "wf" or "tau_sweep"
+        "Tau": tau,
+        "Pair": pair_name,
+        "Fold": int(fold_id),
+        "Bars": n_bars,
+        "USD_role": usd_role(pair_name),
+        "JPY": "JPY" if is_jpy_pair(pair_name) else "non-JPY",
+        "MajorMinor": major_minor_group(pair_name, majors),
+        "vol_feature": vol_feature,
+        "vol_thr": float(vol_thr) if vol_thr is not None else np.nan,
+        "near_mult": float(near_mult),
+    }
+
+    if (vol_thr is None) or (vol_feature not in df_test.columns) or (n_bars == 0):
+        # Fill with NaNs/zeros so groupby works cleanly
+        out.update({
+            "spike_bars": 0,
+            "spike_pct": np.nan,
+            "near_spike_bars": 0,
+            "near_spike_pct": np.nan,
+            "switches_total": _switch_count_from_selected(selected_s),
+            "switches_per_1000_bars": np.nan,
+            "switches_on_spike": np.nan,
+            "switches_on_near_spike": np.nan,
+            "confident_pct": np.nan,
+            "confident_pct_on_spike": np.nan,
+            "confident_pct_off_spike": np.nan,
+            "tf_on_spike_pct": np.nan,
+            "mr_on_spike_pct": np.nan,
+            "phaseaware_on_spike_pct": np.nan,
+        })
+        return out
+
+    v = df_test[vol_feature].astype(float)
+    spike_mask = (v >= float(vol_thr)) & v.notna()
+
+    near_thr = float(vol_thr) * float(near_mult)
+    near_spike_mask = (v >= near_thr) & v.notna()
+
+    # switching masks (define switch at bar i when selected changes from i-1 -> i)
+    switch_mask = (selected_s != selected_s.shift(1)).fillna(False)
+    switch_mask.iloc[0] = False
+
+    switches_total = int(switch_mask.sum())
+
+    # confident means not PhaseAware
+    confident_mask = (selected_s != "PhaseAware")
+
+    # selection distributions on spike bars
+    # (these are proxies for "guard effectiveness": MR-on-spike should be low)
+    spike_sel = selected_s.loc[spike_mask.reindex(selected_s.index, fill_value=False)]
+    if len(spike_sel) > 0:
+        tf_on_spike = float((spike_sel == "TrendFollowing").mean() * 100.0)
+        mr_on_spike = float((spike_sel == "MeanReversion").mean() * 100.0)
+        pa_on_spike = float((spike_sel == "PhaseAware").mean() * 100.0)
+    else:
+        tf_on_spike = np.nan
+        mr_on_spike = np.nan
+        pa_on_spike = np.nan
+
+    # confident % on/off spikes
+    spike_idx = spike_mask.reindex(selected_s.index, fill_value=False)
+    if int(spike_idx.sum()) > 0:
+        conf_on_spike = float(confident_mask.loc[spike_idx].mean() * 100.0)
+    else:
+        conf_on_spike = np.nan
+
+    off_spike_idx = (~spike_idx)
+    if int(off_spike_idx.sum()) > 0:
+        conf_off_spike = float(confident_mask.loc[off_spike_idx].mean() * 100.0)
+    else:
+        conf_off_spike = np.nan
+
+    out.update({
+        "spike_bars": int(spike_mask.sum()),
+        "spike_pct": float(spike_mask.mean() * 100.0),
+        "near_spike_bars": int(near_spike_mask.sum()),
+        "near_spike_pct": float(near_spike_mask.mean() * 100.0),
+
+        "switches_total": switches_total,
+        "switches_per_1000_bars": float(switches_total / max(1, (n_bars - 1)) * 1000.0),
+
+        "switches_on_spike": int((switch_mask & spike_idx).sum()),
+        "switches_on_near_spike": int((switch_mask & near_spike_mask.reindex(selected_s.index, fill_value=False)).sum()),
+
+        "confident_pct": float(confident_mask.mean() * 100.0),
+        "confident_pct_on_spike": conf_on_spike,
+        "confident_pct_off_spike": conf_off_spike,
+
+        "tf_on_spike_pct": tf_on_spike,
+        "mr_on_spike_pct": mr_on_spike,
+        "phaseaware_on_spike_pct": pa_on_spike,
+    })
+    return out
+
 def _pkg_version(name: str):
     try:
         return importlib_metadata.version(name)
@@ -1401,9 +1555,8 @@ def main():
         from src.models import StrategyPerformanceTracker, StrategySelector
         from src.strategies import StrategySelector_Dynamic
 
-
-
         walkforward_rows = []
+        vol_diag_rows = []
 
         for pair_name, df_full in processed_data.items():
             print(f"\n  --- {pair_name} ---")
@@ -1562,13 +1715,116 @@ def main():
                     pip_value=pip_value,
                     use_atr_sizing=False,
                 )
-                dyn_signals, dyn_sl, dyn_tp = dynamic_strategy.generate_signals(df_test, pair_name)
+                dyn_signals, dyn_sl, dyn_tp, selected_s = dynamic_strategy.generate_signals(
+                    df_test, pair_name, return_selected=True
+                )
                 dyn_res = backtester.run(df_test, dyn_signals, 'StrategySelector_Dynamic_WF', dyn_sl, dyn_tp)
+
+                # --- Optional: save selected strategy series for plotting (small whitelist) ---
+                if DEBUG_SAVE_SELECTED_SERIES and (pair_name in DEBUG_SELECTED_PAIRS):
+                    # count folds saved for this pair
+                    if "saved_selected_folds" not in locals():
+                        saved_selected_folds = {}  # type: ignore[var-annotated]
+                    saved_selected_folds.setdefault(pair_name, 0)
+
+                    if saved_selected_folds[pair_name] < DEBUG_SELECTED_MAX_FOLDS_PER_PAIR:
+                        if (vol_thr is not None) and (VOL_FEATURE in df_test.columns):
+                            v = df_test[VOL_FEATURE].astype(float)
+                            spike = (v >= float(vol_thr)) & v.notna()
+                            near_thr = float(vol_thr) * float(VOL_GUARD_NEAR_MULT)
+                            near_spike = (v >= near_thr) & v.notna()
+                        else:
+                            spike = pd.Series(False, index=df_test.index)
+                            near_spike = pd.Series(False, index=df_test.index)
+
+                        sel_df = pd.DataFrame({
+                            "date": df_test.index,
+                            "selected": selected_s.values,
+                            VOL_FEATURE: df_test[VOL_FEATURE].values if VOL_FEATURE in df_test.columns else np.nan,
+                            "vol_thr": float(vol_thr) if vol_thr is not None else np.nan,
+                            "near_thr": (
+                                        float(vol_thr) * float(VOL_GUARD_NEAR_MULT)) if vol_thr is not None else np.nan,
+                            "spike": spike.values,
+                            "near_spike": near_spike.values,
+                        })
+
+                        out_path = f"results/selected_series_{pair_name}_fold{fold_id}.csv"
+                        sel_df.to_csv(out_path, index=False)
+                        print(f"Saved: {out_path}")
+
+                        saved_selected_folds[pair_name] += 1
 
                 # Baseline on same test slice
                 pa = PhaseAwareStrategy('TF4', 'MR42')
                 pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
                 base_res = backtester.run(df_test, pa_signals, 'PhaseAware_TF4_MR42_WF', pa_sl, pa_tp)
+
+                # --- Optional: save equity curves + spike masks for plotting (small whitelist) ---
+                if DEBUG_SAVE_EQUITY_SERIES and (pair_name in DEBUG_SELECTED_PAIRS):
+                    # count folds saved for this pair
+                    if "saved_equity_folds" not in locals():
+                        saved_equity_folds = {}  # type: ignore[var-annotated]
+                    saved_equity_folds.setdefault(pair_name, 0)
+
+                    if saved_equity_folds[pair_name] < DEBUG_SELECTED_MAX_FOLDS_PER_PAIR:
+                        # equity curves should align to df_test.index (Backtester returns index=df passed in)
+                        eq_dyn = dyn_res.get("equity_curve", None)
+                        eq_base = base_res.get("equity_curve", None)
+
+                        if (eq_dyn is not None) and (eq_base is not None):
+                            # Align safely to df_test.index (avoid surprises if something changed)
+                            eq_dyn = pd.Series(eq_dyn).reindex(df_test.index).astype(float)
+                            eq_base = pd.Series(eq_base).reindex(df_test.index).astype(float)
+
+                            if (vol_thr is not None) and (VOL_FEATURE in df_test.columns):
+                                v = df_test[VOL_FEATURE].astype(float)
+                                spike = (v >= float(vol_thr)) & v.notna()
+                                near_thr = float(vol_thr) * float(VOL_GUARD_NEAR_MULT)
+                                near_spike = (v >= near_thr) & v.notna()
+                                vol_thr_out = float(vol_thr)
+                                near_thr_out = float(near_thr)
+                                vol_vals = v
+                            else:
+                                spike = pd.Series(False, index=df_test.index)
+                                near_spike = pd.Series(False, index=df_test.index)
+                                vol_thr_out = np.nan
+                                near_thr_out = np.nan
+                                vol_vals = pd.Series(np.nan, index=df_test.index)
+
+                            eq_df = pd.DataFrame({
+                                "date": df_test.index,
+                                "equity_baseline": eq_base.values,
+                                "equity_dynamic": eq_dyn.values,
+                                VOL_FEATURE: vol_vals.values,
+                                "vol_thr": vol_thr_out,
+                                "near_thr": near_thr_out,
+                                "spike": spike.values,
+                                "near_spike": near_spike.values,
+                            })
+
+                            out_path = f"results/equity_debug_{pair_name}_fold{fold_id}.csv"
+                            eq_df.to_csv(out_path, index=False)
+                            print(f"Saved: {out_path}")
+
+                            saved_equity_folds[pair_name] += 1
+                        else:
+                            print(f"[debug] missing equity_curve for {pair_name} fold {fold_id} (skip equity_debug)")
+
+
+                # --- diagnostics computed BEFORE appending rows ---
+                vol_diag = compute_vol_guard_diagnostics(
+                    pair_name=pair_name,
+                    fold_id=fold_id,
+                    df_test=df_test,
+                    selected_s=selected_s,
+                    vol_feature=VOL_FEATURE,
+                    vol_thr=vol_thr,
+                    near_mult=VOL_GUARD_NEAR_MULT,
+                    majors=loaded_majors,
+                    tau=WF_TAU,
+                    tag="wf",
+                )
+                vol_diag_rows.append(vol_diag)
 
                 walkforward_rows.append({
                     "Pair": pair_name,
@@ -1579,20 +1835,48 @@ def main():
                     "Test End": f["test_end_dt"],
                     "Train Rows": int(len(training_data)),
                     "Test Bars": int(len(df_test)),
+
                     "Baseline Return (%)": base_res.get("total_return", np.nan),
                     "Dynamic Return (%)": dyn_res.get("total_return", np.nan),
                     "Return Δ": dyn_res.get("total_return", np.nan) - base_res.get("total_return", np.nan),
+
                     "Baseline Sharpe": base_res.get("sharpe_ratio", np.nan),
                     "Dynamic Sharpe": dyn_res.get("sharpe_ratio", np.nan),
                     "Sharpe Δ": dyn_res.get("sharpe_ratio", np.nan) - base_res.get("sharpe_ratio", np.nan),
+
                     "Baseline Max DD (%)": base_res.get("max_drawdown", np.nan),
                     "Dynamic Max DD (%)": dyn_res.get("max_drawdown", np.nan),
                     "DD Δ": dyn_res.get("max_drawdown", np.nan) - base_res.get("max_drawdown", np.nan),
+
                     "Baseline Trades": base_res.get("n_trades", np.nan),
                     "Dynamic Trades": dyn_res.get("n_trades", np.nan),
                     "Trades Δ": dyn_res.get("n_trades", np.nan) - base_res.get("n_trades", np.nan),
-                })
 
+                    # diagnostics
+                    "vol_thr": vol_thr,
+                    "Spike Bars (%)": vol_diag.get("spike_pct", np.nan),
+                    "Near-Spike Bars (%)": vol_diag.get("near_spike_pct", np.nan),
+                    "Switches / 1000 bars": vol_diag.get("switches_per_1000_bars", np.nan),
+                    "Switches Total": vol_diag.get("switches_total", np.nan),
+                    "Switches on spike": vol_diag.get("switches_on_spike", np.nan),
+                    "MR on spike (%)": vol_diag.get("mr_on_spike_pct", np.nan),
+                    "TF on spike (%)": vol_diag.get("tf_on_spike_pct", np.nan),
+                    "Confident Bars (%)": vol_diag.get("confident_pct", np.nan),
+                })
+                # --- Vol-guard + switching diagnostics (per fold) ---
+                vol_diag = compute_vol_guard_diagnostics(
+                    pair_name=pair_name,
+                    fold_id=fold_id,
+                    df_test=df_test,
+                    selected_s=selected_s,
+                    vol_feature=VOL_FEATURE,
+                    vol_thr=vol_thr,
+                    near_mult=VOL_GUARD_NEAR_MULT,
+                    majors=loaded_majors,
+                    tau=WF_TAU,
+                    tag="wf",
+                )
+                vol_diag_rows.append(vol_diag)
                 print(
                     f"    fold {fold_id}: Sharpe base={base_res['sharpe_ratio']:+.3f} "
                     f"dyn={dyn_res['sharpe_ratio']:+.3f} (Δ {dyn_res['sharpe_ratio'] - base_res['sharpe_ratio']:+.3f})"
@@ -1629,6 +1913,44 @@ def main():
             }
             pd.DataFrame([overall]).to_csv("results/walkforward_results_summary.csv", index=False)
             print("Saved: results/walkforward_results_summary.csv")
+
+            # --- New diagnostics outputs ---
+            if vol_diag_rows:
+                diag_df = pd.DataFrame(vol_diag_rows)
+                diag_df.to_csv("results/vol_guard_diagnostics_per_fold.csv", index=False)
+                print("Saved: results/vol_guard_diagnostics_per_fold.csv")
+
+                metric_aggs = {
+                    "spike_pct": "mean",
+                    "near_spike_pct": "mean",
+                    "switches_per_1000_bars": "mean",
+                    "mr_on_spike_pct": "mean",
+                    "tf_on_spike_pct": "mean",
+                    "phaseaware_on_spike_pct": "mean",
+                    "confident_pct": "mean",
+                    "confident_pct_on_spike": "mean",
+                    "confident_pct_off_spike": "mean",
+                    "Pair": "nunique",
+                    "Fold": "count",
+                }
+
+                def _agg_group(df: pd.DataFrame, group_col: str) -> pd.DataFrame:
+                    g = (df.groupby(group_col, as_index=False)
+                         .agg(metric_aggs)
+                         .rename(columns={"Pair": "Pairs", "Fold": "Rows", group_col: "Group"}))
+                    g.insert(0, "GroupBy", group_col)
+                    # keep column order stable and avoid stray columns
+                    keep = ["GroupBy", "Group"] + [c for c in g.columns if c not in ("GroupBy", "Group")]
+                    return g[keep]
+
+                diag_summary = pd.concat(
+                    [_agg_group(diag_df, "USD_role"),
+                     _agg_group(diag_df, "JPY"),
+                     _agg_group(diag_df, "MajorMinor")],
+                    ignore_index=True
+                )
+                diag_summary.to_csv("results/vol_guard_diagnostics_summary.csv", index=False)
+                print("Saved: results/vol_guard_diagnostics_summary.csv")
 
             print("\nWalk-forward summary:")
             print(pd.DataFrame([overall]).to_string(index=False))
@@ -1820,6 +2142,29 @@ def main():
                         "Trades Δ": dyn_res.get("n_trades", np.nan) - base_res.get("n_trades", np.nan),
                         "Confident Bars (%)": conf_pct,
                     })
+                    # --- Vol-guard + switching diagnostics (per fold, per tau) ---
+                    vol_diag_tau = compute_vol_guard_diagnostics(
+                        pair_name=pair_name,
+                        fold_id=fold_id,
+                        df_test=df_test,
+                        selected_s=selected_s,
+                        vol_feature=VOL_FEATURE,
+                        vol_thr=vol_thr,
+                        near_mult=VOL_GUARD_NEAR_MULT,
+                        majors=loaded_majors,
+                        tau=tau,
+                        tag="tau_sweep",
+                    )
+                    # If you don't want an extra file, you can skip this,
+                    # but it's often useful to see how switching changes with tau.
+                    # We'll add it into tau_rows directly (flatten a few keys).
+                    tau_rows[-1].update({
+                        "Spike Bars (%)": vol_diag_tau.get("spike_pct", np.nan),
+                        "Near-Spike Bars (%)": vol_diag_tau.get("near_spike_pct", np.nan),
+                        "Switches / 1000 bars": vol_diag_tau.get("switches_per_1000_bars", np.nan),
+                        "MR on spike (%)": vol_diag_tau.get("mr_on_spike_pct", np.nan),
+                        "TF on spike (%)": vol_diag_tau.get("tf_on_spike_pct", np.nan),
+                    })
 
 
 
@@ -1841,6 +2186,11 @@ def main():
                     "DD Δ": ("DD Δ", "mean"),
                     "DD Δ median": ("DD Δ", "median"),
                     "Confident Bars (%)": ("Confident Bars (%)", "mean"),
+                    "Spike Bars (%)": ("Spike Bars (%)", "mean"),
+                    "Near-Spike Bars (%)": ("Near-Spike Bars (%)", "mean"),
+                    "Switches / 1000 bars": ("Switches / 1000 bars", "mean"),
+                    "MR on spike (%)": ("MR on spike (%)", "mean"),
+                    "TF on spike (%)": ("TF on spike (%)", "mean"),
                     "Rows": ("Fold", "count"),
                 })
             )
@@ -2129,7 +2479,13 @@ def main():
         loaded_majors,
         loaded_minors
     )
-
+    # --- Vol-guard diagnostics plots (optional) ---
+    try:
+        from src.visualization import plot_vol_guard_diagnostics_all
+        plots = plot_vol_guard_diagnostics_all(results_dir="results", figures_dir="figures")
+        print("[diag-plots] wrote:", plots)
+    except Exception as e:
+        print("[diag-plots] skipped:", e)
     # ─────────────────────────────────────────
     # DONE
     # ─────────────────────────────────────────
