@@ -173,10 +173,10 @@ This is designed to be global + group-aware (not per-pair tuned).
 - To avoid cutting winners / interrupting live trades, the reset is applied **only when flat** (i.e., when the executed position is 0, using the same previous-bar signal convention as the backtester).
 
 **Current default (D1):**
-- `max_hold_bars = 40`
+- `max_hold_bars = 60`
 - reset only when flat
 
-This acts as a general “deadman switch” against prolonged misclassification while keeping the policy global and lightweight.
+We chose 60 bars as a conservative default after a small grid search (5–60): similar Sharpe uplift to shorter holds, with less drawdown penalty.
 
 ---
 
@@ -241,11 +241,11 @@ Markets are classified into four phases using two dimensions:
 - Compute ATR as a % of price (ATR%)
 - Compare ATR% to a rolling median (252 bars ≈ 1 trading year):
   - **High Volatility (HV):** ATR% ≥ rolling median ATR%
-  - **Low Volatility (LV):**  ATR% < rolling median ATR%
+  - **Low Volatility (LV):** ATR% < rolling median ATR%
 
 ### 2) Trend strength (ADX)
 - **Trending:** ADX(14) > 25
-- **Ranging:**  ADX(14) ≤ 25
+- **Ranging:** ADX(14) ≤ 25
 
 This yields: `HV_Trend`, `LV_Trend`, `HV_Ranging`, `LV_Ranging`.
 

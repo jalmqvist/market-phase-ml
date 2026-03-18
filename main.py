@@ -84,7 +84,7 @@ DYNAMIC_POLICY_KWARGS = dict(
     use_hysteresis=True,
     use_min_hold=True,
     use_max_hold=True,
-    max_hold_bars=40, # D1: ~1 trading month
+    max_hold_bars=60, # D1: ~3 trading months
 )
 WF_TAU = 0.62
 
@@ -108,9 +108,9 @@ USD_QUOTE_VOL_SPIKE_OVERRIDE = "force_tf"
 DEBUG_SAVE_SELECTED_SERIES = True
 DEBUG_SAVE_EQUITY_SERIES = True
 DEBUG_SELECTED_PAIRS = {"EURUSD", "AUDUSD", "USDCAD", "USDJPY", "GBPJPY"}
-# DEBUG_SELECTED_MAX_FOLDS_PER_PAIR = 1  # keep outputs small
+DEBUG_SELECTED_MAX_FOLDS_PER_PAIR = 1  # keep outputs small
 # DEBUG_SELECTED_PAIRS = {"GBPJPY"}
-DEBUG_SELECTED_MAX_FOLDS_PER_PAIR = 9
+# DEBUG_SELECTED_MAX_FOLDS_PER_PAIR = 9
 # Diagnostics: "near-spike" threshold for analysis/plots (does not affect trading logic)
 VOL_GUARD_NEAR_MULT = 0.90  # near_thr = VOL_GUARD_NEAR_MULT * vol_thr
 # ─────────────────────────────────────────────────────
@@ -1791,6 +1791,20 @@ def main():
                                 near_thr_out = np.nan
                                 vol_vals = pd.Series(np.nan, index=df_test.index)
 
+                            # Align selection + executed (previous-bar) signal to df_test.index
+                            if "selected_s" in locals() and selected_s is not None:
+                                selected_aligned = pd.Series(selected_s).reindex(df_test.index).astype("object")
+                            else:
+                                selected_aligned = pd.Series("UNKNOWN", index=df_test.index, dtype="object")
+
+                            signal_prev = (
+                                pd.Series(dyn_signals)
+                                .reindex(df_test.index)
+                                .shift(1)
+                                .fillna(0)
+                                .astype(int)
+                            )
+
                             eq_df = pd.DataFrame({
                                 "date": df_test.index,
                                 "equity_baseline": eq_base.values,
@@ -1800,6 +1814,9 @@ def main():
                                 "near_thr": near_thr_out,
                                 "spike": spike.values,
                                 "near_spike": near_spike.values,
+                                # debugging columns
+                                "selected_type": selected_aligned.values,
+                                "signal_prev": signal_prev.values,
                             })
 
                             out_path = f"results/equity_debug_{pair_name}_fold{fold_id}.csv"
@@ -2064,10 +2081,6 @@ def main():
                             f"{float(s_test.min()):.6f}/{float(s_test.median()):.6f}/{float(s_test.max()):.6f} | "
                             f"thr(q={VOL_GUARD_Q:.2f})={vol_thr:.6f} frac>thr={float((s_test >= vol_thr).mean()):.3f}"
                         )
-
-                # (optional) remove these if unused; currently you precompute but do not use:
-                # tf_sigs, tf_sl_s, tf_tp_s = TF4Strategy().generate_signals(df_test)
-                # mr_sigs, mr_sl_s, mr_tp_s = MR42Strategy().generate_signals(df_test)
 
                 # Baseline PhaseAware (tau-independent)
                 pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
