@@ -31,9 +31,7 @@ from src.cache import (
 )
 from src.models import PhaseMLExperiment, PhaseMLPredictor
 from src.strategies import Backtester as BT, PhaseAwareStrategy
-
 from src.repro import set_global_seed, build_run_config, write_manifest
-
 
 # ── Uncomment to force cache refresh ─────
 # clear_cache('processed_data')
@@ -107,9 +105,9 @@ USD_QUOTE_VOL_SPIKE_OVERRIDE = "force_tf"
 # ─────────────────────────────────────────────────────
 DEBUG_SAVE_SELECTED_SERIES = True
 DEBUG_SAVE_EQUITY_SERIES = True
-DEBUG_SELECTED_PAIRS = {"EURUSD", "AUDUSD", "USDCAD", "USDJPY", "GBPJPY"}
+# DEBUG_SELECTED_PAIRS = {"EURUSD", "AUDUSD", "USDCAD", "USDJPY", "GBPJPY"}
 # DEBUG_SELECTED_MAX_FOLDS_PER_PAIR = 1  # keep outputs small
-# DEBUG_SELECTED_PAIRS = {"GBPJPY"}
+DEBUG_SELECTED_PAIRS = {"GBPJPY"}
 DEBUG_SELECTED_MAX_FOLDS_PER_PAIR = 9
 # Diagnostics: "near-spike" threshold for analysis/plots (does not affect trading logic)
 VOL_GUARD_NEAR_MULT = 0.90  # near_thr = VOL_GUARD_NEAR_MULT * vol_thr
