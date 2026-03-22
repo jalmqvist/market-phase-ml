@@ -20,6 +20,16 @@ A regime-aware **time-series ML pipeline** that combines:
 
 ---
 
+## Notebook walkthrough (recommended)
+
+After you run `python main.py` and the `results/*.csv` artifacts are generated, you can open the notebook:
+
+- `notebooks/01_regime_gating_walkforward.ipynb`
+
+It is intentionally “read-only” on the artifacts: it loads the CSV outputs + selected debug exports and produces the main figures (fold distributions, per-pair breakdown, and a fold-level case study showing volatility spikes + strategy selection).
+
+---
+
 ## Why this project
 
 This repo is intentionally built as an end-to-end ML engineering project for **non-stationary time series**:
@@ -49,6 +59,8 @@ Key outputs (written to `results/`):
 - `walkforward_results_per_fold.csv` — walk-forward deltas per fold (debuggable)
 - `walkforward_tau_sweep_summary.csv` — τ sweep summary (optional)
 - `walkforward_policy_sweep_summary.csv` — policy sweep summary (optional)
+
+The notebook (`notebooks/01_regime_gating_walkforward.ipynb`) reads these artifacts to generate figures and fold-level case studies.
 
 > Note: expensive sweeps (τ/policy sweeps) are gated behind flags in `main.py`.
 
@@ -88,6 +100,10 @@ This is a **gating model** that decides which expert policy to execute at each t
 
 - “Dynamic − PhaseAware(TF4/MR42)” means: *out-of-sample performance difference* between the ML-gated routing and the rule-based baseline.
 - In-sample ablations are primarily for debugging/intuition; the main generalization check is the walk-forward evaluation.
+- Max DD (%) is stored as a **negative** number (e.g., **−30%**).
+- “Max DD Δ (Dynamic − Baseline)” is therefore:
+  - **positive** = Dynamic had a *less negative* drawdown → **better**
+  - **negative** = Dynamic had a more negative drawdown → worse
 
 ### A) In-sample ablation (A0–A3)
 
@@ -125,19 +141,20 @@ The dynamic selector uses:
 
 **Headline result (14 pairs, 361 folds) vs PhaseAware(TF4/MR42):**
 
-| Metric (Dynamic − PhaseAware TF4/MR42) |                Value |
-| -------------------------------------- | -------------------: |
-| Avg Return Δ                           |           **+0.21%** |
-| Avg Sharpe Δ                           |            **+0.08** |
-| Avg Max DD Δ                           |            **-0.19** |
-| Folds with Sharpe improvement          | **194 / 361 (~54%)** |
+| Metric (Dynamic − PhaseAware TF4/MR42) |               Value |
+| -------------------------------------- | ------------------: |
+| Avg Return Δ                           |          **+0.19%** |
+| Avg Sharpe Δ                           |          **+0.084** |
+| Avg Max DD Δ                           |           **-0.17** |
+| Folds with Sharpe improvement          | **192 / 361 (53%)** |
 
 Outputs:
 - `results/walkforward_results_per_fold.csv`
 - `results/walkforward_results_per_pair.csv`
 - `results/walkforward_results_summary.csv`
 
-> Note: The exact numbers in this README are snapshots from recent runs (run43). Re-run `python main.py` to reproduce the latest artifacts on your machine.
+> Note: The exact numbers in this README are snapshots from the current default configuration.
+> Re-run `python main.py` to reproduce the latest artifacts on your machine.
 
 ---
 
@@ -365,6 +382,8 @@ The pipeline uses caching to speed up iteration. If you want a clean run, clear 
 ```
 market-phase-ml/
 ├── main.py
+├── notebooks/
+│   └── 01_regime_gating_walkforward.ipynb		# Jupyter notebook
 ├── src/
 │   ├── data.py              # data pipeline (download/prepare)
 │   ├── phases.py            # regime labeling (rule-based)
@@ -404,7 +423,7 @@ This project is based on a trading system I originally implemented in MQL4 (Meta
 
 ## About the author
 
-I’m Jonas Almqvist — a Data Scientist / ML Engineer with a PhD and 15+ years of applied computational research, focused on building end-to-end data/ML pipelines and reproducible experimentation. Remote preferred.
+I’m Jonas Almqvist — a Data Scientist / ML Engineer with a PhD and 15+ years of applied computational research.
 
 - LinkedIn: https://linkedin.com/in/jalmqvist
 - GitHub: https://github.com/jalmqvist
