@@ -5,15 +5,51 @@ case study of the regime-aware mixture-of-experts gating system.  The notebook r
 **saved artifacts** (CSVs produced by `python main.py`) and produces plots + narrative
 without re-training any models.
 
-## Quickstart
+## How to reproduce
+
+### Step 1 — Generate artifacts
+
+Run the pipeline from the repository root.  This produces all CSV artifacts and,
+when `DEBUG_SAVE_EQUITY_SERIES` is enabled in `main.py`, the per-fold debug exports
+required by Part C of the notebook:
 
 ```bash
-# 1. Generate artifacts (walk-forward run + debug exports)
 python main.py
+```
 
-# 2. Open the notebook (read-only on artifacts)
+Expected output files in `results/`:
+
+| File | Required by |
+|---|---|
+| `walkforward_results_summary.csv` | Part B |
+| `walkforward_results_per_fold.csv` | Part B |
+| `walkforward_results_per_pair.csv` | Part B |
+| `equity_debug_GBPJPY_fold8.csv` | Part C (default case study) |
+
+> If `equity_debug_*.csv` files are missing, set `DEBUG_SAVE_EQUITY_SERIES = True`
+> in `main.py` and re-run.
+
+### Step 2 — Open the notebook
+
+```bash
 jupyter notebook notebooks/01_regime_gating_walkforward.ipynb
 ```
+
+The notebook is **read-only on artifacts** — it loads CSVs and produces figures without
+re-training any models or modifying the `results/` directory.
+
+### Changing the case-study pair or fold
+
+The case study in Part C is parameterised at the top of that section:
+
+```python
+pair = "GBPJPY"
+fold = 8
+```
+
+Change these two variables to inspect any other pair/fold for which a
+`results/equity_debug_{pair}_fold{fold}.csv` exists, then re-run cells from that
+point forward.
 
 ## Notebook structure
 
