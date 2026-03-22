@@ -1,28 +1,54 @@
 # Notebooks
 
-This folder contains the “portfolio” notebook(s) that explain the project end-to-end using **saved artifacts** (CSVs) produced by `python main.py`.
+This folder contains `01_regime_gating_walkforward.ipynb` — an end-to-end engineering
+case study of the regime-aware mixture-of-experts gating system.  The notebook reads
+**saved artifacts** (CSVs produced by `python main.py`) and produces plots + narrative
+without re-training any models.
 
-## Recommended workflow
-
-1) Generate artifacts:
+## Quickstart
 
 ```bash
+# 1. Generate artifacts (walk-forward run + debug exports)
 python main.py
+
+# 2. Open the notebook (read-only on artifacts)
+jupyter notebook notebooks/01_regime_gating_walkforward.ipynb
 ```
 
-2) Open the main notebook:
+## Notebook structure
 
-- `01_regime_gating_walkforward.ipynb`
-
-The notebook reads from `../results/` (walk-forward summaries + fold-level debug CSVs) and produces plots + narrative without re-training models.
+| Part | Content |
+|---|---|
+| **Part A** | What / Why / How — executive summary, problem framing, fold definition |
+| **Part B** | Evidence — fold-level distributions (Sharpe Delta, DD Delta), per-pair breakdown |
+| **Part C** | Failure modes — GBPJPY fold 8 case study: volatility guard, equity comparison, selection timeline |
+| **Part D** | Engineering highlights + next steps |
 
 ## Expected inputs (from `results/`)
 
-- `walkforward_results_summary.csv`
-- `walkforward_results_per_fold.csv`
-- `walkforward_results_per_pair.csv`
-- A few debug files like:
-  - `equity_debug_<PAIR>_fold<N>.csv`
-  - (optional) `selected_series_<PAIR>_fold<N>.csv` if you save those
+| File | Description |
+|---|---|
+| `walkforward_results_summary.csv` | Run-level aggregate metrics |
+| `walkforward_results_per_fold.csv` | Per-fold deltas — primary analysis unit |
+| `walkforward_results_per_pair.csv` | Per-instrument averages |
+| `equity_debug_<PAIR>_fold<N>.csv` | Bar-by-bar equity + spike + selection state (debug export) |
 
-If you don’t have debug CSVs yet, enable them in `main.py` via the `DEBUG_SAVE_EQUITY_SERIES` and `DEBUG_SELECTED_PAIRS` flags and re-run.
+> **Note on debug CSVs:** if they are missing, enable them in `main.py` via the
+> `DEBUG_SAVE_EQUITY_SERIES` flag and re-run.
+
+## Metric conventions
+
+- `DD Delta = Dynamic Max DD (%) - Baseline Max DD (%)`.
+- Max DD (%) is stored as a **negative number** (e.g., -30 %).
+- Therefore **positive DD Delta means Dynamic had a less negative drawdown -> better**.
+- Same sign convention applies: positive Sharpe Delta and Return Delta are straightforwardly better.
+
+## Utility module
+
+`utils.py` (in this folder) provides DataFrame-based plotting and loading functions
+used by the notebook:
+
+- `load_results_csv(filename)` — load a results CSV from `../results/`
+- `load_equity_debug(pair, fold)` — load `equity_debug_{pair}_fold{fold}.csv`
+- `plot_equity_vs_spikes(df, title)` — 2-panel equity + drawdown plot with spike shading
+- `plot_selected_timeline(df, title)` — policy-selection step chart with spike shading
