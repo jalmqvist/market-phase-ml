@@ -1,9 +1,9 @@
 # main.py
 import sys
 import importlib.metadata as importlib_metadata
+import traceback
 import matplotlib
 import platform
-#matplotlib.use('TkAgg')
 matplotlib.use('Agg')
 
 import pandas as pd
@@ -29,8 +29,12 @@ from src.cache import (
     save_cache, load_cache, clear_cache,
     _hash_dict_of_dataframes, _hash_params
 )
-from src.models import PhaseMLExperiment, PhaseMLPredictor
-from src.strategies import Backtester as BT, PhaseAwareStrategy
+from src.models import (
+    PhaseMLExperiment, PhaseMLPredictor,
+    StrategyPerformanceTracker, StrategySelector,
+    smooth_phase_labels,
+)
+from src.strategies import Backtester as BT, PhaseAwareStrategy, StrategySelector_Dynamic
 from src.repro import set_global_seed, build_run_config, write_manifest
 
 # ── Uncomment to force cache refresh ─────
@@ -59,6 +63,7 @@ RUN_POLICY_SWEEP = False
 DEBUG_BASELINE_KEYS = False
 DEBUG_FEATURE_COLUMNS = False
 DEBUG_SIGNAL_TYPES = False
+DEBUG_VOL_GUARD = False   # gate verbose per-fold vol-guard train/test prints
 
 os.makedirs("results", exist_ok=True)
 
@@ -671,6 +676,62 @@ def generate_walkforward_folds_by_pos(
 # MAIN
 # ─────────────────────────────────────────────────────
 
+def _make_strategy_dicts() -> tuple[dict, dict]:
+    """Return fresh TF and MR strategy instances (call per fold to avoid state sharing)."""
+    tf_strategies = {
+        'TF1': TF1Strategy(), 'TF2': TF2Strategy(), 'TF3': TF3Strategy(),
+        'TF4': TF4Strategy(), 'TF5': TF5Strategy(),
+    }
+    mr_strategies = {
+        'MR1': MR1Strategy(), 'MR2': MR2Strategy(), 'MR32': MR32Strategy(),
+        'MR42': MR42Strategy(), 'MR5': MR5Strategy(),
+    }
+    return tf_strategies, mr_strategies
+
+
+def _compute_vol_threshold(df_train_bars: pd.DataFrame) -> float | None:
+    """Compute per-fold vol-guard threshold from training bars (no leakage).
+
+    Uses module globals VOL_FEATURE and VOL_GUARD_Q.
+    """
+    if VOL_FEATURE not in df_train_bars.columns:
+        return None
+    s = df_train_bars[VOL_FEATURE].dropna()
+    return float(s.quantile(VOL_GUARD_Q)) if len(s) > 0 else None
+
+
+def _run_baseline_bt(df_test: pd.DataFrame, pip_value: float) -> dict:
+    """Run PhaseAware(TF4/MR42) baseline backtest on a test slice.
+
+    Uses module globals INITIAL_CAPITAL, SPREAD_PIPS, SLIPPAGE_PIPS,
+    COMMISSION_PER_TRADE.
+    """
+    backtester = BT(
+        initial_capital=INITIAL_CAPITAL,
+        spread_pips=SPREAD_PIPS,
+        slippage_pips=SLIPPAGE_PIPS,
+        commission_per_trade=COMMISSION_PER_TRADE,
+        pip_value=pip_value,
+        use_atr_sizing=False,
+    )
+    pa = PhaseAwareStrategy("TF4", "MR42")
+    pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
+    return backtester.run(df_test, pa_signals, "PhaseAware_TF4_MR42_WF", pa_sl, pa_tp)
+
+
+def _assert_backtest_index_matches(pair_name: str, df_ref, results: dict, tag: str) -> None:
+    for sname, res in results.items():
+        eq = res.get("equity_curve")
+        if eq is None:
+            continue
+        if not eq.index.equals(df_ref.index):
+            print(f"[FATAL] {pair_name} {tag} {sname}: eq.index != df.index right after backtest")
+            print("  df len:", len(df_ref), "eq len:", len(eq))
+            print("  missing in eq:", list(df_ref.index.difference(eq.index)[:10]))
+            print("  extra in eq:", list(eq.index.difference(df_ref.index)[:10]))
+            raise RuntimeError("Equity curve index mismatch at creation time")
+
+
 def main():
     run_cfg = build_run_config(seed=SEED, run_id=RUN_ID)
     set_global_seed(run_cfg.seed)
@@ -843,7 +904,6 @@ def main():
         print_phase_distribution(df, pair_name)
 
     # ── Temporary diagnostic — phase label smoothing effect ──────────────
-    from src.models import smooth_phase_labels
     print('\n  Phase smoothing diagnostic:')
     for pair_name, df in list(processed_data.items())[:2]:
         raw      = df['phase']
@@ -953,7 +1013,6 @@ def main():
                     'predictions': predictions
                 }
             except Exception as e:
-                import traceback
                 traceback.print_exc()
                 print(f'  ✗ {pair_name}: ML prediction failed — {e}')
 
@@ -963,17 +1022,6 @@ def main():
         )
     else:
         print('  Loaded ML predicted phases from cache.')
-
-    # ✅ ADD THIS DEBUG BLOCK:
-    print(f'\n  [DEBUG] ml_predicted_data contents:')
-    print(f'    Keys: {list(ml_predicted_data.keys())}')
-    print(f'    Length: {len(ml_predicted_data)}')
-    if ml_predicted_data:
-        for pair_name in list(ml_predicted_data.keys())[:2]:  # Show first 2
-            pred_data = ml_predicted_data[pair_name]
-            print(f'    {pair_name}: has keys {list(pred_data.keys())}')
-    else:
-        print('    ⚠️  ml_predicted_data is EMPTY!')
 
     # ── Print accuracy scores regardless of cache hit ─────────────────────
     print('\n  ML Phase Prediction Accuracy Summary:')
@@ -1012,18 +1060,9 @@ def main():
         print('  No cache found — running ML backtests...')
         ml_backtest_results = {}
 
-        print(f'  DEBUG: ml_predicted_data has {len(ml_predicted_data)} pairs')
-        for pair_name in ml_predicted_data.keys():
-            print(f'    - {pair_name}')
-
         for pair_name, pred_data in ml_predicted_data.items():
-            print(f'\n  DEBUG: Processing {pair_name}')
-            print(f'  DEBUG: pred_data keys = {pred_data.keys()}')
-
-            df_ml = pred_data['df']
-            print(f'  DEBUG: df_ml shape = {df_ml.shape}')
-            print(f'  DEBUG: df_ml columns = {df_ml.columns.tolist()}')
             print(f'\n  --- {pair_name} ---')
+            df_ml = pred_data['df']
 
             try:
                 # Temporarily swap phase column for backtesting
@@ -1054,7 +1093,6 @@ def main():
                     print(f'  ✗ {pair_name}: PhaseAware_TF4_MR42 not in results')
 
             except Exception as e:
-                import traceback
                 traceback.print_exc()
                 print(f'  ✗ {pair_name}: ML backtest failed — {e}')
 
@@ -1116,24 +1154,8 @@ def main():
     if all_pair_results is None:
         print('  No cache found — running backtests...')
         all_pair_results = {}
-        def _assert_backtest_index_matches(pair_name: str, df_ref, results: dict, tag: str) -> None:
-            for sname, res in results.items():
-                eq = res.get("equity_curve")
-                if eq is None:
-                    continue
-                if not eq.index.equals(df_ref.index):
-                    print(f"[FATAL] {pair_name} {tag} {sname}: eq.index != df.index right after backtest")
-                    print("  df len:", len(df_ref), "eq len:", len(eq))
-                    print("  missing in eq:", list(df_ref.index.difference(eq.index)[:10]))
-                    print("  extra in eq:", list(eq.index.difference(df_ref.index)[:10]))
-                    raise RuntimeError("Equity curve index mismatch at creation time")
 
         for pair_name, df in processed_data.items():
-            ticker = next(
-                (t for t, n in PAIR_NAMES.items() if n == pair_name),
-                None
-            )
-            # pip_value = PIP_VALUES.get(ticker, 0.0001)
             pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
             print(f'\n  --- {pair_name} (pip={pip_value}) ---')
 
@@ -1141,10 +1163,6 @@ def main():
             results_atr       = {}
 
             try:
-                print(f'    [DEBUG] Starting hardcoded backtest for {pair_name}')
-                print(f'    [DEBUG] df shape: {df.shape}, columns: {df.columns.tolist()}')
-                pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
-
                 results_hardcoded = run_backtests(
                     df=df,
                     initial_capital=INITIAL_CAPITAL,
@@ -1156,18 +1174,12 @@ def main():
                     commission_per_trade=COMMISSION_PER_TRADE,
                     pip_value=pip_value,
                 )
-
-                print(f'    [DEBUG] Hardcoded backtest complete: {len(results_hardcoded)} strategies')
                 _assert_backtest_index_matches(pair_name, df, results_hardcoded, "hardcoded")
             except Exception as e:
-                import traceback
                 traceback.print_exc()
                 print(f'  ✗ {pair_name}: hardcoded backtest failed — {e}')
 
             try:
-                print(f'    [DEBUG] Starting ATR backtest for {pair_name}')
-                pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
-
                 results_atr = run_backtests(
                     df=df,
                     initial_capital=INITIAL_CAPITAL,
@@ -1179,11 +1191,8 @@ def main():
                     commission_per_trade=COMMISSION_PER_TRADE,
                     pip_value=pip_value,
                 )
-
-                print(f'    [DEBUG] ATR backtest complete: {len(results_atr)} strategies')
                 _assert_backtest_index_matches(pair_name, df, results_atr, "atr")
             except Exception as e:
-                import traceback
                 traceback.print_exc()
                 print(f'  ✗ {pair_name}: ATR backtest failed — {e}')
 
@@ -1235,8 +1244,6 @@ def main():
     print('\n[4b/5] Training strategy selector ML...')
     print('  (Predicting strategy TYPE: TrendFollowing vs MeanReversion vs PhaseAware)')
 
-    from src.models import StrategyPerformanceTracker, StrategySelector
-
     selector_trained = {}
 
     for pair_name, df in processed_data.items():
@@ -1264,7 +1271,6 @@ def main():
                 print(f'    ✗ Training failed')
 
         except Exception as e:
-            import traceback
             traceback.print_exc()
             print(f'    ✗ {pair_name}: selector training failed — {e}')
 
@@ -1333,8 +1339,6 @@ def main():
         print('  ✗ No selectors trained; skipping dynamic backtest')
         dynamic_results = {}
     else:
-        from src.strategies import StrategySelector_Dynamic
-
         dynamic_results = {}
 
         for pair_name, df in processed_data.items():
@@ -1345,30 +1349,17 @@ def main():
                 continue
 
             try:
-                # Create dynamic selector strategy
+                tf_strats, mr_strats = _make_strategy_dicts()
                 dynamic_strategy = StrategySelector_Dynamic(
                     selector_trained=selector_trained,
-                    tf_strategies={
-                        'TF1': TF1Strategy(),
-                        'TF2': TF2Strategy(),
-                        'TF3': TF3Strategy(),
-                        'TF4': TF4Strategy(),
-                        'TF5': TF5Strategy(),
-                    },
-                    mr_strategies={
-                        'MR1': MR1Strategy(),
-                        'MR2': MR2Strategy(),
-                        'MR32': MR32Strategy(),
-                        'MR42': MR42Strategy(),
-                        'MR5': MR5Strategy(),
-                    },
+                    tf_strategies=tf_strats,
+                    mr_strategies=mr_strats,
                     default_tf="TF4",
                     default_mr="MR42",
                     tau_enter=WF_TAU,
                     tau_exit=max(0.0, WF_TAU - 0.05),
                     **DYNAMIC_POLICY_KWARGS,
                 )
-                # Run backtest
                 pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
 
                 backtester = BT(
@@ -1396,10 +1387,9 @@ def main():
                       f'Max DD: {result["max_drawdown"]:+.2f}%')
 
             except Exception as e:
-                import traceback
                 traceback.print_exc()
                 print(f'    ✗ Backtest failed: {e}')
-        # After dynamic_results computed
+
         if dynamic_results:
             dyn_rows = []
             for pair_name, res in dynamic_results.items():
@@ -1415,7 +1405,6 @@ def main():
             dyn_df = pd.DataFrame(dyn_rows).sort_values(["Pair"])
             dyn_df.to_csv("results/dynamic_selector_results_per_pair.csv", index=False)
             print("Saved: results/dynamic_selector_results_per_pair.csv")
-        if dynamic_results:
             print(f'\n✓ StrategySelector_Dynamic tested on {len(dynamic_results)} pairs')
         else:
             print(f'✗ No dynamic backtest results')
@@ -1429,12 +1418,9 @@ def main():
         comparison = []
 
         for pair_name in dynamic_results.keys():
-            DEBUG_BASELINE_KEYS = False
-            ...
             if DEBUG_BASELINE_KEYS:
                 print(f"{pair_name}: available baseline keys: {list(hardcoded_results.get(pair_name, {}).keys())}")
-            # baseline_key = 'PhaseAware_TF4_MR42_hardcoded'
-            baseline_key = 'PhaseAware_TF4_MR42'    # TEST
+            baseline_key = 'PhaseAware_TF4_MR42'
 
             if pair_name not in hardcoded_results or baseline_key not in hardcoded_results[pair_name]:
                 print(f'  ⚠️  {pair_name}: No baseline PhaseAware_TF4_MR42')
@@ -1550,9 +1536,6 @@ def main():
     if RUN_WALKFORWARD:
         print("\n[4f/5] Walk-forward evaluation (out-of-sample)...")
 
-        from src.models import StrategyPerformanceTracker, StrategySelector
-        from src.strategies import StrategySelector_Dynamic
-
         walkforward_rows = []
         vol_diag_rows = []
 
@@ -1560,21 +1543,6 @@ def main():
             print(f"\n  --- {pair_name} ---")
 
             pair_results_full = hardcoded_results.get(pair_name, {})
-            # Sanity: equity curve index must match df_full.index
-            for sname, res in pair_results_full.items():
-                eq = res.get("equity_curve")
-                if eq is None:
-                    continue
-
-                if not eq.index.equals(df_full.index):
-                    print(f"[WARN] {pair_name} {sname}: eq.index != df_full.index")
-                    print("  eq len:", len(eq), "df len:", len(df_full))
-                    print("  missing in eq:", len(df_full.index.difference(eq.index)))
-                    print("  extra in eq:", len(eq.index.difference(df_full.index)))
-                    # show a few concrete timestamps
-                    print("  missing examples:", list(df_full.index.difference(eq.index)[:5]))
-                    print("  extra examples:", list(eq.index.difference(df_full.index)[:5]))
-                    break
             if not pair_results_full:
                 print("    ✗ Missing hardcoded_results for pair; skipping")
                 continue
@@ -1611,12 +1579,6 @@ def main():
                     eq = res.get("equity_curve", None)
                     if eq is None:
                         continue
-                    missing = df_for_labels.index.difference(eq.index)
-                    if len(missing) > 0:
-                        print("Missing in eq:", list(missing[:10]), "count:", len(missing))
-                        print("eq index range:", eq.index.min(), eq.index.max(), "len:", len(eq))
-                        print("df index range:", df_for_labels.index.min(), df_for_labels.index.max(), "len:",
-                          len(df_for_labels))
                     common_idx = df_for_labels.index.intersection(eq.index)
                     if len(common_idx) < len(df_for_labels.index):
                         # shrink df_for_labels to what the equity curve can actually support
@@ -1655,45 +1617,28 @@ def main():
 
                 # ---- Volatility guard (compute ONCE per fold; no leakage; bar-level scale) ----
                 df_train_bars = df_full.iloc[train_start_pos:train_end_pos + 1].copy()
-
-                vol_thr = None
-                if "atr_pct" in df_train_bars.columns:
-                    s_train = df_train_bars["atr_pct"].dropna()
-                    if len(s_train) > 0:
-                        vol_thr = float(s_train.quantile(VOL_GUARD_Q))
-
+                vol_thr = _compute_vol_threshold(df_train_bars)
                 vol_threshold_by_pair = {pair_name: vol_thr} if vol_thr is not None else {}
 
-                # (optional) DEBUG once per fold
-                print(f"[vol-guard] {pair_name=} {fold_id=} vol_thr is None? {vol_thr is None}")
-                if vol_thr is not None and "atr_pct" in df_test.columns:
-                    s_test = df_test["atr_pct"].dropna()
+                if DEBUG_VOL_GUARD and vol_thr is not None and VOL_FEATURE in df_test.columns:
+                    s_train = df_train_bars[VOL_FEATURE].dropna()
+                    s_test = df_test[VOL_FEATURE].dropna()
                     if len(s_test) and len(s_train):
                         print(
-                            f"    [vol-guard] train atr_pct min/med/max="
+                            f"    [vol-guard] {pair_name} fold={fold_id} "
+                            f"train min/med/max="
                             f"{float(s_train.min()):.6f}/{float(s_train.median()):.6f}/{float(s_train.max()):.6f} | "
                             f"test min/med/max="
                             f"{float(s_test.min()):.6f}/{float(s_test.median()):.6f}/{float(s_test.max()):.6f} | "
                             f"thr(q={VOL_GUARD_Q:.2f})={vol_thr:.6f} frac>thr={float((s_test >= vol_thr).mean()):.3f}"
                         )
+
                 # Dynamic selector strategy (per-fold)
-                selector_trained_fold = {pair_name: selector}
+                tf_strats, mr_strats = _make_strategy_dicts()
                 dynamic_strategy = StrategySelector_Dynamic(
-                    selector_trained=selector_trained_fold,
-                    tf_strategies={
-                        'TF1': TF1Strategy(),
-                        'TF2': TF2Strategy(),
-                        'TF3': TF3Strategy(),
-                        'TF4': TF4Strategy(),
-                        'TF5': TF5Strategy(),
-                    },
-                    mr_strategies={
-                        'MR1': MR1Strategy(),
-                        'MR2': MR2Strategy(),
-                        'MR32': MR32Strategy(),
-                        'MR42': MR42Strategy(),
-                        'MR5': MR5Strategy(),
-                    },
+                    selector_trained={pair_name: selector},
+                    tf_strategies=tf_strats,
+                    mr_strategies=mr_strats,
                     default_tf='TF4',
                     default_mr='MR42',
                     tau_enter=WF_TAU,
@@ -1822,8 +1767,6 @@ def main():
                             print(f"Saved: {out_path}")
 
                             saved_equity_folds[pair_name] += 1
-                        else:
-                            print(f"[debug] missing equity_curve for {pair_name} fold {fold_id} (skip equity_debug)")
 
 
                 # --- diagnostics computed BEFORE appending rows ---
@@ -1878,20 +1821,6 @@ def main():
                     "TF on spike (%)": vol_diag.get("tf_on_spike_pct", np.nan),
                     "Confident Bars (%)": vol_diag.get("confident_pct", np.nan),
                 })
-                # --- Vol-guard + switching diagnostics (per fold) ---
-                vol_diag = compute_vol_guard_diagnostics(
-                    pair_name=pair_name,
-                    fold_id=fold_id,
-                    df_test=df_test,
-                    selected_s=selected_s,
-                    vol_feature=VOL_FEATURE,
-                    vol_thr=vol_thr,
-                    near_mult=VOL_GUARD_NEAR_MULT,
-                    majors=loaded_majors,
-                    tau=WF_TAU,
-                    tag="wf",
-                )
-                vol_diag_rows.append(vol_diag)
                 print(
                     f"    fold {fold_id}: Sharpe base={base_res['sharpe_ratio']:+.3f} "
                     f"dyn={dyn_res['sharpe_ratio']:+.3f} (Δ {dyn_res['sharpe_ratio'] - base_res['sharpe_ratio']:+.3f})"
@@ -1974,9 +1903,6 @@ def main():
     if RUN_TAU_SWEEP:
         print("\n[4g/5] Walk-forward global tau sweep (out-of-sample)...")
 
-        # TAUS = [0.45, 0.50, 0.55, 0.60, 0.65]
-        # TAUS = [0.50, 0.55, 0.60]
-        # TAUS = [0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75]
         TAUS = [0.60, 0.62, 0.64, 0.66, 0.68, 0.70]
 
         tau_rows = []
@@ -1985,21 +1911,6 @@ def main():
             print(f"\n  --- {pair_name} ---")
 
             pair_results_full = hardcoded_results.get(pair_name, {})
-            # Sanity: equity curve index must match df_full.index
-            for sname, res in pair_results_full.items():
-                eq = res.get("equity_curve")
-                if eq is None:
-                    continue
-
-                if not eq.index.equals(df_full.index):
-                    print(f"[WARN] {pair_name} {sname}: eq.index != df_full.index")
-                    print("  eq len:", len(eq), "df len:", len(df_full))
-                    print("  missing in eq:", len(df_full.index.difference(eq.index)))
-                    print("  extra in eq:", len(eq.index.difference(df_full.index)))
-                    # show a few concrete timestamps
-                    print("  missing examples:", list(df_full.index.difference(eq.index)[:5]))
-                    print("  extra examples:", list(eq.index.difference(df_full.index)[:5]))
-                    break
             if not pair_results_full:
                 print("    ✗ Missing hardcoded_results for pair; skipping")
                 continue
@@ -2058,22 +1969,16 @@ def main():
 
                 # ---- Volatility guard (compute ONCE per fold; tau-independent) ----
                 df_train_bars = df_full.iloc[train_start_pos:train_end_pos + 1].copy()
-
-                vol_thr = None
-                if "atr_pct" in df_train_bars.columns:
-                    s_train = df_train_bars["atr_pct"].dropna()
-                    if len(s_train) > 0:
-                        vol_thr = float(s_train.quantile(VOL_GUARD_Q))
-
+                vol_thr = _compute_vol_threshold(df_train_bars)
                 vol_threshold_by_pair = {pair_name: vol_thr} if vol_thr is not None else {}
 
-                # DEBUG (optional; once per fold, not per tau)
-                print(f"[vol-guard] {pair_name=} {fold_id=} vol_thr is None? {vol_thr is None}")
-                if vol_thr is not None and "atr_pct" in df_test.columns:
-                    s_test = df_test["atr_pct"].dropna()
+                if DEBUG_VOL_GUARD and vol_thr is not None and VOL_FEATURE in df_test.columns:
+                    s_train = df_train_bars[VOL_FEATURE].dropna()
+                    s_test = df_test[VOL_FEATURE].dropna()
                     if len(s_test) and len(s_train):
                         print(
-                            f"    [vol-guard] train atr_pct min/med/max="
+                            f"    [vol-guard] {pair_name} fold={fold_id} "
+                            f"train min/med/max="
                             f"{float(s_train.min()):.6f}/{float(s_train.median()):.6f}/{float(s_train.max()):.6f} | "
                             f"test min/med/max="
                             f"{float(s_test.min()):.6f}/{float(s_test.median()):.6f}/{float(s_test.max()):.6f} | "
@@ -2082,7 +1987,7 @@ def main():
 
                 # Baseline PhaseAware (tau-independent)
                 pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
-
+                base_res = _run_baseline_bt(df_test, pip_value)
                 backtester = BT(
                     initial_capital=INITIAL_CAPITAL,
                     spread_pips=SPREAD_PIPS,
@@ -2091,27 +1996,13 @@ def main():
                     pip_value=pip_value,
                     use_atr_sizing=False,
                 )
-                pa = PhaseAwareStrategy("TF4", "MR42")
-                pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
-                base_res = backtester.run(df_test, pa_signals, "PhaseAware_TF4_MR42_WF", pa_sl, pa_tp)
 
                 for tau in TAUS:
+                    tf_strats, mr_strats = _make_strategy_dicts()
                     dyn_strategy = StrategySelector_Dynamic(
                         selector_trained={pair_name: selector},
-                        tf_strategies={
-                        'TF1': TF1Strategy(),
-                        'TF2': TF2Strategy(),
-                        'TF3': TF3Strategy(),
-                        'TF4': TF4Strategy(),
-                        'TF5': TF5Strategy(),
-                    },
-                        mr_strategies={
-                        'MR1': MR1Strategy(),
-                        'MR2': MR2Strategy(),
-                        'MR32': MR32Strategy(),
-                        'MR42': MR42Strategy(),
-                        'MR5': MR5Strategy(),
-                    },
+                        tf_strategies=tf_strats,
+                        mr_strategies=mr_strats,
                         default_tf="TF4",
                         default_mr="MR42",
                         tau_enter=tau,
@@ -2123,8 +2014,9 @@ def main():
                         vol_guard_mode=VOL_GUARD_MODE,
                     )
 
-                    dyn_signals, dyn_sl, dyn_tp, selected_s = dyn_strategy.generate_signals(df_test, pair_name,
-                                                                                            return_selected=True)
+                    dyn_signals, dyn_sl, dyn_tp, selected_s = dyn_strategy.generate_signals(
+                        df_test, pair_name, return_selected=True
+                    )
                     conf_pct = float((selected_s != "PhaseAware").mean() * 100.0)
                     dyn_res = backtester.run(df_test, dyn_signals, f"Dynamic_tau_{tau}", dyn_sl, dyn_tp)
 
@@ -2166,9 +2058,6 @@ def main():
                         tau=tau,
                         tag="tau_sweep",
                     )
-                    # If you don't want an extra file, you can skip this,
-                    # but it's often useful to see how switching changes with tau.
-                    # We'll add it into tau_rows directly (flatten a few keys).
                     tau_rows[-1].update({
                         "Spike Bars (%)": vol_diag_tau.get("spike_pct", np.nan),
                         "Near-Spike Bars (%)": vol_diag_tau.get("near_spike_pct", np.nan),
@@ -2176,8 +2065,6 @@ def main():
                         "MR on spike (%)": vol_diag_tau.get("mr_on_spike_pct", np.nan),
                         "TF on spike (%)": vol_diag_tau.get("tf_on_spike_pct", np.nan),
                     })
-
-
 
         tau_df = pd.DataFrame(tau_rows)
         if tau_df.empty:
@@ -2241,28 +2128,12 @@ def main():
             },
         ]
 
-
         policy_rows = []
 
         for pair_name, df_full in processed_data.items():
             print(f"\n  --- {pair_name} ---")
 
             pair_results_full = hardcoded_results.get(pair_name, {})
-            # Sanity: equity curve index must match df_full.index
-            for sname, res in pair_results_full.items():
-                eq = res.get("equity_curve")
-                if eq is None:
-                    continue
-
-                if not eq.index.equals(df_full.index):
-                    print(f"[WARN] {pair_name} {sname}: eq.index != df_full.index")
-                    print("  eq len:", len(eq), "df len:", len(df_full))
-                    print("  missing in eq:", len(df_full.index.difference(eq.index)))
-                    print("  extra in eq:", len(eq.index.difference(df_full.index)))
-                    # show a few concrete timestamps
-                    print("  missing examples:", list(df_full.index.difference(eq.index)[:5]))
-                    print("  extra examples:", list(eq.index.difference(df_full.index)[:5]))
-                    break
             if not pair_results_full:
                 print("    ✗ Missing hardcoded_results for pair; skipping")
                 continue
@@ -2319,19 +2190,14 @@ def main():
                 if len(df_test) < 50:
                     continue
 
-                # ---- train bars slice (for vol-guard calibration; no leakage) ----
+                # ---- vol guard per fold (no leakage; shared across policies) ----
                 df_train_bars = df_full.iloc[train_start_pos:train_end_pos + 1].copy()
-
-                vol_thr = None
-                if "atr_pct" in df_train_bars.columns:
-                    s_train = df_train_bars["atr_pct"].dropna()
-                    if len(s_train) > 0:
-                        vol_thr = float(s_train.quantile(VOL_GUARD_Q))
-
+                vol_thr = _compute_vol_threshold(df_train_bars)
+                vol_threshold_by_pair = {pair_name: vol_thr} if vol_thr is not None else {}
 
                 # baseline PhaseAware on test slice (shared across policies)
                 pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
-
+                base_res = _run_baseline_bt(df_test, pip_value)
                 backtester = BT(
                     initial_capital=INITIAL_CAPITAL,
                     spread_pips=SPREAD_PIPS,
@@ -2340,48 +2206,27 @@ def main():
                     pip_value=pip_value,
                     use_atr_sizing=False,
                 )
-                pa = PhaseAwareStrategy("TF4", "MR42")
-                pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
-                base_res = backtester.run(df_test, pa_signals, "PhaseAware_TF4_MR42_WF", pa_sl, pa_tp)
-
-                # ---- vol guard per fold (optional, but consistent with 4f/4g) ----
-                vol_threshold_by_pair = {pair_name: vol_thr} if vol_thr is not None else {}
 
                 # run each policy (dynamic selector backtest)
                 for pol in POLICIES:
                     dyn_name = f"Dynamic_{pol['name']}"
-
+                    tf_strats, mr_strats = _make_strategy_dicts()
                     dynamic_strategy = StrategySelector_Dynamic(
                         selector_trained={pair_name: selector},
-                        tf_strategies={
-                            'TF1': TF1Strategy(),
-                            'TF2': TF2Strategy(),
-                            'TF3': TF3Strategy(),
-                            'TF4': TF4Strategy(),
-                            'TF5': TF5Strategy(),
-                        },
-                        mr_strategies={
-                            'MR1': MR1Strategy(),
-                            'MR2': MR2Strategy(),
-                            'MR32': MR32Strategy(),
-                            'MR42': MR42Strategy(),
-                            'MR5': MR5Strategy(),
-                        },
+                        tf_strategies=tf_strats,
+                        mr_strategies=mr_strats,
                         default_tf="TF4",
                         default_mr="MR42",
-
                         # policy-specific gating params (override defaults)
                         tau_enter=pol["tau_enter"],
                         tau_exit=pol["tau_exit"],
                         min_hold_bars=pol["min_hold_bars"],
                         use_hysteresis=pol["use_hysteresis"],
                         use_min_hold=pol["use_min_hold"],
-
-                        # keep your prob margin settings etc
+                        # prob margin settings
                         p_margin=DYNAMIC_POLICY_KWARGS.get("p_margin", 0.20),
                         use_prob_margin=DYNAMIC_POLICY_KWARGS.get("use_prob_margin", True),
-
-                        # vol guard (optional)
+                        # vol guard
                         use_vol_guard=USE_VOL_GUARD,
                         vol_feature=VOL_FEATURE,
                         vol_threshold_by_pair=vol_threshold_by_pair,
