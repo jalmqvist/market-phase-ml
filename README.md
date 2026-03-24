@@ -111,10 +111,10 @@ Across **14 FX pairs** using ~20 years of daily data:
 
 | Variant                                    | Description                                                  | Avg Return | Avg Sharpe | Avg Max DD | Pairs |
 | ------------------------------------------ | ------------------------------------------------------------ | ---------: | ---------: | ---------: | ----: |
-| A0_TF4                                     | Fixed policy (TrendFollowing only)                           |     -3.31% |      -0.05 |    -25.28% |    14 |
-| A1_MR42                                    | Fixed policy (MeanReversion only)                            |    +20.38% |      +0.07 |    -41.82% |    14 |
-| A2_PhaseAware_TF4_MR42                     | Rule-based routing using detected regimes                    |    +22.01% |      +0.14 |    -29.13% |    14 |
-| A3_DynamicSelector_tau0.62_exit0.57_hold10 | **ML gating** with confidence threshold + hysteresis + min-hold |    +56.17% |      +0.21 |    -31.61% |    14 |
+| A0_TF4                                     | Fixed policy (TrendFollowing only)                           |      -3.3% |     -0.047 |       -25% |    14 |
+| A1_MR42                                    | Fixed policy (MeanReversion only)                            |       +20% |     +0.074 |       -42% |    14 |
+| A2_PhaseAware_TF4_MR42                     | Rule-based routing using detected regimes                    |       +22% |      +0.14 |       -29% |    14 |
+| A3_DynamicSelector_tau0.62_exit0.57_hold10 | **ML gating** with confidence threshold + hysteresis + min-hold |       +57% |      +0.22 |       -31% |    14 |
 
 Artifacts:
 - `results/ablation_summary_per_pair.csv`
@@ -206,21 +206,21 @@ When we aggregated walk-forward deltas for the `q=0.80` volatility guard run wit
 #### Majors vs minors
 | Group | Return Δ | Sharpe Δ | Max DD Δ |
 | ----- | -------: | -------: | -------: |
-| Major |    +0.07 |    +0.09 |    -0.30 |
-| Minor |    +0.34 |    +0.05 |    +0.08 |
+| Major |   +0.011 |   +0.063 |    -0.35 |
+| Minor |    +0.38 |    +0.11 |   +0.013 |
 
 #### JPY vs non-JPY
 | Group   | Return Δ | Sharpe Δ | Max DD Δ |
 | ------- | -------: | -------: | -------: |
-| JPY     |    +0.34 |    +0.01 |    +0.53 |
-| non-JPY |    +0.15 |    +0.10 |    -0.37 |
+| JPY     |    +0.31 |   +0.073 |    +0.42 |
+| non-JPY |    +0.15 |   +0.089 |    -0.41 |
 
 #### USD role (base/quote)
 | Group     | Return Δ | Sharpe Δ | Max DD Δ |
 | --------- | -------: | -------: | -------: |
-| USD-base  |    +0.28 |    +0.15 |    +0.03 |
-| USD-quote |    -0.09 |    +0.05 |    -0.55 |
-| No-USD    |    +0.34 |    +0.05 |    +0.08 |
+| USD-base  |    +0.16 |   +0.093 |   -0.011 |
+| USD-quote |    -0.11 |   +0.040 |    -0.61 |
+| No-USD    |    +0.38 |    +0.11 |   +0.013 |
 
 Interpretation:
 - JPY pairs show large drawdown improvements (tail-risk suppression) but limited Sharpe uplift.
@@ -238,9 +238,9 @@ A global τ sweep evaluates the trade-off between:
 - and performance
 
 Example sweep (14 pairs, 361 folds; run33, rounded):
-- τ=0.60 → Avg Sharpe Δ **+0.02**, Avg Return Δ **+0.17%**, confident bars **~52%**
-- τ=0.62 → Avg Sharpe Δ **+0.07**, Avg Return Δ **+0.21%**, confident bars **~49%**
-- τ=0.70 → Avg Sharpe Δ **+0.05**, Avg Return Δ **+0.14%**, confident bars **~38%**
+- τ=0.60 → Avg Sharpe Δ **+0.019**, Avg Return Δ **+0.17%**, confident bars **~52%**
+- τ=0.62 → Avg Sharpe Δ **+0.072**, Avg Return Δ **+0.21%**, confident bars **~49%**
+- τ=0.70 → Avg Sharpe Δ **+0.045**, Avg Return Δ **+0.14%**, confident bars **~38%**
 
 This project’s current default uses **τ_enter=0.62** with hysteresis (τ_exit=0.57) plus a 10-bar minimum hold.
 
