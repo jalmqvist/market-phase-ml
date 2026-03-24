@@ -196,21 +196,9 @@ class PhaseMLPredictor:
                     predicted = PHASE_MAP_INV[int(predicted_encoded[0])]
                     predictions.iat[i] = predicted
 
-                    # DEBUG — remove after fix
-                    if i < self.train_window + 5:
-                        print(f'    DEBUG bar {i}: encoded={predicted_encoded}, '
-                              f'predicted={predicted}, '
-                              f'stored={predictions.iloc[i]}')
-
         print(f'  ✓ Predictions generated for '
               f'{n_bars - self.train_window - 1} bars '
               f'({self.train_window} warmup bars use rule-based fallback)')
-
-        # DEBUG — remove after fix
-        print(f'  DEBUG predictions value_counts:')
-        print(predictions.value_counts())
-        print(f'  DEBUG raw_phase value_counts:')
-        print(raw_phase.value_counts())
 
         return predictions
 
