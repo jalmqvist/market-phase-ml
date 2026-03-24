@@ -1377,7 +1377,12 @@ def main():
                     print("[debug] has .iloc:",
                           hasattr(signals, "iloc"), hasattr(sl_pcts, "iloc"), hasattr(tp_pcts, "iloc"))
 
-                dyn_name = "StrategySelector_Dynamic_tau0.55_exit0.50_hold5"
+                dyn_name = (
+                    f"StrategySelector_Dynamic_tau{WF_TAU:.2f}"
+                    f"_exit{max(0.0, WF_TAU - 0.05):.2f}"
+                    f"_hold{int(DYNAMIC_POLICY_KWARGS['min_hold_bars'])}"
+                    f"_max{int(DYNAMIC_POLICY_KWARGS['max_hold_bars'])}"
+                )
                 result = backtester.run(df, signals, dyn_name, sl_pcts, tp_pcts)
 
                 dynamic_results[pair_name] = result
@@ -1464,14 +1469,18 @@ def main():
     if RUN_IN_SAMPLE_ABLATION and dynamic_results:
         print("\n[4e/5] Building ablation summary (A0-A3)...")
 
+        A3_LABEL = (
+            f"A3_DynamicSelector_tau{WF_TAU:.2f}"
+            f"_exit{max(0.0, WF_TAU - 0.05):.2f}"
+            f"_hold{int(DYNAMIC_POLICY_KWARGS['min_hold_bars'])}"
+            f"_max{int(DYNAMIC_POLICY_KWARGS['max_hold_bars'])}"
+        )
+
         variants = {
             "A0_TF4": ("hardcoded", "TF4"),
             "A1_MR42": ("hardcoded", "MR42"),
             "A2_PhaseAware_TF4_MR42": ("hardcoded", "PhaseAware_TF4_MR42"),
-            "A3_DynamicSelector_tau0.55_exit0.50_hold5": (
-                "dynamic",
-                "StrategySelector_Dynamic_tau0.55_exit0.50_hold5"
-            ),
+            A3_LABEL: ("dynamic", "StrategySelector_Dynamic"),  # key unused for dynamic source
         }
 
         ablation_rows = []
