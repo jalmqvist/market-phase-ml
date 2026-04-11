@@ -10,7 +10,7 @@ from src.strategies import (
     Backtester,
     TradeResult
 )
-from src.models import PhaseMLExperiment
+from src.models import PhaseMLExperiment, PhaseMLPredictor
 from src.visualization import PhaseVisualizer
 
 __all__ = [
