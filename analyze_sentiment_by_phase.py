@@ -103,9 +103,9 @@ def load_sentiment_dataset(path: Path) -> pd.DataFrame:
             "Run the market-sentiment-ml pipeline first."
         )
     df = pd.read_csv(path, usecols=SENTIMENT_COLS, parse_dates=["entry_time"])
-    # Ensure tz-naive
+    # Ensure tz-naive (strip timezone if present, values stay UTC)
     if df["entry_time"].dt.tz is not None:
-        df["entry_time"] = df["entry_time"].dt.tz_convert(None)
+        df["entry_time"] = df["entry_time"].dt.tz_localize(None)
     return df
 
 
@@ -197,6 +197,7 @@ def _week_block_bootstrap_ci(
     unique_weeks = np.unique(week_labels)
     n_weeks = len(unique_weeks)
 
+    # Need at least 3 unique weeks for meaningful resampling variance
     if n_weeks < 3:
         return (np.nan, np.nan)
 

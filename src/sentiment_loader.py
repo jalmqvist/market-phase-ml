@@ -110,9 +110,9 @@ def _load_one_broker_h1_file(path: Path, pair: str) -> pd.DataFrame:
 
     df = df[["time_utc", "open", "high", "low", "close", "tick_volume"]].copy()
 
-    # Parse and strip timezone to tz-naive UTC
+    # Parse as UTC-aware, then strip timezone to tz-naive UTC
     df["timestamp"] = pd.to_datetime(df["time_utc"], errors="coerce", utc=True)
-    df["timestamp"] = df["timestamp"].dt.tz_convert(None)
+    df["timestamp"] = df["timestamp"].dt.tz_localize(None)
 
     for col in ["open", "high", "low", "close", "tick_volume"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
