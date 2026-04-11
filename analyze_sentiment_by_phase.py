@@ -299,7 +299,7 @@ def compute_summary(df: pd.DataFrame) -> pd.DataFrame:
             p01, p05, p50, p95, p99 = np.percentile(arr, [1, 5, 50, 95, 99])
 
             # Trimmed mean (drop top/bottom 1 %)
-            trimmed = scipy_stats.trim_mean(arr, proportiontocut=0.01)
+            trimmed_mean = scipy_stats.trim_mean(arr, proportiontocut=0.01)
 
             rows.append({
                 "phase": phase,
@@ -314,7 +314,7 @@ def compute_summary(df: pd.DataFrame) -> pd.DataFrame:
                 "p50": p50,
                 "p95": p95,
                 "p99": p99,
-                "trimmed_mean_1pct": trimmed,
+                "trimmed_mean_1pct": trimmed_mean,
             })
 
     if not rows:
