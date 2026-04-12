@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import json
 import sys
+import warnings
 from pathlib import Path
 from typing import Callable
 
@@ -298,6 +299,39 @@ def _week_block_bootstrap_ci(
 # 5. Summary statistics
 # =====================================================================
 
+
+def _clean_finite(values) -> np.ndarray:
+    """Convert *values* to float64 and keep only finite entries."""
+    arr = np.asarray(values, dtype=float)
+    return arr[np.isfinite(arr)]
+
+
+def _safe_trimmed_mean(arr: np.ndarray) -> float:
+    """Trimmed mean (1 % each tail) with safe fallback for small n."""
+    if len(arr) == 0:
+        return np.nan
+    if len(arr) < 3:
+        return float(np.mean(arr))
+    return float(scipy_stats.trim_mean(arr, proportiontocut=0.01))
+
+
+def _warn_if_inconsistent(
+    trimmed_mean: float,
+    p05: float,
+    p95: float,
+    *,
+    label: str,
+) -> None:
+    """Emit a warning when the trimmed mean looks implausible."""
+    bound = max(abs(p05), abs(p95))
+    if bound > 0 and abs(trimmed_mean) > 10 * bound:
+        warnings.warn(
+            f"trimmed_mean_1pct ({trimmed_mean:+.6f}) is > 10× "
+            f"max(|p05|,|p95|) ({bound:.6f}) for {label}",
+            stacklevel=2,
+        )
+
+
 def compute_summary(df: pd.DataFrame) -> pd.DataFrame:
     """
     For each (phase × horizon), compute mean, median contrarian return,
@@ -321,8 +355,15 @@ def compute_summary(df: pd.DataFrame) -> pd.DataFrame:
             vals = phase_df[col].dropna()
             if vals.empty:
                 continue
-            arr = vals.to_numpy()
+            arr = _clean_finite(vals)
+            if len(arr) == 0:
+                continue
             week_labels = phase_df.loc[vals.index, "_iso_week"].to_numpy()
+            # Keep week_labels aligned after finite filtering
+            finite_mask = np.isfinite(
+                np.asarray(vals.to_numpy(), dtype=float)
+            )
+            week_labels = week_labels[finite_mask]
             ci_lo, ci_hi = _week_block_bootstrap_ci(
                 arr, week_labels, np.mean
             )
@@ -331,14 +372,17 @@ def compute_summary(df: pd.DataFrame) -> pd.DataFrame:
             p01, p05, p50, p95, p99 = np.percentile(arr, [1, 5, 50, 95, 99])
 
             # Trimmed mean (drop top/bottom 1 %)
-            trimmed_mean = scipy_stats.trim_mean(arr, proportiontocut=0.01)
+            trimmed_mean = _safe_trimmed_mean(arr)
+
+            label = f"phase={phase}, h={h}b"
+            _warn_if_inconsistent(trimmed_mean, p05, p95, label=label)
 
             rows.append({
                 "phase": phase,
                 "horizon_bars": h,
                 "n_events": len(arr),
-                "mean_contrarian_ret": np.mean(arr),
-                "median_contrarian_ret": np.median(arr),
+                "mean_contrarian_ret": float(np.mean(arr)),
+                "median_contrarian_ret": float(np.median(arr)),
                 "ci_lo_95": ci_lo,
                 "ci_hi_95": ci_hi,
                 "p01": p01,
@@ -434,23 +478,27 @@ def compute_jpy_stratified_summary(
                 if raw_vals.empty:
                     continue
 
-                raw_arr = raw_vals.to_numpy()
-                win_arr = win_vals.to_numpy()
+                raw_arr = _clean_finite(raw_vals)
+                win_arr = _clean_finite(win_vals)
+                if len(raw_arr) == 0:
+                    continue
                 p01, p05, p50, p95, p99 = np.percentile(
                     raw_arr, [1, 5, 50, 95, 99]
                 )
-                trimmed_mean = scipy_stats.trim_mean(
-                    raw_arr, proportiontocut=0.01
-                )
+                trimmed_mean = _safe_trimmed_mean(raw_arr)
                 lo, hi = bounds[h]
+
+                jpy_label = "JPY" if is_jpy else "non-JPY"
+                label = f"phase={phase}, is_jpy={jpy_label}, h={h}b"
+                _warn_if_inconsistent(trimmed_mean, p05, p95, label=label)
 
                 rows.append({
                     "phase": phase,
                     "is_jpy": is_jpy,
                     "horizon_bars": h,
                     "n_events": len(raw_arr),
-                    "winsor_mean_contrarian_ret": np.mean(win_arr),
-                    "median_contrarian_ret": np.median(raw_arr),
+                    "winsor_mean_contrarian_ret": float(np.mean(win_arr)),
+                    "median_contrarian_ret": float(np.median(raw_arr)),
                     "trimmed_mean_1pct": trimmed_mean,
                     "p01": p01,
                     "p05": p05,
@@ -550,16 +598,17 @@ def compute_per_pair_summary(
             if raw_vals.empty:
                 continue
             win_vals = subset.loc[raw_vals.index, win_col]
-            raw_arr = raw_vals.to_numpy()
-            win_arr = win_vals.to_numpy()
+            raw_arr = _clean_finite(raw_vals)
+            win_arr = _clean_finite(win_vals)
+            if len(raw_arr) == 0:
+                continue
 
-            trimmed_mean = (
-                scipy_stats.trim_mean(raw_arr, proportiontocut=0.01)
-                if len(raw_arr) >= 3
-                else float(np.mean(raw_arr))
-            )
+            trimmed_mean = _safe_trimmed_mean(raw_arr)
             p05, p95 = np.percentile(raw_arr, [5, 95])
             lo, hi = bounds[h]
+
+            label = f"pair={pair}, phase={phase}, h={h}b"
+            _warn_if_inconsistent(trimmed_mean, p05, p95, label=label)
 
             rows.append({
                 "pair": pair,
