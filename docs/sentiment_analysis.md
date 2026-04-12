@@ -246,7 +246,12 @@ python analyze_sentiment_by_phase.py
 ```
 
 This runs the top-level wrapper which delegates to
-`analysis/analyze_sentiment_by_phase.py`.
+`analysis/analyze_sentiment_by_phase.py`. Alternatively, you can run the
+analysis module directly:
+
+```bash
+python -m analysis.analyze_sentiment_by_phase
+```
 
 ### Key Console Tables
 

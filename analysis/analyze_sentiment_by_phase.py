@@ -45,6 +45,7 @@ Pre-registered filter
     abs_sentiment >= 70  AND  extreme_streak_70 >= 3
 
 Horizons analysed: 12 bars and 48 bars (contrarian returns).
+Bootstrap resamples: B=2000 (block bootstrap by ISO week).
 """
 
 from __future__ import annotations
@@ -638,8 +639,17 @@ def compute_jpy_diff_bootstrap(
             def _compute_delta(data: pd.DataFrame) -> float:
                 """Pair-equal-weighted JPY minus non-JPY winsor mean."""
                 pair_means = data.groupby(["is_jpy", "pair"])[win_col].mean()
-                jpy_mean = pair_means.loc[True].mean() if True in pair_means.index.get_level_values(0) else np.nan
-                other_mean = pair_means.loc[False].mean() if False in pair_means.index.get_level_values(0) else np.nan
+                level_vals = pair_means.index.get_level_values(0)
+                jpy_mean = (
+                    pair_means.loc[True].mean()
+                    if True in level_vals
+                    else np.nan
+                )
+                other_mean = (
+                    pair_means.loc[False].mean()
+                    if False in level_vals
+                    else np.nan
+                )
                 if np.isnan(jpy_mean) or np.isnan(other_mean):
                     return np.nan
                 return jpy_mean - other_mean
