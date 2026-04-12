@@ -16,6 +16,12 @@ The analysis is run **twice**, once for each regime definition:
 
 Separate output CSVs are written to ``results/`` for each detector.
 
+Additionally, for the MT4-style detector, winsorized-by-horizon and
+JPY-vs-non-JPY stratified summaries are produced:
+
+- ``results/sentiment_phase_summary_winsor0p5_by_jpy__mt4style.csv``
+- ``results/sentiment_phase_summary_winsor0p5_by_jpy_pairavg__mt4style.csv``
+
 Usage
 -----
     python analyze_sentiment_by_phase.py
@@ -31,6 +37,8 @@ Assumptions
 - Output CSVs are written to:
     results/sentiment_phase_summary_core__mphasedetector.csv
     results/sentiment_phase_summary_core__mt4style.csv
+    results/sentiment_phase_summary_winsor0p5_by_jpy__mt4style.csv
+    results/sentiment_phase_summary_winsor0p5_by_jpy_pairavg__mt4style.csv
 
 Pre-registered filter
 ---------------------
@@ -65,6 +73,16 @@ PRICE_DIR = SENTIMENT_REPO / "data" / "input" / "fx"
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 OUTPUT_CSV_MPHASE = RESULTS_DIR / "sentiment_phase_summary_core__mphasedetector.csv"
 OUTPUT_CSV_MT4 = RESULTS_DIR / "sentiment_phase_summary_core__mt4style.csv"
+OUTPUT_CSV_WINSOR_JPY_MT4 = (
+    RESULTS_DIR / "sentiment_phase_summary_winsor0p5_by_jpy__mt4style.csv"
+)
+OUTPUT_CSV_WINSOR_JPY_PAIRAVG_MT4 = (
+    RESULTS_DIR / "sentiment_phase_summary_winsor0p5_by_jpy_pairavg__mt4style.csv"
+)
+
+# ── winsorization parameters ────────────────────────────────────────
+WINSOR_LO_QUANTILE = 0.005
+WINSOR_HI_QUANTILE = 0.995
 
 # ── analysis parameters ─────────────────────────────────────────────
 MIN_ABS_SENTIMENT = 70
@@ -324,6 +342,168 @@ def compute_summary(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =====================================================================
+# 5b. Winsorization + JPY stratified summaries
+# =====================================================================
+
+def compute_winsor_bounds(
+    df: pd.DataFrame,
+) -> dict[int, tuple[float, float]]:
+    """
+    Compute global winsorization bounds per horizon.
+
+    For each horizon *h*, compute quantiles at ``WINSOR_LO_QUANTILE``
+    and ``WINSOR_HI_QUANTILE`` across the full filtered dataset.
+
+    Returns
+    -------
+    dict mapping horizon → (lo, hi)
+    """
+    bounds: dict[int, tuple[float, float]] = {}
+    for h in HORIZONS:
+        col = f"contrarian_ret_{h}b"
+        vals = df[col].dropna()
+        if vals.empty:
+            bounds[h] = (np.nan, np.nan)
+        else:
+            lo = np.percentile(vals, WINSOR_LO_QUANTILE * 100)
+            hi = np.percentile(vals, WINSOR_HI_QUANTILE * 100)
+            bounds[h] = (lo, hi)
+    return bounds
+
+
+def add_winsorized_columns(
+    df: pd.DataFrame,
+    bounds: dict[int, tuple[float, float]],
+) -> pd.DataFrame:
+    """
+    Add winsorized return columns ``contrarian_ret_{h}b_w`` to *df*
+    by clipping raw contrarian returns to the global [lo, hi] bounds.
+    """
+    df = df.copy()
+    for h in HORIZONS:
+        lo, hi = bounds[h]
+        raw_col = f"contrarian_ret_{h}b"
+        df[f"contrarian_ret_{h}b_w"] = df[raw_col].clip(lower=lo, upper=hi)
+    return df
+
+
+def compute_jpy_stratified_summary(
+    df: pd.DataFrame,
+    bounds: dict[int, tuple[float, float]],
+) -> pd.DataFrame:
+    """
+    Group by (phase, is_jpy, horizon_bars) and compute winsorized +
+    robust statistics.
+
+    Columns produced:
+        phase, is_jpy, horizon_bars, n_events,
+        winsor_mean_contrarian_ret, median_contrarian_ret,
+        trimmed_mean_1pct, p01, p05, p50, p95, p99,
+        winsor_lo, winsor_hi
+    """
+    df = df.copy()
+    df["is_jpy"] = df["pair"].str.endswith("-jpy")
+
+    rows: list[dict] = []
+    phases = sorted(df["phase"].dropna().unique())
+
+    for phase in phases:
+        for is_jpy in [True, False]:
+            subset = df.loc[(df["phase"] == phase) & (df["is_jpy"] == is_jpy)]
+            if subset.empty:
+                continue
+            for h in HORIZONS:
+                raw_col = f"contrarian_ret_{h}b"
+                win_col = f"contrarian_ret_{h}b_w"
+                raw_vals = subset[raw_col].dropna()
+                win_vals = subset.loc[raw_vals.index, win_col]
+                if raw_vals.empty:
+                    continue
+
+                raw_arr = raw_vals.to_numpy()
+                win_arr = win_vals.to_numpy()
+                p01, p05, p50, p95, p99 = np.percentile(
+                    raw_arr, [1, 5, 50, 95, 99]
+                )
+                trimmed_mean = scipy_stats.trim_mean(
+                    raw_arr, proportiontocut=0.01
+                )
+                lo, hi = bounds[h]
+
+                rows.append({
+                    "phase": phase,
+                    "is_jpy": is_jpy,
+                    "horizon_bars": h,
+                    "n_events": len(raw_arr),
+                    "winsor_mean_contrarian_ret": np.mean(win_arr),
+                    "median_contrarian_ret": np.median(raw_arr),
+                    "trimmed_mean_1pct": trimmed_mean,
+                    "p01": p01,
+                    "p05": p05,
+                    "p50": p50,
+                    "p95": p95,
+                    "p99": p99,
+                    "winsor_lo": lo,
+                    "winsor_hi": hi,
+                })
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
+def compute_pair_equal_weighted_summary(
+    df: pd.DataFrame,
+    bounds: dict[int, tuple[float, float]],
+) -> pd.DataFrame:
+    """
+    For each (phase, is_jpy, horizon), compute the winsorized mean
+    per pair, then average those pair means equally.
+
+    Columns produced:
+        phase, is_jpy, horizon_bars, n_pairs, total_events,
+        mean_of_pair_means, median_of_pair_means
+    """
+    df = df.copy()
+    df["is_jpy"] = df["pair"].str.endswith("-jpy")
+
+    rows: list[dict] = []
+    phases = sorted(df["phase"].dropna().unique())
+
+    for phase in phases:
+        for is_jpy in [True, False]:
+            subset = df.loc[(df["phase"] == phase) & (df["is_jpy"] == is_jpy)]
+            if subset.empty:
+                continue
+            for h in HORIZONS:
+                win_col = f"contrarian_ret_{h}b_w"
+                # per-pair winsor means
+                pair_means = (
+                    subset.dropna(subset=[win_col])
+                    .groupby("pair")[win_col]
+                    .mean()
+                )
+                if pair_means.empty:
+                    continue
+                total_events = int(
+                    subset[win_col].notna().sum()
+                )
+                rows.append({
+                    "phase": phase,
+                    "is_jpy": is_jpy,
+                    "horizon_bars": h,
+                    "n_pairs": len(pair_means),
+                    "total_events": total_events,
+                    "mean_of_pair_means": pair_means.mean(),
+                    "median_of_pair_means": pair_means.median(),
+                })
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
+# =====================================================================
 # 6. Console report
 # =====================================================================
 
@@ -404,6 +584,52 @@ def print_comparison_summary(
     print()
 
 
+def print_winsor_bounds(
+    bounds: dict[int, tuple[float, float]],
+) -> None:
+    """Print winsorization bounds per horizon."""
+    print("\n" + "╔" + "═" * 62 + "╗")
+    print("║" + "  Winsorization Bounds (0.5% tails)".center(62) + "║")
+    print("╚" + "═" * 62 + "╝")
+    for h in sorted(bounds):
+        lo, hi = bounds[h]
+        print(f"  horizon {h:>2d}b:  lo = {lo:+.8f}  hi = {hi:+.8f}")
+    print()
+
+
+def print_jpy_stratified_table(
+    summary: pd.DataFrame,
+) -> None:
+    """Print a compact JPY vs non-JPY table for MT4-style, 12 bars."""
+    print("╔" + "═" * 62 + "╗")
+    print("║" + "  MT4-style: JPY vs non-JPY (12-bar, winsor mean)".center(62) + "║")
+    print("╚" + "═" * 62 + "╝")
+
+    sub = summary.loc[summary["horizon_bars"] == 12].copy()
+    if sub.empty:
+        print("  No data for 12-bar horizon.")
+        print()
+        return
+
+    header = (
+        f"  {'phase':<14s}  {'is_jpy':>6s}  {'n':>6s}"
+        f"  {'winsor_mean':>12s}  {'median':>12s}  {'trim1%':>12s}"
+    )
+    print(header)
+    print(f"  {'':─<14s}  {'':─>6s}  {'':─>6s}"
+          f"  {'':─>12s}  {'':─>12s}  {'':─>12s}")
+
+    for _, row in sub.sort_values(["phase", "is_jpy"]).iterrows():
+        jpy_label = "JPY" if row["is_jpy"] else "other"
+        print(
+            f"  {row['phase']:<14s}  {jpy_label:>6s}  {int(row['n_events']):>6d}"
+            f"  {row['winsor_mean_contrarian_ret']:>+12.6f}"
+            f"  {row['median_contrarian_ret']:>+12.6f}"
+            f"  {row['trimmed_mean_1pct']:>+12.6f}"
+        )
+    print()
+
+
 # =====================================================================
 # 7. Main
 # =====================================================================
@@ -415,10 +641,10 @@ def _run_single_detector(
     phase_fn: Callable[[pd.DataFrame], pd.DataFrame],
     output_csv: Path,
     n_sentiment: int,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Run a single detector pipeline: compute phases → join → filter →
-    summary → write CSV.  Returns the summary DataFrame.
+    summary → write CSV.  Returns (summary, filtered) DataFrames.
     """
     print(f"\n{'─' * 64}")
     print(f"  Detector: {detector_name}")
@@ -446,7 +672,7 @@ def _run_single_detector(
 
     print_console_summary(detector_name, n_sentiment, n_matched,
                           n_filtered, summary)
-    return summary
+    return summary, filtered
 
 
 def main() -> None:
@@ -491,14 +717,45 @@ def main() -> None:
     ]
 
     summaries: dict[str, pd.DataFrame] = {}
+    filtered_data: dict[str, pd.DataFrame] = {}
     for name, desc, phase_fn, output_csv in detectors:
         print(f"\n  ▶ {desc}")
-        summaries[name] = _run_single_detector(
+        summary, filtered = _run_single_detector(
             name, sentiment, prices, phase_fn, output_csv, n_sentiment,
         )
+        summaries[name] = summary
+        filtered_data[name] = filtered
 
     # 5. Comparison summary
     print_comparison_summary(summaries)
+
+    # 6. Winsorized + JPY-stratified analysis (MT4-style)
+    mt4_filtered = filtered_data.get("MT4-style")
+    if mt4_filtered is not None and not mt4_filtered.empty:
+        print("[+] Running winsorized JPY-stratified analysis (MT4-style) …")
+
+        # Compute global winsor bounds
+        winsor_bounds = compute_winsor_bounds(mt4_filtered)
+        print_winsor_bounds(winsor_bounds)
+
+        # Add winsorized columns
+        mt4_win = add_winsorized_columns(mt4_filtered, winsor_bounds)
+
+        # JPY-stratified summary
+        jpy_summary = compute_jpy_stratified_summary(mt4_win, winsor_bounds)
+        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        jpy_summary.to_csv(OUTPUT_CSV_WINSOR_JPY_MT4, index=False)
+        print(f"  → saved to {OUTPUT_CSV_WINSOR_JPY_MT4}")
+        print_jpy_stratified_table(jpy_summary)
+
+        # Pair-equal-weighted summary
+        pairavg_summary = compute_pair_equal_weighted_summary(
+            mt4_win, winsor_bounds,
+        )
+        pairavg_summary.to_csv(OUTPUT_CSV_WINSOR_JPY_PAIRAVG_MT4, index=False)
+        print(f"  → saved to {OUTPUT_CSV_WINSOR_JPY_PAIRAVG_MT4}")
+    else:
+        print("[!] MT4-style filtered data empty; skipping JPY analysis.")
 
 
 if __name__ == "__main__":
