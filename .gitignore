@@ -200,6 +200,8 @@ results/run_manifest_*.json
 results/run_manifest_latest.json
 results/*.csv
 results/*.png
+results/sentiment/*.csv
+results/sentiment/*.png
 
 # temporary viz scripts
 scripts/
