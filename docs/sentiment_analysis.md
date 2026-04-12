@@ -269,3 +269,58 @@ All CSVs are written to `results/sentiment/`:
 ```bash
 ls results/sentiment/*.csv
 ```
+
+---
+
+## Findings so far (as of 2026-04-12)
+
+> **Note:** This is exploratory research, not a trading claim. All results
+> should be treated as working hypotheses subject to further validation.
+
+### Methodology recap
+
+- **Winsorization:** 0.5 % tails, global-by-horizon (q0.005 / q0.995
+  computed on the full post-filter extreme dataset, then applied
+  identically to every pair and phase).
+- **Bootstrap:** Pair-equal-weighted block bootstrap by ISO week
+  (B = 2 000). For each resample, per-pair winsor means are computed and
+  then averaged with equal weight across JPY-quote pairs and separately
+  across non-JPY pairs. The delta Δ = mean(JPY) − mean(non-JPY) is the
+  test statistic.
+
+### JPY − non-JPY bootstrap deltas (MT4-style)
+
+#### 12-bar horizon
+
+| Phase | Δ (JPY − other) | 95 % CI |
+|-------|-----------------|---------|
+| HV_Ranging | +0.000229 | [−0.000292, +0.000743] |
+| HV_Trend | +0.000277 | [−0.000092, +0.000663] |
+| LV_Ranging | +0.000548 | [+0.000273, +0.000829] |
+| LV_Trend | +0.000307 | [−0.000018, +0.000687] |
+
+#### 48-bar horizon
+
+| Phase | Δ (JPY − other) | 95 % CI |
+|-------|-----------------|---------|
+| HV_Ranging | +0.000908 | [−0.000324, +0.002140] |
+| HV_Trend | +0.000554 | [−0.000610, +0.001690] |
+| LV_Ranging | +0.001571 | [+0.000670, +0.002435] |
+| LV_Trend | +0.001273 | [+0.000288, +0.002305] |
+
+### Interpretation
+
+- **Low-volatility regimes:** The JPY − non-JPY difference is strongest
+  and statistically robust (95 % CI excludes zero) in **LV_Ranging** at
+  both 12 and 48 bars, and in **LV_Trend** at 48 bars. At 12 bars,
+  LV_Trend is borderline (CI just barely crosses zero).
+- **High-volatility regimes:** The point estimates are positive but the
+  confidence intervals include zero in all HV buckets. The evidence for
+  a JPY contrarian edge in high-volatility conditions is **inconclusive**.
+- **Per-pair consistency (48-bar LV regimes):** 7 out of 8 JPY-quote
+  pairs have a positive winsor mean in both LV_Ranging and LV_Trend at
+  48 bars. The single negative pair differs between the two phases
+  (cad-jpy in LV_Ranging; gbp-jpy in LV_Trend), suggesting the overall
+  effect is broad-based rather than driven by one or two pairs.
+- The 8 JPY-quote pairs in the dataset are: aud-jpy, cad-jpy, chf-jpy,
+  eur-jpy, gbp-jpy, nzd-jpy, sgd-jpy, usd-jpy.
