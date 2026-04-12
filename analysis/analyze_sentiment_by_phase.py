@@ -302,7 +302,7 @@ def _week_block_bootstrap_ci(
 
 def _clean_finite(values) -> np.ndarray:
     """Convert *values* to float64 and keep only finite entries."""
-    arr = np.asarray(values, dtype=float)
+    arr = np.asarray(values, dtype=np.float64)
     return arr[np.isfinite(arr)]
 
 
@@ -355,14 +355,12 @@ def compute_summary(df: pd.DataFrame) -> pd.DataFrame:
             vals = phase_df[col].dropna()
             if vals.empty:
                 continue
-            arr = _clean_finite(vals)
+            raw_np = np.asarray(vals.to_numpy(), dtype=np.float64)
+            finite_mask = np.isfinite(raw_np)
+            arr = raw_np[finite_mask]
             if len(arr) == 0:
                 continue
             week_labels = phase_df.loc[vals.index, "_iso_week"].to_numpy()
-            # Keep week_labels aligned after finite filtering
-            finite_mask = np.isfinite(
-                np.asarray(vals.to_numpy(), dtype=float)
-            )
             week_labels = week_labels[finite_mask]
             ci_lo, ci_hi = _week_block_bootstrap_ci(
                 arr, week_labels, np.mean
