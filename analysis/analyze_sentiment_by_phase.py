@@ -1073,7 +1073,9 @@ def load_mt4_cache() -> tuple[pd.DataFrame, pd.DataFrame | None]:
     """
     Load cached MT4-style filtered events and (optionally) phase lookup.
 
-    Returns ``(mt4_filtered, mt4_phase_lookup_or_None)``.
+    Returns ``(mt4_filtered, mt4_phase_lookup)``.  The phase lookup is
+    ``None`` when ``mt4_phase_lookup.parquet`` does not exist in the
+    cache directory.
     """
     mt4_filtered = pd.read_parquet(CACHE_MT4_FILTERED)
     mt4_phase_lookup: pd.DataFrame | None = None
@@ -1417,10 +1419,6 @@ def main() -> None:
         boot_df.to_csv(OUTPUT_CSV_JPY_DIFF_BOOT_MT4, index=False)
         print(f"  → saved to {OUTPUT_CSV_JPY_DIFF_BOOT_MT4}")
         print_bootstrap_delta_table(boot_df)
-
-        # Migration notice for old paths
-        print(f"\n  ℹ Output directory has moved: results/ → results/sentiment/")
-        print(f"    All sentiment CSVs are now written to {RESULTS_DIR}")
     else:
         print("[!] MT4-style filtered data empty; skipping JPY analysis.")
 
