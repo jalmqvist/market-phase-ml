@@ -286,10 +286,11 @@ python analyze_sentiment_by_phase.py --dataset core
 python analyze_sentiment_by_phase.py --dataset-path /path/to/custom_dataset.csv
 ```
 
-> **Recommendation:** Always use `--dataset cleaned` (the default) for
-> inference.  The core dataset includes `eur-mxn` and `gbp-zar` which
-> have corrupted price data and will produce `UserWarning` messages about
-> `trimmed_mean_1pct` inconsistencies.
+> **Recommendation:** The script defaults to the cleaned dataset when it
+> is available.  Avoid passing `--dataset core` for inference — the core
+> dataset includes `eur-mxn` and `gbp-zar` which have corrupted price
+> data and will produce `UserWarning` messages about `trimmed_mean_1pct`
+> inconsistencies.
 
 This runs the top-level wrapper which delegates to
 `analysis/analyze_sentiment_by_phase.py`. Alternatively, you can run the

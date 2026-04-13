@@ -1031,8 +1031,8 @@ def main() -> None:
         dataset_path = CORE_DATASET
         dataset_label = "core"
         is_cleaned = False
-    elif args.dataset == "cleaned" or args.dataset is None:
-        # Default: cleaned if it exists, else fall back to core
+    else:
+        # 'cleaned' or None (default): use cleaned if available, else core
         if CLEANED_DATASET.exists():
             dataset_path = CLEANED_DATASET
             dataset_label = "cleaned"
@@ -1041,10 +1041,6 @@ def main() -> None:
             dataset_path = CORE_DATASET
             dataset_label = "core (cleaned not found, falling back)"
             is_cleaned = False
-    else:
-        dataset_path = CORE_DATASET
-        dataset_label = "core"
-        is_cleaned = False
 
     print("─" * 64)
     print("  analyze_sentiment_by_phase.py")
