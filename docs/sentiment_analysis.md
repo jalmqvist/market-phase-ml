@@ -21,17 +21,41 @@ parent/
 └── market-sentiment-ml/      ← sibling repo
     └── data/
         ├── output/
-        │   ├── master_research_dataset_core.csv   (canonical sentiment dataset)
-        │   └── DATASET_MANIFEST.json              (schema version = "1.0")
+        │   ├── master_research_dataset_core.csv          (unfiltered dataset)
+        │   ├── analysis/
+        │   │   └── master_research_dataset_core_cleaned.csv  (pair-quality filtered; recommended)
+        │   └── DATASET_MANIFEST.json                     (schema version = "1.0")
         └── input/
-            └── fx/                                (broker H1 OHLCV CSVs)
+            └── fx/                                       (broker H1 OHLCV CSVs)
 ```
+
+### Datasets
+
+Two versions of the sentiment dataset are available.  The **cleaned
+dataset is recommended** for all inference and production analyses.
+
+| Dataset | Path (relative to `market-sentiment-ml/`) | Description |
+|---------|-------------------------------------------|-------------|
+| **cleaned** *(recommended)* | `data/output/analysis/master_research_dataset_core_cleaned.csv` | Pair-quality filtered. Excludes pairs with corrupted price data (eur-mxn, gbp-zar). Use this for all inference. |
+| **core** | `data/output/master_research_dataset_core.csv` | Full unfiltered dataset. Includes all pairs. May trigger trimmed-mean inconsistency warnings for corrupted pairs. |
+
+> **Note on data-quality issues in the unfiltered core dataset:**
+> Pairs `eur-mxn` and `gbp-zar` exhibit implausible return behavior
+> (e.g. `trimmed_mean_1pct` values orders of magnitude larger than
+> the p05–p95 range).  This is consistent with broken bars, stale-to-jump
+> transitions, or decimal/feed errors in the underlying price history.
+> The `_warn_if_inconsistent` guard in the script will emit
+> `UserWarning: trimmed_mean_1pct … is > 10× max(|p05|,|p95|)` for
+> these groups when running on the unfiltered dataset.
+> The cleaned dataset removes these pairs and is the basis for all
+> results reported below.
 
 ### Key Files
 
 | File | Description |
 |------|-------------|
-| `master_research_dataset_core.csv` | Canonical sentiment dataset with columns: `pair`, `entry_time`, `abs_sentiment`, `extreme_streak_70`, `contrarian_ret_12b`, `contrarian_ret_48b` |
+| `master_research_dataset_core_cleaned.csv` | **Recommended.** Pair-quality-filtered sentiment dataset with columns: `pair`, `entry_time`, `abs_sentiment`, `extreme_streak_70`, `contrarian_ret_12b`, `contrarian_ret_48b` |
+| `master_research_dataset_core.csv` | Unfiltered sentiment dataset (same columns). |
 | `DATASET_MANIFEST.json` | Must contain `"schema_version": "1.0"` |
 | `fx/*.csv` | Broker-exported H1 OHLCV files (e.g. `USDJPY_H1.csv`) with columns: `time_utc`, `open`, `high`, `low`, `close`, `tick_volume` |
 
@@ -244,6 +268,28 @@ From the `market-phase-ml` root:
 ```bash
 python analyze_sentiment_by_phase.py
 ```
+
+By default, the script uses the **cleaned dataset** if it exists
+(`market-sentiment-ml/data/output/analysis/master_research_dataset_core_cleaned.csv`),
+otherwise falls back to the core dataset.
+
+#### Dataset selection options
+
+```bash
+# Use cleaned dataset (default when available; recommended)
+python analyze_sentiment_by_phase.py --dataset cleaned
+
+# Use the unfiltered core dataset
+python analyze_sentiment_by_phase.py --dataset core
+
+# Override with an explicit path
+python analyze_sentiment_by_phase.py --dataset-path /path/to/custom_dataset.csv
+```
+
+> **Recommendation:** Always use `--dataset cleaned` (the default) for
+> inference.  The core dataset includes `eur-mxn` and `gbp-zar` which
+> have corrupted price data and will produce `UserWarning` messages about
+> `trimmed_mean_1pct` inconsistencies.
 
 This runs the top-level wrapper which delegates to
 `analysis/analyze_sentiment_by_phase.py`. Alternatively, you can run the

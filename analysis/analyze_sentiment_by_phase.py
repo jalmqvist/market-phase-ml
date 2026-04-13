@@ -27,7 +27,20 @@ JPY-vs-non-JPY stratified summaries are produced:
 
 Usage
 -----
-    python analyze_sentiment_by_phase.py
+    python analyze_sentiment_by_phase.py [--dataset {core,cleaned}]
+                                         [--dataset-path PATH]
+
+Dataset selection
+-----------------
+- ``--dataset cleaned`` (default when cleaned file exists): uses the
+  pair-quality-filtered dataset at:
+      ../market-sentiment-ml/data/output/analysis/master_research_dataset_core_cleaned.csv
+  This excludes known-bad pairs (eur-mxn, gbp-zar) with corrupted
+  price data.  Recommended for all inference and production analyses.
+- ``--dataset core``: uses the unfiltered core dataset at:
+      ../market-sentiment-ml/data/output/master_research_dataset_core.csv
+  May trigger trimmed-mean inconsistency warnings for eur-mxn/gbp-zar.
+- ``--dataset-path PATH``: override both defaults with an explicit path.
 
 Assumptions
 -----------
@@ -35,6 +48,8 @@ Assumptions
 - The sentiment pipeline has already been run so that these files exist:
     ../market-sentiment-ml/data/output/master_research_dataset_core.csv
     ../market-sentiment-ml/data/output/DATASET_MANIFEST.json
+- The cleaned dataset (optional but recommended) is at:
+    ../market-sentiment-ml/data/output/analysis/master_research_dataset_core_cleaned.csv
 - Broker H1 FX CSVs (e.g. USDJPY_H1.csv) are in:
     ../market-sentiment-ml/data/input/fx/
 - Output CSVs are written to ``results/sentiment/``.
@@ -50,6 +65,7 @@ Bootstrap resamples: B=2000 (block bootstrap by ISO week).
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import warnings
@@ -75,8 +91,15 @@ from src.sentiment_loader import load_broker_h1_prices_from_dir
 # ── paths (sibling repo) ────────────────────────────────────────────
 SENTIMENT_REPO = PROJECT_ROOT / ".." / "market-sentiment-ml"
 CORE_DATASET = SENTIMENT_REPO / "data" / "output" / "master_research_dataset_core.csv"
+CLEANED_DATASET = (
+    SENTIMENT_REPO / "data" / "output" / "analysis"
+    / "master_research_dataset_core_cleaned.csv"
+)
 MANIFEST_PATH = SENTIMENT_REPO / "data" / "output" / "DATASET_MANIFEST.json"
 PRICE_DIR = SENTIMENT_REPO / "data" / "input" / "fx"
+
+# ── known bad pairs (corrupted price data; excluded in cleaned dataset) ──
+BAD_PAIRS: frozenset[str] = frozenset({"eur-mxn", "gbp-zar"})
 
 # ── output ───────────────────────────────────────────────────────────
 RESULTS_DIR = PROJECT_ROOT / "results" / "sentiment"
@@ -144,11 +167,15 @@ def validate_manifest(manifest_path: Path) -> dict:
 # =====================================================================
 
 def load_sentiment_dataset(path: Path) -> pd.DataFrame:
-    """Load the core sentiment CSV, keeping only analysis columns."""
+    """Load the sentiment CSV, keeping only analysis columns."""
     if not path.exists():
         sys.exit(
-            f"ERROR: core dataset not found at {path}\n"
-            "Run the market-sentiment-ml pipeline first."
+            f"ERROR: dataset not found at {path}\n"
+            "Run the market-sentiment-ml pipeline first.\n"
+            "If using the cleaned dataset, ensure pair-quality filtering\n"
+            "has been run in market-sentiment-ml to produce:\n"
+            f"  {CLEANED_DATASET}\n"
+            "Or pass --dataset core to use the unfiltered dataset."
         )
     df = pd.read_csv(path, usecols=SENTIMENT_COLS, parse_dates=["entry_time"])
     # Ensure tz-naive (strip timezone if present, values stay UTC)
@@ -965,9 +992,69 @@ def _run_single_detector(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Regime-conditioned sentiment analysis.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Dataset locations (relative to sibling market-sentiment-ml repo):\n"
+            "  core:    data/output/master_research_dataset_core.csv\n"
+            "  cleaned: data/output/analysis/master_research_dataset_core_cleaned.csv\n"
+            "\n"
+            "The cleaned dataset excludes known-bad pairs (eur-mxn, gbp-zar)\n"
+            "and is recommended for all inference and production analyses."
+        ),
+    )
+    parser.add_argument(
+        "--dataset",
+        choices=["core", "cleaned"],
+        default=None,
+        help=(
+            "Which dataset to load. 'cleaned' (default when available) uses the "
+            "pair-quality-filtered dataset excluding bad pairs. "
+            "'core' uses the unfiltered dataset."
+        ),
+    )
+    parser.add_argument(
+        "--dataset-path",
+        metavar="PATH",
+        default=None,
+        help="Override dataset path; takes precedence over --dataset.",
+    )
+    args = parser.parse_args()
+
+    # ── resolve dataset path ─────────────────────────────────────────
+    if args.dataset_path is not None:
+        dataset_path = Path(args.dataset_path)
+        dataset_label = "custom"
+        is_cleaned = False
+    elif args.dataset == "core":
+        dataset_path = CORE_DATASET
+        dataset_label = "core"
+        is_cleaned = False
+    elif args.dataset == "cleaned" or args.dataset is None:
+        # Default: cleaned if it exists, else fall back to core
+        if CLEANED_DATASET.exists():
+            dataset_path = CLEANED_DATASET
+            dataset_label = "cleaned"
+            is_cleaned = True
+        else:
+            dataset_path = CORE_DATASET
+            dataset_label = "core (cleaned not found, falling back)"
+            is_cleaned = False
+    else:
+        dataset_path = CORE_DATASET
+        dataset_label = "core"
+        is_cleaned = False
+
     print("─" * 64)
     print("  analyze_sentiment_by_phase.py")
     print("─" * 64)
+    print(f"\n  Dataset : {dataset_label}")
+    print(f"  Path    : {dataset_path}")
+    if is_cleaned:
+        print("  ✓ Using cleaned dataset (bad pairs excluded)")
+    else:
+        print("  ℹ Using unfiltered dataset — bad pairs may be present")
 
     # 1. Validate manifest
     print("\n[1/4] Validating dataset manifest …")
@@ -975,11 +1062,30 @@ def main() -> None:
     print(f"  schema_version: {manifest['schema_version']}")
 
     # 2. Load sentiment data
-    print("[2/4] Loading core sentiment dataset …")
-    sentiment = load_sentiment_dataset(CORE_DATASET)
+    print("[2/4] Loading sentiment dataset …")
+    sentiment = load_sentiment_dataset(dataset_path)
     n_sentiment = len(sentiment)
     print(f"  {n_sentiment:,} events loaded, "
           f"{sentiment['pair'].nunique()} pairs")
+
+    # ── bad-pair check ────────────────────────────────────────────────
+    present_bad = BAD_PAIRS & set(sentiment["pair"].unique())
+    if present_bad:
+        warnings.warn(
+            f"Known bad pairs present in dataset: {sorted(present_bad)}. "
+            "These pairs have corrupted price data and may produce "
+            "implausible trimmed-mean values. "
+            "Re-run with --dataset cleaned (or ensure the cleaned dataset "
+            "has been generated in market-sentiment-ml) to exclude them.",
+            UserWarning,
+            stacklevel=1,
+        )
+        print(
+            f"  ⚠ WARNING: bad pairs detected: {sorted(present_bad)}\n"
+            "    Use --dataset cleaned to exclude them."
+        )
+    else:
+        print("  ✓ No known bad pairs (eur-mxn, gbp-zar) present")
 
     # 3. Load broker H1 prices
     print("[3/4] Loading broker H1 prices …")
