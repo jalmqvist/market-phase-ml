@@ -29,6 +29,9 @@ Usage
 -----
     python analyze_sentiment_by_phase.py [--dataset {core,cleaned}]
                                          [--dataset-path PATH]
+                                         [--no-cache]
+                                         [--rebuild-cache]
+                                         [--cache-only]
 
 Dataset selection
 -----------------
@@ -41,6 +44,17 @@ Dataset selection
       ../market-sentiment-ml/data/output/master_research_dataset_core.csv
   May trigger trimmed-mean inconsistency warnings for eur-mxn/gbp-zar.
 - ``--dataset-path PATH``: override both defaults with an explicit path.
+
+Caching
+-------
+By default caching is **enabled**.  The MT4-style phase-detection and
+join results are saved to ``results/sentiment/cache/`` on first run and
+reloaded on subsequent runs when inputs and parameters are unchanged.
+
+- ``--no-cache``: disable cache read/write for this run.
+- ``--rebuild-cache``: force full recomputation and overwrite cache.
+- ``--cache-only``: build (or rebuild) cache and exit without running
+  the full downstream analysis.
 
 Assumptions
 -----------
@@ -67,6 +81,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import warnings
 from pathlib import Path
@@ -129,6 +144,13 @@ HORIZONS = [12, 48]
 BOOTSTRAP_N = 2000
 BOOTSTRAP_CI = 0.95
 BOOTSTRAP_SEED = 42
+
+# ── cache constants ────────────────────────────────────────────────
+CACHE_SCHEMA_VERSION = 1
+CACHE_DIR = RESULTS_DIR / "cache"
+CACHE_META_PATH = CACHE_DIR / "cache_meta.json"
+CACHE_MT4_FILTERED = CACHE_DIR / "mt4_filtered_events.parquet"
+CACHE_MT4_PHASE_LOOKUP = CACHE_DIR / "mt4_phase_lookup.parquet"
 
 # ── sentiment columns we need ───────────────────────────────────────
 SENTIMENT_COLS = [
@@ -934,7 +956,152 @@ def print_bootstrap_delta_table(
 
 
 # =====================================================================
-# 7. Main
+# 7. Cache helpers
+# =====================================================================
+
+def _git_commit_hash() -> str:
+    """Return current git commit hash (short), or empty string if unavailable."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _price_dir_fingerprint(price_dir: Path) -> dict:
+    """Return a fingerprint dict for the price directory."""
+    if not price_dir.exists():
+        return {"csv_count": 0, "latest_mtime": 0.0}
+    csv_files = sorted(price_dir.glob("*.csv"))
+    csv_count = len(csv_files)
+    if csv_count == 0:
+        return {"csv_count": 0, "latest_mtime": 0.0}
+    latest_mtime = max(f.stat().st_mtime for f in csv_files)
+    return {"csv_count": csv_count, "latest_mtime": latest_mtime}
+
+
+def build_cache_meta(dataset_path: Path) -> dict:
+    """Build cache metadata for the current run configuration."""
+    if dataset_path.exists():
+        stat = dataset_path.stat()
+        dataset_mtime: float = stat.st_mtime
+        dataset_size: int = stat.st_size
+    else:
+        dataset_mtime = 0.0
+        dataset_size = 0
+
+    price_fp = _price_dir_fingerprint(PRICE_DIR)
+
+    return {
+        "cache_schema_version": CACHE_SCHEMA_VERSION,
+        "git_commit": _git_commit_hash(),
+        "dataset_path": str(dataset_path.resolve()),
+        "dataset_mtime": dataset_mtime,
+        "dataset_size": dataset_size,
+        "price_dir": str(PRICE_DIR.resolve()),
+        "price_dir_csv_count": price_fp["csv_count"],
+        "price_dir_latest_mtime": price_fp["latest_mtime"],
+        "min_abs_sentiment": MIN_ABS_SENTIMENT,
+        "min_extreme_streak": MIN_EXTREME_STREAK,
+        "horizons": HORIZONS,
+        "detector": "MT4-style",
+        "winsor_lo_quantile": WINSOR_LO_QUANTILE,
+        "winsor_hi_quantile": WINSOR_HI_QUANTILE,
+    }
+
+
+def _meta_matches(current: dict, stored: dict) -> tuple[bool, str]:
+    """
+    Compare current and stored cache metadata.
+
+    Returns (is_valid, reason_for_mismatch).  The ``git_commit`` field
+    is intentionally excluded from the comparison — a new commit does
+    not invalidate cached data unless inputs or parameters changed.
+    """
+    if stored.get("cache_schema_version") != CACHE_SCHEMA_VERSION:
+        return False, (
+            f"cache schema version mismatch: "
+            f"stored={stored.get('cache_schema_version')!r}, "
+            f"current={CACHE_SCHEMA_VERSION!r}"
+        )
+
+    compare_keys = [
+        "dataset_path", "dataset_mtime", "dataset_size",
+        "price_dir", "price_dir_csv_count", "price_dir_latest_mtime",
+        "min_abs_sentiment", "min_extreme_streak", "horizons",
+        "detector", "winsor_lo_quantile", "winsor_hi_quantile",
+    ]
+
+    for key in compare_keys:
+        c_val = current.get(key)
+        s_val = stored.get(key)
+        if c_val != s_val:
+            return False, f"{key} changed: stored={s_val!r}, current={c_val!r}"
+
+    return True, ""
+
+
+def cache_is_valid(dataset_path: Path) -> tuple[bool, str]:
+    """
+    Check whether the on-disk cache is valid for the current run.
+
+    Returns ``(is_valid, reason)`` where *reason* is a human-readable
+    explanation of why the cache is invalid (empty string when valid).
+    """
+    if not CACHE_META_PATH.exists():
+        return False, "cache metadata file missing"
+    if not CACHE_MT4_FILTERED.exists():
+        return False, "cached mt4_filtered_events.parquet missing"
+    try:
+        with open(CACHE_META_PATH) as f:
+            stored_meta = json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        return False, f"could not read cache_meta.json: {exc}"
+    current_meta = build_cache_meta(dataset_path)
+    return _meta_matches(current_meta, stored_meta)
+
+
+def load_mt4_cache() -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    """
+    Load cached MT4-style filtered events and (optionally) phase lookup.
+
+    Returns ``(mt4_filtered, mt4_phase_lookup)``.  The phase lookup is
+    ``None`` when ``mt4_phase_lookup.parquet`` does not exist in the
+    cache directory.
+    """
+    mt4_filtered = pd.read_parquet(CACHE_MT4_FILTERED)
+    mt4_phase_lookup: pd.DataFrame | None = None
+    if CACHE_MT4_PHASE_LOOKUP.exists():
+        mt4_phase_lookup = pd.read_parquet(CACHE_MT4_PHASE_LOOKUP)
+    return mt4_filtered, mt4_phase_lookup
+
+
+def save_mt4_cache(
+    dataset_path: Path,
+    mt4_filtered: pd.DataFrame,
+    mt4_phase_lookup: pd.DataFrame | None = None,
+) -> None:
+    """Save MT4-style filtered events, optional phase lookup, and metadata."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    mt4_filtered.to_parquet(CACHE_MT4_FILTERED, index=False)
+    if mt4_phase_lookup is not None:
+        mt4_phase_lookup.to_parquet(CACHE_MT4_PHASE_LOOKUP, index=False)
+    meta = build_cache_meta(dataset_path)
+    with open(CACHE_META_PATH, "w") as f:
+        json.dump(meta, f, indent=2)
+    print(f"  ✓ MT4 cache saved → {CACHE_DIR}")
+
+
+# =====================================================================
+# 8. Main
 # =====================================================================
 
 def _run_single_detector(
@@ -1001,7 +1168,14 @@ def main() -> None:
             "  cleaned: data/output/analysis/master_research_dataset_core_cleaned.csv\n"
             "\n"
             "The cleaned dataset excludes known-bad pairs (eur-mxn, gbp-zar)\n"
-            "and is recommended for all inference and production analyses."
+            "and is recommended for all inference and production analyses.\n"
+            "\n"
+            "Cache (results/sentiment/cache/):\n"
+            "  By default caching is enabled.  On first run (or after a cache\n"
+            "  miss) the expensive MT4 phase-detection + join is computed and\n"
+            "  saved.  Subsequent runs load from cache and skip those steps.\n"
+            "  Use --rebuild-cache to force recomputation, or --no-cache to\n"
+            "  disable caching entirely."
         ),
     )
     parser.add_argument(
@@ -1019,6 +1193,33 @@ def main() -> None:
         metavar="PATH",
         default=None,
         help="Override dataset path; takes precedence over --dataset.",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        default=False,
+        help=(
+            "Disable cache for this run: do not read from or write to the "
+            "cache directory."
+        ),
+    )
+    parser.add_argument(
+        "--rebuild-cache",
+        action="store_true",
+        default=False,
+        help=(
+            "Force full recomputation and overwrite the cache, even if a valid "
+            "cache already exists."
+        ),
+    )
+    parser.add_argument(
+        "--cache-only",
+        action="store_true",
+        default=False,
+        help=(
+            "Build (or rebuild) the MT4 cache and exit.  Useful for pre-warming "
+            "the cache without running the full downstream analysis."
+        ),
     )
     args = parser.parse_args()
 
@@ -1051,6 +1252,16 @@ def main() -> None:
         print("  ✓ Using cleaned dataset (bad pairs excluded)")
     else:
         print("  ℹ Using unfiltered dataset — bad pairs may be present")
+
+    # ── cache flags summary ──────────────────────────────────────────
+    use_cache = not args.no_cache
+    force_rebuild = args.rebuild_cache or args.cache_only
+    if not use_cache:
+        print("  ℹ Cache disabled (--no-cache)")
+    elif force_rebuild:
+        print("  ℹ Cache will be rebuilt (--rebuild-cache / --cache-only)")
+    else:
+        print(f"  ℹ Cache directory: {CACHE_DIR}")
 
     # 1. Validate manifest
     print("\n[1/4] Validating dataset manifest …")
@@ -1089,6 +1300,19 @@ def main() -> None:
     print(f"  {len(prices):,} bars loaded, "
           f"{prices['pair'].nunique()} pairs")
 
+    # ── cache check (MT4-style) ──────────────────────────────────────
+    mt4_from_cache = False
+    if use_cache and not force_rebuild:
+        valid, reason = cache_is_valid(dataset_path)
+        if valid:
+            print(
+                "\n  ✓ Cache hit — MT4 filtered events loaded from cache.\n"
+                "    Skipping MT4 phase detection + join."
+            )
+            mt4_from_cache = True
+        else:
+            print(f"\n  ✗ Cache miss ({reason}) — will recompute MT4 phases.")
+
     # 4. Run both detectors
     print("[4/4] Running regime-conditioned analysis …")
 
@@ -1109,13 +1333,41 @@ def main() -> None:
 
     summaries: dict[str, pd.DataFrame] = {}
     filtered_data: dict[str, pd.DataFrame] = {}
+
     for name, desc, phase_fn, output_csv in detectors:
         print(f"\n  ▶ {desc}")
-        summary, filtered = _run_single_detector(
-            name, sentiment, prices, phase_fn, output_csv, n_sentiment,
-        )
-        summaries[name] = summary
-        filtered_data[name] = filtered
+
+        if name == "MT4-style" and mt4_from_cache:
+            # ── fast path: use cached filtered events ────────────────
+            print(f"\n{'─' * 64}")
+            print(f"  Detector: {name} (from cache)")
+            print(f"{'─' * 64}")
+            mt4_filtered_cache, _ = load_mt4_cache()
+            n_cached = len(mt4_filtered_cache)
+            print(f"    {n_cached:,} filtered events loaded from cache")
+            summary = compute_summary(mt4_filtered_cache)
+            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+            summary.to_csv(output_csv, index=False)
+            print(f"  → saved to {output_csv}")
+            print_console_summary(name, n_sentiment, n_cached, n_cached, summary)
+            summaries[name] = summary
+            filtered_data[name] = mt4_filtered_cache
+        else:
+            # ── normal path: full phase computation ──────────────────
+            summary, filtered = _run_single_detector(
+                name, sentiment, prices, phase_fn, output_csv, n_sentiment,
+            )
+            summaries[name] = summary
+            filtered_data[name] = filtered
+
+            if name == "MT4-style" and use_cache:
+                print(f"\n  Saving MT4 cache …")
+                save_mt4_cache(dataset_path, filtered)
+
+    # ── --cache-only: exit after cache has been written ──────────────
+    if args.cache_only:
+        print("\n  ✓ Cache built. Exiting (--cache-only).")
+        return
 
     # 5. Comparison summary
     print_comparison_summary(summaries)
@@ -1167,11 +1419,6 @@ def main() -> None:
         boot_df.to_csv(OUTPUT_CSV_JPY_DIFF_BOOT_MT4, index=False)
         print(f"  → saved to {OUTPUT_CSV_JPY_DIFF_BOOT_MT4}")
         print_bootstrap_delta_table(boot_df)
-
-        # Migration notice for old paths
-        old_results = PROJECT_ROOT / "results"
-        print(f"\n  ℹ Output directory has moved: results/ → results/sentiment/")
-        print(f"    All sentiment CSVs are now written to {RESULTS_DIR}")
     else:
         print("[!] MT4-style filtered data empty; skipping JPY analysis.")
 
