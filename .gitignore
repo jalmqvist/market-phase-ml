@@ -194,6 +194,7 @@ models/saved/
 
 # Cache files
 data/cache/
+results/sentiment/cache/
 
 # Run artifacts
 results/run_manifest_*.json

@@ -292,6 +292,43 @@ python analyze_sentiment_by_phase.py --dataset-path /path/to/custom_dataset.csv
 > data and will produce `UserWarning` messages about `trimmed_mean_1pct`
 > inconsistencies.
 
+#### Caching (enabled by default)
+
+The script caches the expensive MT4-style phase-detection and join step
+so that repeated runs skip recomputation when inputs and parameters are
+unchanged.
+
+**Cache location:** `results/sentiment/cache/`
+
+| Artifact | Description |
+|----------|-------------|
+| `mt4_filtered_events.parquet` | Joined + filtered event-level dataset (pair, entry_time, phase, abs_sentiment, extreme_streak_70, contrarian_ret_12b, contrarian_ret_48b) |
+| `mt4_phase_lookup.parquet` | Phase lookup table (pair, entry_time, phase) |
+| `cache_meta.json` | Metadata used for cache invalidation |
+
+**Cache invalidation:** The cache is automatically invalidated (and
+recomputed) if any of the following change:
+- Dataset file path, modification time, or size
+- Price directory CSV count or latest modification time
+- Analysis parameters: `MIN_ABS_SENTIMENT`, `MIN_EXTREME_STREAK`, `HORIZONS`, winsor quantiles
+- Cache schema version
+
+**Cache CLI flags:**
+
+```bash
+# Normal run (reads from cache if valid, writes cache on first run)
+python analyze_sentiment_by_phase.py
+
+# Force full recompute and overwrite cache
+python analyze_sentiment_by_phase.py --rebuild-cache
+
+# Pre-warm cache only (builds cache and exits without running full analysis)
+python analyze_sentiment_by_phase.py --cache-only
+
+# Disable cache entirely for this run
+python analyze_sentiment_by_phase.py --no-cache
+```
+
 This runs the top-level wrapper which delegates to
 `analysis/analyze_sentiment_by_phase.py`. Alternatively, you can run the
 analysis module directly:
@@ -319,10 +356,16 @@ ls results/sentiment/*.csv
 
 ---
 
-## Findings so far (as of 2026-04-12)
+## Findings so far (as of 2026-04-13)
 
 > **Note:** This is exploratory research, not a trading claim. All results
 > should be treated as working hypotheses subject to further validation.
+
+> **Dataset:** All results below use the **cleaned dataset**
+> (`master_research_dataset_core_cleaned.csv`), which excludes pairs with
+> corrupted price data (`eur-mxn`, `gbp-zar`).  Earlier runs on the
+> unfiltered core dataset contained artefacts from those pairs; the
+> cleaned-dataset figures supersede them.
 
 ### Methodology recap
 
@@ -334,33 +377,35 @@ ls results/sentiment/*.csv
   then averaged with equal weight across JPY-quote pairs and separately
   across non-JPY pairs. The delta Δ = mean(JPY) − mean(non-JPY) is the
   test statistic.
+- **Pair counts:** n_jpy_pairs = 8, n_other_pairs = 37.
 
-### JPY − non-JPY bootstrap deltas (MT4-style)
+### JPY − non-JPY bootstrap deltas (MT4-style, cleaned dataset)
 
 #### 12-bar horizon
 
 | Phase | Δ (JPY − other) | 95 % CI |
 |-------|-----------------|---------|
-| HV_Ranging | +0.000229 | [−0.000292, +0.000743] |
-| HV_Trend | +0.000277 | [−0.000092, +0.000663] |
-| LV_Ranging | +0.000548 | [+0.000273, +0.000829] |
-| LV_Trend | +0.000307 | [−0.000018, +0.000687] |
+| HV_Ranging | +0.0002517 | [−0.0002731, +0.0007869] |
+| HV_Trend | +0.0003185 | [−0.0000472, +0.0007037] |
+| LV_Ranging | +0.0005713 | [+0.0002862, +0.0008559] |
+| LV_Trend | +0.0003247 | [−0.0000031, +0.0006941] |
 
 #### 48-bar horizon
 
 | Phase | Δ (JPY − other) | 95 % CI |
 |-------|-----------------|---------|
-| HV_Ranging | +0.000908 | [−0.000324, +0.002140] |
-| HV_Trend | +0.000554 | [−0.000610, +0.001690] |
-| LV_Ranging | +0.001571 | [+0.000670, +0.002435] |
-| LV_Trend | +0.001273 | [+0.000288, +0.002305] |
+| HV_Ranging | +0.0009184 | [−0.0002488, +0.0021371] |
+| HV_Trend | +0.0005039 | [−0.0006141, +0.0016691] |
+| LV_Ranging | +0.0015682 | [+0.0006557, +0.0024368] |
+| LV_Trend | +0.0012150 | [+0.0002145, +0.0022229] |
 
 ### Interpretation
 
 - **Low-volatility regimes:** The JPY − non-JPY difference is strongest
   and statistically robust (95 % CI excludes zero) in **LV_Ranging** at
   both 12 and 48 bars, and in **LV_Trend** at 48 bars. At 12 bars,
-  LV_Trend is borderline (CI just barely crosses zero).
+  LV_Trend is borderline (CI marginally crosses zero: lower bound
+  −0.0000031).
 - **High-volatility regimes:** The point estimates are positive but the
   confidence intervals include zero in all HV buckets. The evidence for
   a JPY contrarian edge in high-volatility conditions is **inconclusive**.
