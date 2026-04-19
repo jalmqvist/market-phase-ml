@@ -416,3 +416,121 @@ ls results/sentiment/*.csv
   effect is broad-based rather than driven by one or two pairs.
 - The 8 JPY-quote pairs in the dataset are: aud-jpy, cad-jpy, chf-jpy,
   eur-jpy, gbp-jpy, nzd-jpy, sgd-jpy, usd-jpy.
+
+---
+
+## Integration with Feature-Based Modeling (market-phase-ml)
+
+### Feature selection layer
+
+To evaluate how sentiment-derived signals behave in a predictive modeling
+context, a feature selection layer was introduced in `market-phase-ml`.
+
+This layer consists of:
+
+- **Feature registry** (`features/registry.py`): defines named feature groups
+- **Feature assembler** (`features/assembler.py`): builds feature matrices from groups
+- **Experiment framework** (`features/run_experiments.py`): runs controlled ablations
+
+Feature groups used:
+
+- `baseline`: price-derived features (trend, trend strength)
+- `sentiment_core`: raw sentiment features (net sentiment, extremes, streaks)
+- `sentiment_behavioral`: engineered behavioral signal (JPY + trend-conditioned)
+
+This allows reproducible comparisons of:
+
+
+baseline
+baseline + sentiment_core
+baseline + behavioral_signal
+
+
+---
+
+### Walk-forward validation (ML setting)
+
+A time-based walk-forward evaluation was performed (year-by-year splits),
+using a simple logistic regression model to predict the sign of
+`contrarian_ret_12b`.
+
+#### Summary (mean across folds)
+
+| Feature set         | Accuracy | Mean return | Hit rate | Sharpe |
+| ------------------- | -------- | ----------- | -------- | ------ |
+| baseline            | 0.5068   | 0.000111    | 0.5047   | 0.0146 |
+| + sentiment_core    | 0.5090   | 0.000142    | 0.5073   | 0.0164 |
+| + behavioral_signal | 0.5088   | 0.000121    | 0.5067   | 0.0157 |
+
+#### Key observations
+
+- **Raw sentiment features** provide a weak but consistent signal across time
+- **Behavioral signal** does not materially improve performance when used as a global feature
+- Differences between feature sets are small and unstable across folds
+
+---
+
+### Interpretation: feature vs strategy
+
+The walk-forward results reveal an important distinction:
+
+#### 1. Broad signals (ML-friendly)
+
+- Example: `sentiment_core`
+- Characteristics:
+  - weak per-event effect
+  - high frequency
+  - stable across time
+- Suitable for:
+  - machine learning features
+  - additive improvements to baseline models
+
+#### 2. Narrow signals (strategy-like)
+
+- Example: JPY behavioral signal (persistent extreme + trend-conditioned)
+- Characteristics:
+  - strong conditional effect
+  - low frequency
+  - regime-dependent
+- Not suitable as:
+  - a global ML feature
+- Better used as:
+  - a **conditional trading rule**
+  - a **regime filter / overlay**
+
+---
+
+### Key insight
+
+> **Weak, broad signals outperform strong, narrow signals in ML contexts.**  
+> **Strong, narrow signals outperform weak, broad signals in strategy contexts.**
+
+This explains why:
+
+- the JPY behavioral effect is strong in targeted analysis
+- but diluted in full-sample predictive models
+
+---
+
+### Implication for system design
+
+The results motivate a **regime-aware architecture**:
+
+`IF regime conditions are met (e.g. persistent extreme + trend alignment):`
+`activate behavioral signal (fade crowd)`
+`ELSE:`
+`rely on baseline + weak sentiment features`
+
+
+Rather than forcing all signals into a single model, the system should:
+
+- treat **behavioral signals as conditional overlays**
+- treat **broad signals as model features**
+
+---
+
+### Status
+
+- Regime-conditioned sentiment effects: validated (see above)
+- Feature-based integration: implemented and evaluated
+- Next step: combine regime detection with conditional signal activation

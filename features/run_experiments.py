@@ -70,6 +70,77 @@ def train_test_split_xy(X, y):
         y.iloc[split:]
     )
 
+# --------------------------------------------------
+# Walk forward
+# --------------------------------------------------
+
+def run_walk_forward(df, feature_groups, target_col):
+    df = df.copy()
+
+    df["year"] = pd.to_datetime(df["entry_time"]).dt.year
+
+    years = sorted(df["year"].dropna().unique())
+
+    results = []
+
+    for year in years:
+        train = df[df["year"] < year]
+        test = df[df["year"] == year]
+
+        # Skip first year (no training data)
+        if len(train) == 0 or len(test) == 0:
+            continue
+
+        for name, groups in feature_groups.items():
+
+            X_train = assemble_features(train, groups)
+            y_train = train[target_col]
+
+            X_test = assemble_features(test, groups)
+            y_test = test[target_col]
+
+            # Drop NA rows (train)
+            mask_train = X_train.notna().all(axis=1) & y_train.notna()
+            X_train = X_train[mask_train]
+            y_train = y_train[mask_train]
+
+            # Drop NA rows (test)
+            mask_test = X_test.notna().all(axis=1) & y_test.notna()
+            X_test = X_test[mask_test]
+            y_test = y_test[mask_test]
+
+            if len(X_train) == 0 or len(X_test) == 0:
+                continue
+
+            model = LogisticRegression(max_iter=1000)
+            model.fit(X_train, y_train)
+
+            preds = model.predict(X_test)
+
+            acc = accuracy_score(y_test, preds)
+
+            # Financial metrics
+            returns = test.loc[X_test.index, "contrarian_ret_12b"]
+            strategy_returns = returns[preds == 1]
+
+            mean_ret = strategy_returns.mean()
+            hit_rate = (strategy_returns > 0).mean()
+            sharpe = (
+                strategy_returns.mean() / strategy_returns.std()
+                if strategy_returns.std() > 0 else np.nan
+            )
+
+            results.append({
+                "year": year,
+                "experiment": name,
+                "accuracy": acc,
+                "mean_return": mean_ret,
+                "hit_rate": hit_rate,
+                "sharpe": sharpe,
+                "n_trades": len(strategy_returns)
+            })
+
+    return pd.DataFrame(results)
 
 # --------------------------------------------------
 # Main experiment loop
@@ -78,51 +149,30 @@ def train_test_split_xy(X, y):
 def run():
 
     print("Loading data...")
-    #df = pd.read_parquet(INPUT_PATH)
     df = pd.read_csv(INPUT_PATH)
-    print(df.columns.tolist())
+
     df["entry_time"] = pd.to_datetime(df["entry_time"])
 
     df["target"] = (df["contrarian_ret_12b"] > 0).astype(int)
     TARGET = "target"
 
-    # Add behavioral feature
     df = add_behavioral_signal(df)
 
-    results = []
+    print("Running walk-forward experiments...")
 
-    for name, groups in EXPERIMENTS.items():
+    wf_results = run_walk_forward(df, EXPERIMENTS, TARGET)
 
-        print(f"\nRunning experiment: {name}")
+    print("\nWalk-forward results:")
+    print(wf_results)
 
-        X = assemble_features(df, groups)
-        y = df[TARGET]
+    print("\nSummary (mean over folds):")
+    print(
+        wf_results.groupby("experiment")[["accuracy", "mean_return", "hit_rate", "sharpe"]]
+        .mean()
+        .sort_values("mean_return", ascending=False)
+    )
 
-        # Drop NA rows
-        mask = X.notna().all(axis=1) & y.notna()
-        X = X[mask]
-        y = y[mask]
-
-        train_X, test_X, train_y, test_y = train_test_split_xy(X, y)
-
-        # Simple model (interpretable baseline)
-        model = LogisticRegression(max_iter=1000)
-
-        model.fit(train_X, train_y)
-
-        preds = model.predict(test_X)
-
-        acc = accuracy_score(test_y, preds)
-
-        print(f"Accuracy: {acc:.4f}")
-
-        results.append({
-            "experiment": name,
-            "accuracy": acc,
-            "n_features": train_X.shape[1],
-        })
-
-    return pd.DataFrame(results)
+    return wf_results
 
 
 if __name__ == "__main__":
