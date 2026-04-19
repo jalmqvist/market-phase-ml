@@ -69,3 +69,16 @@ The schema intentionally separates:
 - detector-specific diagnostics
 
 This allows flexible use across modeling and strategy layers.
+
+---
+
+## Handling of "Unknown" phase
+
+- Rows with `phase == "Unknown"` should be treated as **non-actionable**
+- Downstream systems should:
+  - either filter them out
+  - or explicitly model them as a separate state
+
+Recommended:
+- exclude `Unknown` rows in signal evaluation
+- retain them for diagnostics and coverage tracking

@@ -110,3 +110,18 @@ It is particularly useful when:
 
 - signals are defined at H1 resolution
 - regime conditioning is required without mixing data sources
+
+---
+
+## When to use D1-derived vs D1-native
+
+- Use **D1-derived (from H1)** when:
+  - working with H1-native datasets (e.g. sentiment)
+  - requiring strict alignment with H1 timestamps
+
+- Use **D1-native detector** when:
+  - working with standalone daily models
+  - not constrained by H1 alignment
+
+In cross-repo workflows, D1-derived is typically preferred to ensure consistency with H1 signals.
+

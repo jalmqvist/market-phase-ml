@@ -87,3 +87,18 @@ decision layer
 - Use **H1 features for signal generation**
 
 The two detectors are therefore complementary, not redundant.
+
+### Regime vs signal contract (normative)
+
+- **Regime** must be defined on a **slower timeframe (typically D1)**
+- **Signals/features** must be defined on a **faster timeframe (typically H1)**
+
+This separation is required to avoid:
+
+- circular logic (same signal used as both feature and regime)
+- overfitting to short-term noise
+
+All cross-repo analyses should explicitly specify:
+
+- the regime source (D1-native or D1-derived)
+- the signal timeframe (H1)

@@ -66,7 +66,7 @@ Any analysis must explicitly define:
 | Dimension                          | MarketPhaseDetector (D1-native)                              | MT4-style detector (H1-native)                               |
 | ---------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | Implementation                     | `src/phases.py` → `MarketPhaseDetector.detect_phases(df)`    | `src/mt4_regimes.py` → `detect_mt4_regimes(df)`              |
-| Intended timescale                 | D1 (may be applied to H1 via same logic)                     | H1 (MT4-inspired)                                            |
+| Intended timescale                 | D1 (may be applied to H1, but interpretation remains D1-oriented via same logic) | H1 (MT4-inspired)                                            |
 | Required input columns             | `Open`, `High`, `Low`, `Close`, `Volume`                     | `Open`, `High`, `Low`, `Close`                               |
 | Output columns added (exact names) | `atr`, `atr_pct`, `adx`, `high_vol`, `trending`, `phase`, `stop_atr_mult` | `atr_short`, `atr_long`, `rel_vol`, `high_volatility`, `adx`, `sma200`, `trending`, `phase` |
 | Trend metric                       | ADX                                                          | ADX                                                          |
