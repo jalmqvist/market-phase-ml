@@ -204,11 +204,9 @@ results/*.png
 results/sentiment/*.csv
 results/sentiment/*.png
 
-# temporary viz scripts
-scripts/
-
 data/
 *.parquet
 *.csv
 
+scripts/render_equity_vs_spikes.py
 features/__pycache__

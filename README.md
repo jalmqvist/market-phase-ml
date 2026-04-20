@@ -268,6 +268,49 @@ This yields: `HV_Trend`, `LV_Trend`, `HV_Ranging`, `LV_Ranging`.
 
 ---
 
+## Regime artifacts (versioned research outputs)
+
+This repository can export a **versioned D1 regime label artifact** for consumption by downstream projects
+(e.g. `market-sentiment-ml`).
+
+### Output: `phase_labels_d1.parquet`
+
+The builder script writes:
+
+- `data/output/regimes/phase_labels_d1.parquet`
+
+Schema (strict):
+- `pair` (lowercase `xxx-yyy`, e.g. `eur-usd`)
+- `timestamp` (**UTC**, timezone-aware, aligned to **00:00:00** day boundary)
+- `phase` ∈ {`HV_Trend`, `HV_Ranging`, `LV_Trend`, `LV_Ranging`, `Unknown`}
+- `is_trending` (bool), `is_high_vol` (bool)
+- `detector_id`, `detector_name`, `config_version`, `config_hash`
+- `build_timestamp` (UTC), `data_source` (default `Yahoo`)
+
+### Join contract (H1 consumers)
+
+Downstream H1 datasets should join using:
+
+- `(pair, floor(entry_time to UTC day)) == (pair, timestamp)`
+
+This artifact intentionally uses **UTC midnight boundaries** to avoid timezone ambiguity.
+
+### Build
+
+Prerequisite:
+- `data/processed/*.csv` must exist (produced by the normal pipeline / cached Yahoo data).
+
+Build command:
+
+```bash
+python scripts/build_phase_labels_d1.py
+```
+
+The script enforces hard invariants (UTC alignment, uniqueness, monotonicity, valid phases) and prints
+soft gap diagnostics (warnings only) plus per-pair coverage summaries.
+
+---
+
 ## Expert strategies (the “experts” in mixture-of-experts)
 
 ### Trend Following Suite (TF1–TF5)
