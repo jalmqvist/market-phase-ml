@@ -14,6 +14,11 @@ Correctness requirements:
 - phase computed via MarketPhaseDetector.detect_phases() (no reimplementation)
 - deterministic config_hash based only on detector configuration
 - soft gap diagnostics (warn only)
+
+NOTE (transparency-only policy):
+Yahoo FX data may contain historical gaps (e.g. Aug 2008).
+This pipeline does not modify or fill such gaps.
+Downstream consumers must handle missing regimes explicitly.
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import pandas as pd
 
@@ -41,6 +46,9 @@ REPO_ROOT = SCRIPT_PATH.parents[1]  # scripts/ -> repo root
 PROCESSED_DIR_DEFAULT = REPO_ROOT / "data" / "processed"
 OUTPUT_PATH_DEFAULT = REPO_ROOT / "data" / "output" / "regimes" / "phase_labels_d1.parquet"
 
+GAP_REPORT_PATH_DEFAULT = REPO_ROOT / "data" / "output" / "regimes" / "phase_labels_d1_gap_report.csv"
+GAP_SUMMARY_PATH_DEFAULT = REPO_ROOT / "data" / "output" / "regimes" / "phase_labels_d1_gap_summary.csv"
+
 VALID_PHASES = {"HV_Trend", "HV_Ranging", "LV_Trend", "LV_Ranging", "Unknown"}
 
 DETECTOR_ID = "d1_native_v1"
@@ -49,9 +57,10 @@ CONFIG_VERSION = "v1"
 
 DATA_SOURCE_DEFAULT = "Yahoo"
 
-# Soft diagnostics
+# Diagnostics thresholds
 GAP_WARN_DAYS = 3
-GAP_SAMPLE_ROWS = 8
+GAP_LARGE_DAYS = 10
+GAP_SAMPLE_ROWS = 12
 
 
 # -----------------------------
@@ -177,6 +186,8 @@ def load_data(processed_dir: Path) -> pd.DataFrame:
         if "Volume" not in df.columns:
             df["Volume"] = 0.0
 
+        # IMPORTANT: transparency-only policy
+        # We do not fill/insert missing days. We only normalize observed timestamps to UTC midnight.
         ts = to_utc_midnight(df.index)
 
         out = df[["Open", "High", "Low", "Close", "Volume"]].copy()
@@ -217,7 +228,6 @@ def compute_regimes(prices: pd.DataFrame) -> pd.DataFrame:
         _require_cols(detected, ["phase", "trending", "high_vol"], f"{pair}: detector output")
 
         # IMPORTANT: do NOT use `.values` for tz-aware timestamps.
-        # `.values` can silently drop the timezone and produce tz-naive datetime64[ns].
         part = pd.DataFrame(
             {
                 "pair": pair,
@@ -245,7 +255,7 @@ def attach_metadata(df: pd.DataFrame, *, data_source: str) -> pd.DataFrame:
     out["config_version"] = CONFIG_VERSION
     out["config_hash"] = cfg_hash
     out["build_timestamp"] = pd.Timestamp(build_ts)
-    out["data_source"] = data_source
+    out["data_source"] = data_source  # required: "Yahoo"
 
     # Explicit dtypes for artifact stability
     out["pair"] = out["pair"].astype("string")
@@ -278,10 +288,7 @@ def validate_output(df: pd.DataFrame) -> None:
     ]
     _require_cols(df, required, "output")
 
-    # Parse timestamps as UTC. If timestamps are tz-naive (a bug upstream),
-    # this will interpret them as UTC; we still validate alignment to 00:00:00 UTC.
     ts = pd.to_datetime(df["timestamp"], errors="raise", utc=True)
-
     _assert(str(ts.dt.tz) == "UTC", f"timestamp must be UTC; got {ts.dt.tz}")
 
     aligned = (
@@ -322,13 +329,18 @@ def print_coverage_summary(df: pd.DataFrame) -> None:
     print("\nCoverage summary per pair:")
     print(summary.to_string(index=False))
 
+
+# -----------------------------
+# Gap diagnostics artifacts
+# -----------------------------
+
 def build_gap_report(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Build a full gap report per pair with (prev_timestamp, timestamp, gap_days).
+    Full gap report from observed timestamps ONLY (no synthetic rows).
+    One row per observed gap between consecutive available days.
 
-    Notes:
-    - Uses observed timestamps only (does not enforce continuity).
-    - Intended for transparency/auditing, not validation.
+    Columns:
+      pair, prev_timestamp, timestamp, gap_days
     """
     rows = []
     for pair, g in df.groupby("pair", sort=True):
@@ -338,76 +350,92 @@ def build_gap_report(df: pd.DataFrame) -> pd.DataFrame:
         for i in range(1, len(t)):
             gd = gaps.iloc[i]
             if pd.notna(gd):
-                rows.append({
-                    "pair": pair,
-                    "prev_timestamp": t.iloc[i - 1],
-                    "timestamp": t.iloc[i],
-                    "gap_days": float(gd),
-                })
+                rows.append(
+                    {
+                        "pair": pair,
+                        "prev_timestamp": t.iloc[i - 1],
+                        "timestamp": t.iloc[i],
+                        "gap_days": float(gd),
+                    }
+                )
 
     rep = pd.DataFrame(rows)
     if not rep.empty:
         rep = rep.sort_values(["gap_days", "pair", "timestamp"], ascending=[False, True, True]).reset_index(drop=True)
     return rep
 
-def warn_on_large_gaps(df: pd.DataFrame) -> None:
+
+def build_gap_summary(gap_report: pd.DataFrame) -> pd.DataFrame:
     """
-    Soft diagnostics only (warnings; never fail build):
-    - detect gaps > GAP_WARN_DAYS per pair
-    - print summary + sample rows
+    Pair-level gap summary.
+
+    Definitions:
+    - gap_ratio_gt_1d: fraction of gaps with gap_days > 1
+    - gap_ratio_gt_3d: fraction of gaps with gap_days > 3
     """
-    warnings = []
-    samples = []
+    if gap_report.empty:
+        # Create empty but well-formed frame
+        return pd.DataFrame(
+            columns=[
+                "pair",
+                "n_gaps",
+                "n_gaps_gt_1d",
+                "n_gaps_gt_3d",
+                "max_gap_days",
+                "gap_ratio_gt_1d",
+                "gap_ratio_gt_3d",
+            ]
+        )
 
-    for pair, g in df.groupby("pair", sort=True):
-        # Ensure sorted UTC timestamps
-        t = pd.to_datetime(g["timestamp"], utc=True).sort_values().reset_index(drop=True)
-
-        # gaps[i] is the gap between t[i-1] -> t[i], for i>=1
-        gaps = t.diff().dt.total_seconds().div(86400.0)
-
-        # Indices (positions) where gap is "big"
-        big_pos = gaps[gaps > GAP_WARN_DAYS].index.tolist()
-        if not big_pos:
-            continue
-
-        big_vals = gaps.loc[big_pos]
-
-        warnings.append(
+    def _agg(g: pd.DataFrame) -> pd.Series:
+        n = int(len(g))
+        n_gt_1 = int((g["gap_days"] > 1).sum())
+        n_gt_3 = int((g["gap_days"] > GAP_WARN_DAYS).sum())
+        max_gap = float(g["gap_days"].max()) if n else float("nan")
+        return pd.Series(
             {
-                "pair": pair,
-                "n_gaps_gt_3d": int(len(big_pos)),
-                "max_gap_days": float(big_vals.max()),
+                "n_gaps": n,
+                "n_gaps_gt_1d": n_gt_1,
+                "n_gaps_gt_3d": n_gt_3,
+                "max_gap_days": max_gap,
+                "gap_ratio_gt_1d": float(n_gt_1 / n) if n else float("nan"),
+                "gap_ratio_gt_3d": float(n_gt_3 / n) if n else float("nan"),
             }
         )
 
-        # Sample a few gap positions safely
-        for pos in big_pos[:GAP_SAMPLE_ROWS]:
-            # pos is the "current" timestamp position in t
-            prev_ts = t.iloc[pos - 1] if pos - 1 >= 0 else pd.NaT
-            curr_ts = t.iloc[pos]
-            gap_days = float(gaps.iloc[pos])
-            samples.append(
-                {
-                    "pair": pair,
-                    "prev_timestamp": str(prev_ts),
-                    "timestamp": str(curr_ts),
-                    "gap_days": gap_days,
-                }
-            )
+    summary = gap_report.groupby("pair", as_index=False).apply(_agg)
+    # pandas groupby.apply can introduce weird indexes; normalize
+    summary = summary.reset_index(drop=True)
+    summary = summary.sort_values(["max_gap_days", "pair"], ascending=[False, True]).reset_index(drop=True)
+    return summary
 
-    if warnings:
-        warn_df = pd.DataFrame(warnings).sort_values(
-            ["n_gaps_gt_3d", "max_gap_days"], ascending=False
-        )
-        print(f"\n[WARN] Detected gaps > {GAP_WARN_DAYS} days (diagnostics only; not failing):")
-        print(warn_df.to_string(index=False))
 
-        if samples:
-            print("\nSample gap rows:")
-            print(pd.DataFrame(samples).head(GAP_SAMPLE_ROWS).to_string(index=False))
-    else:
-        print(f"\nGap diagnostics: no gaps > {GAP_WARN_DAYS} days detected.")
+def print_gap_summary(summary: pd.DataFrame) -> None:
+    if summary.empty:
+        print("\nGap summary: no gaps found (unexpected for FX daily, but possible).")
+        return
+
+    # Print a compact table. Ratios as percentages for readability.
+    printable = summary.copy()
+    printable["gap_ratio_gt_1d_pct"] = (printable["gap_ratio_gt_1d"] * 100.0).round(3)
+    printable["gap_ratio_gt_3d_pct"] = (printable["gap_ratio_gt_3d"] * 100.0).round(3)
+    printable = printable.drop(columns=["gap_ratio_gt_1d", "gap_ratio_gt_3d"])
+
+    print("\nGap summary per pair (observed vendor gaps; no filling):")
+    print(printable.to_string(index=False))
+
+
+def warn_large_gaps(gap_report: pd.DataFrame) -> None:
+    if gap_report.empty:
+        return
+
+    large = gap_report[gap_report["gap_days"] > GAP_LARGE_DAYS].copy()
+    if large.empty:
+        return
+
+    print(f"\n[WARN] Large gaps detected (> {GAP_LARGE_DAYS} days). These are vendor gaps; pipeline does not fill them.")
+    cols = ["pair", "prev_timestamp", "timestamp", "gap_days"]
+    print(large[cols].head(GAP_SAMPLE_ROWS).to_string(index=False))
 
 
 def save_output(df: pd.DataFrame, output_path: Path) -> None:
@@ -420,37 +448,48 @@ def main() -> None:
     p.add_argument("--processed-dir", type=Path, default=PROCESSED_DIR_DEFAULT)
     p.add_argument("--output", type=Path, default=OUTPUT_PATH_DEFAULT)
     p.add_argument("--data-source", type=str, default=DATA_SOURCE_DEFAULT)
+
+    # Gap artifacts
+    p.add_argument("--gap-report", type=Path, default=GAP_REPORT_PATH_DEFAULT)
+    p.add_argument("--gap-summary", type=Path, default=GAP_SUMMARY_PATH_DEFAULT)
     args = p.parse_args()
 
-    # 1) Load input prices (D1)
+    # 1) Load observed vendor data (no filling)
     prices = load_data(args.processed_dir)
 
-    # 2) Optional: gap transparency on INPUT (non-failing)
-    gap_report_prices = build_gap_report(prices)
-    big_prices = gap_report_prices[gap_report_prices["gap_days"] > 10]
-    if not big_prices.empty:
-        print("\nTop gaps > 10 days in input prices:")
-        print(big_prices.head(20).to_string(index=False))
+    # 2) Gap diagnostics from input (first-class research artifacts)
+    gap_report = build_gap_report(prices)
+    ensure_parent_dir(args.gap_report)
+    gap_report.to_csv(args.gap_report, index=False)
+    print(f"Saved gap report: {args.gap_report}")
 
-    # 3) Compute regimes (authoritative detector)
+    gap_summary = build_gap_summary(gap_report)
+    print_gap_summary(gap_summary)
+
+    # Save optional-but-recommended gap summary artifact (first-class)
+    ensure_parent_dir(args.gap_summary)
+    gap_summary.to_csv(args.gap_summary, index=False)
+    print(f"Saved gap summary: {args.gap_summary}")
+
+    # Highlight large gaps (warn only)
+    warn_large_gaps(gap_report)
+
+    # 3) Compute regimes
     regimes = compute_regimes(prices)
-
-    # 4) Attach metadata -> final artifact DF
     out = attach_metadata(regimes, data_source=args.data_source)
 
-    # 5) Validate + diagnostics (HARD then SOFT)
-    print("timestamp dtype:", out["timestamp"].dtype)
-    validate_output(out)        # HARD checks
-    print_coverage_summary(out) # INFO
-    warn_on_large_gaps(out)     # WARN only
+    # 4) Hard validations + coverage
+    validate_output(out)
+    print_coverage_summary(out)
 
-    # 6) Save
+    # 5) Save parquet
     out = out.sort_values(["pair", "timestamp"], kind="mergesort").reset_index(drop=True)
     save_output(out, args.output)
 
     print(f"\nWrote: {args.output}  rows={len(out):,}")
     print(f"detector_id={DETECTOR_ID} detector_name={DETECTOR_NAME} config_version={CONFIG_VERSION}")
     print(f"config_hash={out['config_hash'].iloc[0]} build_timestamp={out['build_timestamp'].iloc[0]}")
+
 
 if __name__ == "__main__":
     main()
