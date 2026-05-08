@@ -164,7 +164,7 @@ def load_dl_surface(
 
     try:
         cube = pd.read_parquet(cube_path)
-    except Exception as exc:  # noqa: BLE001
+    except (OSError, ValueError, RuntimeError) as exc:
         return _handle_error(
             f"Failed to read DL signal cube {cube_path}: {exc}", strict
         )

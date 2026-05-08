@@ -57,8 +57,11 @@ def _check(name: str, fn) -> bool:
         fn()
         _results.append((name, _PASS, ""))
         return True
-    except Exception as exc:  # noqa: BLE001
+    except AssertionError as exc:
         _results.append((name, _FAIL, str(exc)))
+        return False
+    except Exception as exc:  # noqa: BLE001 — catch unexpected errors in test runner
+        _results.append((name, _FAIL, f"{type(exc).__name__}: {exc}"))
         return False
 
 

@@ -11,6 +11,7 @@ from features.assembler import assemble_features, attach_dl_signals
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(BASE_DIR)  # features/ -> repo root
 
 INPUT_PATH = os.path.abspath(
     os.path.join(
@@ -146,6 +147,13 @@ def run_walk_forward(df, feature_groups, target_col):
 # DL signal integration helpers
 # --------------------------------------------------
 
+def _ensure_repo_root_on_path() -> None:
+    """Ensure the repo root is on sys.path so the ``src`` package is importable."""
+    import sys
+    if _REPO_ROOT not in sys.path:
+        sys.path.insert(0, _REPO_ROOT)
+
+
 def _maybe_attach_dl_signals(df: pd.DataFrame) -> pd.DataFrame:
     """
     Load and attach DL surface signals when ``DL_SIGNALS_ENABLED=True``.
@@ -154,14 +162,7 @@ def _maybe_attach_dl_signals(df: pd.DataFrame) -> pd.DataFrame:
     On any loading failure the function warns and returns *df* unchanged so
     the existing pipeline is never blocked.
     """
-    import sys
-    import os
-
-    # Ensure repo root is on sys.path so 'src' package is importable when
-    # this file is run directly (e.g. python features/run_experiments.py)
-    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if _repo_root not in sys.path:
-        sys.path.insert(0, _repo_root)
+    _ensure_repo_root_on_path()
 
     from src.dl_config import DL_SIGNALS_ENABLED, DL_SIGNALS_CUBE_PATH, DL_SIGNAL_SURFACE
     from src.dl_surface_loader import load_dl_surface
@@ -189,12 +190,7 @@ def _build_experiments() -> dict:
     The ``baseline_plus_dl`` variant is excluded when DL signals are
     disabled to avoid spurious NaN-only feature columns in non-DL runs.
     """
-    import sys
-    import os
-
-    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if _repo_root not in sys.path:
-        sys.path.insert(0, _repo_root)
+    _ensure_repo_root_on_path()
 
     try:
         from src.dl_config import DL_SIGNALS_ENABLED
