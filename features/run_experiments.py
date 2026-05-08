@@ -5,12 +5,13 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 
 from features.experiments import EXPERIMENTS
-from features.assembler import assemble_features
+from features.assembler import assemble_features, attach_dl_signals
 
 
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(BASE_DIR)  # features/ -> repo root
 
 INPUT_PATH = os.path.abspath(
     os.path.join(
@@ -143,6 +144,65 @@ def run_walk_forward(df, feature_groups, target_col):
     return pd.DataFrame(results)
 
 # --------------------------------------------------
+# DL signal integration helpers
+# --------------------------------------------------
+
+def _ensure_repo_root_on_path() -> None:
+    """Ensure the repo root is on sys.path so the ``src`` package is importable."""
+    import sys
+    if _REPO_ROOT not in sys.path:
+        sys.path.insert(0, _REPO_ROOT)
+
+
+def _maybe_attach_dl_signals(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Load and attach DL surface signals when ``DL_SIGNALS_ENABLED=True``.
+
+    Returns *df* unchanged (default) when DL signals are disabled.
+    On any loading failure the function warns and returns *df* unchanged so
+    the existing pipeline is never blocked.
+    """
+    _ensure_repo_root_on_path()
+
+    from src.dl_config import DL_SIGNALS_ENABLED, DL_SIGNALS_CUBE_PATH, DL_SIGNAL_SURFACE
+    from src.dl_surface_loader import load_dl_surface
+
+    if not DL_SIGNALS_ENABLED:
+        return df
+
+    print(f"Loading DL signals from: {DL_SIGNALS_CUBE_PATH}")
+    surface_df = load_dl_surface(DL_SIGNALS_CUBE_PATH, DL_SIGNAL_SURFACE, strict=False)
+
+    if surface_df.empty:
+        print("  [warn] DL surface is empty; continuing without DL signals.")
+        return df
+
+    df = attach_dl_signals(df, surface_df)
+    n_matched = int(df["dl_signal_strength"].notna().sum())
+    print(f"  DL signals attached: {n_matched:,} rows with signal data.")
+    return df
+
+
+def _build_experiments() -> dict:
+    """
+    Return the experiment dict for this run.
+
+    The ``baseline_plus_dl`` variant is excluded when DL signals are
+    disabled to avoid spurious NaN-only feature columns in non-DL runs.
+    """
+    _ensure_repo_root_on_path()
+
+    try:
+        from src.dl_config import DL_SIGNALS_ENABLED
+    except ImportError:
+        DL_SIGNALS_ENABLED = False
+
+    experiments = dict(EXPERIMENTS)
+    if not DL_SIGNALS_ENABLED:
+        experiments.pop("baseline_plus_dl", None)
+    return experiments
+
+# --------------------------------------------------
 # Main experiment loop
 # --------------------------------------------------
 
@@ -158,9 +218,14 @@ def run():
 
     df = add_behavioral_signal(df)
 
+    # Optionally attach DL surface signals (no-op when DL_SIGNALS_ENABLED=False)
+    df = _maybe_attach_dl_signals(df)
+
+    experiments = _build_experiments()
+
     print("Running walk-forward experiments...")
 
-    wf_results = run_walk_forward(df, EXPERIMENTS, TARGET)
+    wf_results = run_walk_forward(df, experiments, TARGET)
 
     print("\nWalk-forward results:")
     print(wf_results)
