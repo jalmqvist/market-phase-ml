@@ -1,3 +1,211 @@
+# DL surface integration (v1)
+
+This document describes how `market-phase-ml` consumes **row-level DL prediction artifacts** produced by the upstream repo `market-sentiment-ml`.
+
+Key design principles:
+
+- Integration is **artifact-based**, not code-based.
+- `market-phase-ml` remains fully functional when DL artifacts are missing (opt-in).
+- The interface is a **semantic surface selector** (stable) rather than training internals (unstable).
+- No implicit aggregation/ensembling in v1: one selector → one surface → one interpretation.
+
+---
+
+## Overview: what is being consumed?
+
+`market-sentiment-ml` produces per-run artifacts under:
+
+- `market-sentiment-ml/data/output/dl_predictions/<run_id>.parquet`
+- `market-sentiment-ml/data/output/dl_predictions/<run_id>.manifest.json`
+
+Each parquet contains a timestamped time series of DL predictions at H1 resolution.
+
+In v1, `market-phase-ml` consumes **one per-run parquet** (one surface) and joins it into the feature frame.
+
+(Consolidation into a multi-surface cube is a later step; v1 does not require a cube.)
+
+---
+
+## Recommended local layout
+
+Clone the repos side-by-side:
+
+```text
+~/projects/
+  market-sentiment-ml/
+  market-phase-ml/
+```
+
+This allows `market-phase-ml` to reference DL artifacts by relative path.
+
+---
+
+## DL surface identity (stable interface)
+
+A **surface** is the operational identity of a DL signal stream:
+
+- `model`
+- `target_horizon` (**number of bars**; numeric)
+- `feature_set`
+- `dl_regime` (producer taxonomy: `HVTF | LVTF | HVR | LVR`)
+
+This is treated as *signal identity*, not provenance.
+
+### V1 requirement: `dl_regime` is required
+
+In v1, `dl_regime` must be explicitly specified. Do **not** allow `dl_regime=None` to mean “all regimes”.
+
+Reason: the DL work is regime-conditional and mixing regimes implicitly creates ambiguous semantics.
+
+---
+
+## Configuration (v1)
+
+### Minimal recommended config shape
+
+Configure one surface selection dict:
+
+```python
+DL_SIGNAL_SURFACE = {
+    "model": "mlp",
+    "target_horizon": 24,      # bars
+    "feature_set": "price_trend",
+    "dl_regime": "HVTF",
+}
+```
+
+Enable integration and point at a per-run parquet artifact:
+
+```python
+DL_SIGNALS_ENABLED = True
+
+DL_PREDICTION_ARTIFACT_PATH = (
+  "../market-sentiment-ml/data/output/dl_predictions/"
+  "mlp__HVTF__24__price_trend__20260510T182643Z.parquet"
+)
+```
+
+Notes:
+
+- `target_horizon` is **bars**, not “hours”. This keeps the identity frequency-agnostic for future non-H1 exports.
+- The artifact path can be absolute or relative. Relative paths are recommended for side-by-side repo usage.
+
+---
+
+## Expected parquet schema (what the loader requires)
+
+A per-run parquet must contain these columns:
+
+- `pair` (lowercase `xxx-yyy`)
+- `entry_time` (tz-naive UTC; H1-aligned)
+- `pred_prob_up` (float `[0,1]`)
+- `signal_strength` (float `2*pred_prob_up - 1`, range `[-1,+1]`)
+- identity columns:
+  - `model`, `target_horizon` (bars), `feature_set`, `dl_regime`
+
+Optional columns (if present, can be passed through):
+- `confidence`
+- `pred_direction`
+- `prediction_timestamp`
+
+---
+
+## Loader behavior (contract)
+
+A correct v1 loader should:
+
+1. **Fail closed by default**
+   - If `DL_SIGNALS_ENABLED` is false: return empty DF.
+   - If enabled but artifact path missing: warn and return empty DF (or raise in strict mode).
+
+2. **Validate invariants**
+   - required columns exist
+   - `entry_time` tz-naive UTC and H1-aligned
+   - `pair` normalized `xxx-yyy`
+   - no duplicate `(pair, entry_time)`
+   - monotonic `entry_time` per `pair`
+   - `pred_prob_up ∈ [0,1]`, `signal_strength ∈ [-1,+1]`
+
+3. **Surface selection is exact-match**
+   - The loaded parquet should match the configured `DL_SIGNAL_SURFACE` on:
+     - `model`, `target_horizon`, `feature_set`, `dl_regime`
+   - If the parquet includes identity columns that conflict with the config, raise (strict) or warn+empty (non-strict).
+
+4. **Normalize to MPML timestamp convention**
+   - rename `entry_time` → `timestamp` internally
+
+5. **Join into the feature frame**
+   - left-join DL columns onto the MPML base frame keyed by `(pair, timestamp)`
+   - keep missing values explicit (NaN) unless you deliberately define a fill policy
+
+### Recommended feature column names in MPML
+
+To avoid collisions and to keep provenance clear:
+
+- `dl_pred_prob_up`
+- `dl_signal_strength`
+- optional:
+  - `dl_confidence`
+  - `dl_pred_direction`
+  - `dl_prediction_timestamp`
+
+---
+
+## Regime taxonomy notes (producer vs consumer)
+
+Producer (`market-sentiment-ml`) DL regimes:
+
+- `HVTF`, `LVTF`, `HVR`, `LVR`
+
+`market-phase-ml` uses a different naming convention for mean-reversion regimes.
+
+If you need a mapped column for internal comparisons, do it explicitly and keep the producer regime intact:
+
+- `HVR` → `HVMR`
+- `LVR` → `LVMR`
+- `HVTF` → `HVTF`
+- `LVTF` → `LVTF`
+
+Recommended: add a separate column such as `mpml_regime_equiv` rather than overwriting `dl_regime`.
+
+---
+
+## Future extensions (explicit, out of scope for v1)
+
+These are intentionally **not** part of v1 surface selection:
+
+- `dl_regime=None` meaning “all regimes”
+- regime blending / adaptive mixing
+- calibration systems (isotonic/Platt/etc)
+- multi-surface ensembles
+
+When those are introduced, they should be explicit orchestration, e.g.:
+
+```python
+surface_a = load_dl_surface(...)
+surface_b = load_dl_surface(...)
+ensemble = combine_surfaces([surface_a, surface_b], method="...")
+```
+
+rather than overloading the selector semantics.
+
+---
+
+## Troubleshooting
+
+### Artifact exists but loader returns empty
+Common causes:
+
+- `pair` format mismatch (must be `xxx-yyy` lowercase)
+- `entry_time` timezone or alignment issues (must be tz-naive UTC, H1-aligned)
+- duplicates on `(pair, entry_time)` in the artifact
+- `DL_SIGNAL_SURFACE` does not exactly match the parquet’s identity columns
+
+### Artifact path is stale
+Since per-run artifacts are per run, you must point to the correct `<run_id>.parquet` produced by your most recent DL run, or define a small “latest artifact resolver” utility (optional and out of scope for v1).
+
+---
+
 # DL Surface Integration
 
 This document describes how `market-phase-ml` consumes the consolidated DL
