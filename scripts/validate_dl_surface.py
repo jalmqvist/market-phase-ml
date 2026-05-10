@@ -317,6 +317,13 @@ def check_resolve_artifact_path_directory_empty(tmp_path: Path):
     assert resolved is None
 
 
+def check_resolve_artifact_path_missing_file(tmp_path: Path):
+    """Resolver returns None for a missing parquet file path."""
+    missing = tmp_path / "missing.parquet"
+    resolved = resolve_dl_prediction_artifact_path(missing)
+    assert resolved is None
+
+
 # ---------------------------------------------------------------------------
 # Real artifact check (optional)
 # ---------------------------------------------------------------------------
@@ -365,6 +372,7 @@ def run_checks(cube_path: Path | None, surface: dict) -> int:
         ("resolve_artifact_file", check_resolve_artifact_path_file, [tmp]),
         ("resolve_artifact_latest", check_resolve_artifact_path_directory_latest, [tmp]),
         ("resolve_artifact_empty", check_resolve_artifact_path_directory_empty, [tmp]),
+        ("resolve_artifact_missing_file", check_resolve_artifact_path_missing_file, [tmp]),
     ]
 
     for name, fn, args in synthetic:

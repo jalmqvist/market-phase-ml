@@ -61,7 +61,8 @@ def resolve_dl_prediction_artifact_path(path: Path | None = None) -> Path | None
     Resolve the configured DL parquet artifact path.
 
     If the path points to a directory, pick the newest ``*.parquet`` file.
-    Returns ``None`` when no parquet exists in that directory.
+    Returns ``None`` when no parquet exists in that directory or when a file
+    path is provided but does not exist.
     """
     target = Path(path) if path is not None else DL_PREDICTION_ARTIFACT_PATH
     if target.is_dir():
@@ -71,7 +72,7 @@ def resolve_dl_prediction_artifact_path(path: Path | None = None) -> Path | None
             reverse=True,
         )
         return parquet_files[0] if parquet_files else None
-    return target
+    return target if target.exists() else None
 
 # ---------------------------------------------------------------------------
 # Surface selection dict
