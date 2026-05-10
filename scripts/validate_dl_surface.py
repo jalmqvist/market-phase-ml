@@ -50,6 +50,8 @@ from src.dl_config import resolve_dl_prediction_artifact_path  # noqa: E402
 
 _PASS = "PASS"
 _FAIL = "FAIL"
+_OLD_MTIME = 1
+_NEW_MTIME = 2
 
 _results: list[tuple[str, str, str]] = []  # (name, status, detail)
 
@@ -303,8 +305,8 @@ def check_resolve_artifact_path_directory_latest(tmp_path: Path) -> None:
     new_f = test_dir / "new.parquet"
     _make_cube(n_rows=1).to_parquet(old_f, index=False)
     _make_cube(n_rows=1).to_parquet(new_f, index=False)
-    os.utime(old_f, (1, 1))
-    os.utime(new_f, (2, 2))
+    os.utime(old_f, (_OLD_MTIME, _OLD_MTIME))
+    os.utime(new_f, (_NEW_MTIME, _NEW_MTIME))
     resolved = resolve_dl_prediction_artifact_path(test_dir)
     assert resolved == new_f
 

@@ -77,12 +77,10 @@ def resolve_dl_prediction_artifact_path(path: Path | None = None) -> Path | None
     """
     target = Path(path) if path is not None else DL_PREDICTION_ARTIFACT_PATH
     if target.is_dir():
-        parquet_files = sorted(
-            target.glob("*.parquet"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-        return parquet_files[0] if parquet_files else None
+        parquet_files = list(target.glob("*.parquet"))
+        if not parquet_files:
+            return None
+        return max(parquet_files, key=lambda p: p.stat().st_mtime)
     return target if target.exists() else None
 
 # ---------------------------------------------------------------------------
