@@ -285,7 +285,7 @@ def check_no_surface_match_returns_empty(tmp_path: Path):
     assert df.empty, "Expected empty DF when surface not in cube"
 
 
-def check_resolve_artifact_path_file(tmp_path: Path):
+def check_resolve_artifact_path_file(tmp_path: Path) -> None:
     """Resolver returns file path unchanged when given a parquet file."""
     test_dir = tmp_path / "resolver_file"
     test_dir.mkdir(parents=True, exist_ok=True)
@@ -295,7 +295,7 @@ def check_resolve_artifact_path_file(tmp_path: Path):
     assert resolved == f
 
 
-def check_resolve_artifact_path_directory_latest(tmp_path: Path):
+def check_resolve_artifact_path_directory_latest(tmp_path: Path) -> None:
     """Resolver picks the newest parquet when a directory is provided."""
     test_dir = tmp_path / "resolver_latest"
     test_dir.mkdir(parents=True, exist_ok=True)
@@ -309,7 +309,7 @@ def check_resolve_artifact_path_directory_latest(tmp_path: Path):
     assert resolved == new_f
 
 
-def check_resolve_artifact_path_directory_empty(tmp_path: Path):
+def check_resolve_artifact_path_directory_empty(tmp_path: Path) -> None:
     """Resolver returns None for a directory with no parquet artifacts."""
     test_dir = tmp_path / "resolver_empty"
     test_dir.mkdir(parents=True, exist_ok=True)
@@ -317,7 +317,7 @@ def check_resolve_artifact_path_directory_empty(tmp_path: Path):
     assert resolved is None
 
 
-def check_resolve_artifact_path_missing_file(tmp_path: Path):
+def check_resolve_artifact_path_missing_file(tmp_path: Path) -> None:
     """Resolver returns None for a missing parquet file path."""
     missing = tmp_path / "missing.parquet"
     resolved = resolve_dl_prediction_artifact_path(missing)
