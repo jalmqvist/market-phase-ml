@@ -60,6 +60,12 @@ def resolve_dl_prediction_artifact_path(path: Path | None = None) -> Path | None
     """
     Resolve the configured DL parquet artifact path.
 
+    Parameters
+    ----------
+    path : Path | None, default None
+        Optional override path. When ``None``, uses
+        ``DL_PREDICTION_ARTIFACT_PATH``.
+
     If the path points to a directory, pick the newest ``*.parquet`` file.
     Returns ``None`` when no parquet exists in that directory or when a file
     path is provided but does not exist.
