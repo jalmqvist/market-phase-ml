@@ -237,14 +237,17 @@ workspace/
   market-sentiment-ml/   ← sibling repo
 ```
 
-The default cube path resolves to:
+The default artifact path resolves to:
 
 ```
-../market-sentiment-ml/data/output/dl_signals/dl_signals_h1_v1.parquet
+../market-sentiment-ml/data/output/dl_predictions/
 ```
 
-You can override the path via the `DL_SIGNALS_CUBE_PATH` environment variable
-or by editing `src/dl_config.py`.
+By default, `market-phase-ml` resolves this directory to the newest
+`*.parquet` file (single-surface per-run export).
+
+You can override the path via `DL_PREDICTION_ARTIFACT_PATH`
+(or legacy `DL_SIGNALS_CUBE_PATH`) in `src/dl_config.py`.
 
 ---
 
@@ -292,7 +295,7 @@ market-sentiment-ml/data/output/dl_signals/
 ```bash
 export DL_SIGNALS_ENABLED=true
 # Optional overrides (defaults shown):
-export DL_SIGNALS_CUBE_PATH=../market-sentiment-ml/data/output/dl_signals/dl_signals_h1_v1.parquet
+export DL_PREDICTION_ARTIFACT_PATH=../market-sentiment-ml/data/output/dl_predictions/
 export DL_SURFACE_MODEL=lstm
 export DL_SURFACE_TARGET_HORIZON=24
 export DL_SURFACE_FEATURE_SET=price_trend
@@ -389,11 +392,17 @@ python scripts/validate_dl_surface.py \
 ```python
 from pathlib import Path
 from src.dl_surface_loader import load_dl_surface, empty_dl_surface_df
-from src.dl_config import DL_SIGNALS_ENABLED, DL_SIGNALS_CUBE_PATH, DL_SIGNAL_SURFACE
+from src.dl_config import (
+    DL_SIGNALS_ENABLED,
+    DL_PREDICTION_ARTIFACT_PATH,
+    DL_SIGNAL_SURFACE,
+    resolve_dl_prediction_artifact_path,
+)
 
 # Load a surface (returns empty DF on failure when strict=False)
+artifact_path = resolve_dl_prediction_artifact_path(DL_PREDICTION_ARTIFACT_PATH)
 surface_df = load_dl_surface(
-    cube_path=DL_SIGNALS_CUBE_PATH,
+    cube_path=artifact_path,
     surface=DL_SIGNAL_SURFACE,
     strict=False,   # warn + return empty DF on any failure
 )

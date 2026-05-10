@@ -22,6 +22,7 @@ Exit codes
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import traceback
 from datetime import datetime, timedelta
@@ -41,6 +42,7 @@ from src.dl_surface_loader import (  # noqa: E402
     empty_dl_surface_df,
     load_dl_surface,
 )
+from src.dl_config import resolve_dl_prediction_artifact_path  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -283,6 +285,38 @@ def check_no_surface_match_returns_empty(tmp_path: Path):
     assert df.empty, "Expected empty DF when surface not in cube"
 
 
+def check_resolve_artifact_path_file(tmp_path: Path):
+    """Resolver returns file path unchanged when given a parquet file."""
+    test_dir = tmp_path / "resolver_file"
+    test_dir.mkdir(parents=True, exist_ok=True)
+    f = test_dir / "single_surface.parquet"
+    _make_cube(n_rows=1).to_parquet(f, index=False)
+    resolved = resolve_dl_prediction_artifact_path(f)
+    assert resolved == f
+
+
+def check_resolve_artifact_path_directory_latest(tmp_path: Path):
+    """Resolver picks the newest parquet when a directory is provided."""
+    test_dir = tmp_path / "resolver_latest"
+    test_dir.mkdir(parents=True, exist_ok=True)
+    old_f = test_dir / "old.parquet"
+    new_f = test_dir / "new.parquet"
+    _make_cube(n_rows=1).to_parquet(old_f, index=False)
+    _make_cube(n_rows=1).to_parquet(new_f, index=False)
+    os.utime(old_f, (1, 1))
+    os.utime(new_f, (2, 2))
+    resolved = resolve_dl_prediction_artifact_path(test_dir)
+    assert resolved == new_f
+
+
+def check_resolve_artifact_path_directory_empty(tmp_path: Path):
+    """Resolver returns None for a directory with no parquet artifacts."""
+    test_dir = tmp_path / "resolver_empty"
+    test_dir.mkdir(parents=True, exist_ok=True)
+    resolved = resolve_dl_prediction_artifact_path(test_dir)
+    assert resolved is None
+
+
 # ---------------------------------------------------------------------------
 # Real artifact check (optional)
 # ---------------------------------------------------------------------------
@@ -328,6 +362,9 @@ def run_checks(cube_path: Path | None, surface: dict) -> int:
         ("mpml_regime_mapping", check_mpml_regime_mapping, [tmp]),
         ("target_horizon_numeric", check_target_horizon_numeric, [tmp]),
         ("no_surface_match", check_no_surface_match_returns_empty, [tmp]),
+        ("resolve_artifact_file", check_resolve_artifact_path_file, [tmp]),
+        ("resolve_artifact_latest", check_resolve_artifact_path_directory_latest, [tmp]),
+        ("resolve_artifact_empty", check_resolve_artifact_path_directory_empty, [tmp]),
     ]
 
     for name, fn, args in synthetic:
