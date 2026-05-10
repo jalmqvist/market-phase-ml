@@ -400,12 +400,15 @@ from src.dl_config import (
 )
 
 # Load a surface (returns empty DF on failure when strict=False)
-artifact_path = resolve_dl_prediction_artifact_path(DL_PREDICTION_ARTIFACT_PATH)
-surface_df = load_dl_surface(
-    cube_path=artifact_path,
-    surface=DL_SIGNAL_SURFACE,
-    strict=False,   # warn + return empty DF on any failure
-)
+artifact_path = resolve_dl_prediction_artifact_path()
+if artifact_path is None:
+    surface_df = empty_dl_surface_df()
+else:
+    surface_df = load_dl_surface(
+        cube_path=artifact_path,
+        surface=DL_SIGNAL_SURFACE,
+        strict=False,   # warn + return empty DF on any failure
+    )
 
 # Safe empty fallback (consistent dtypes, never None)
 empty = empty_dl_surface_df()

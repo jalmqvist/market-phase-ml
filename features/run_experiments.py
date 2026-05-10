@@ -166,7 +166,6 @@ def _maybe_attach_dl_signals(df: pd.DataFrame) -> pd.DataFrame:
 
     from src.dl_config import (
         DL_SIGNALS_ENABLED,
-        DL_PREDICTION_ARTIFACT_PATH,
         DL_SIGNAL_SURFACE,
         resolve_dl_prediction_artifact_path,
     )
@@ -175,7 +174,7 @@ def _maybe_attach_dl_signals(df: pd.DataFrame) -> pd.DataFrame:
     if not DL_SIGNALS_ENABLED:
         return df
 
-    artifact_path = resolve_dl_prediction_artifact_path(DL_PREDICTION_ARTIFACT_PATH)
+    artifact_path = resolve_dl_prediction_artifact_path()
     if artifact_path is None:
         print(
             "  [warn] No DL parquet artifacts found under configured directory; "
