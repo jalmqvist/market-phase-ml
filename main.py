@@ -385,7 +385,6 @@ def _with_mode_tag(path: str, mode_tag: str) -> str:
     root, ext = os.path.splitext(path)
     return f"{root}{mode_tag}{ext}"
 
-
 def attach_dl_features(
     processed_df: pd.DataFrame,
     pair_name: str,
@@ -397,6 +396,10 @@ def attach_dl_features(
 
     Join key: (pair, timestamp_start_of_day), where pair is normalized to
     'xxx-yyy' and timestamp_start_of_day is daily midnight UTC.
+
+    Robustness:
+    - If ALL D1 DL feature columns are fully NaN after join for this pair/surface,
+      drop them and proceed with baseline features (prevents downstream row collapse).
     """
     if artifact_path is None:
         print(f"  [DL] {pair_name}: no DL artifact resolved; skipping attachment.")
@@ -438,14 +441,29 @@ def attach_dl_features(
     original_timestamps = pd.to_datetime(base["_timestamp_original"])
     base["timestamp"] = original_timestamps.dt.normalize()
     base["pair"] = pair_key
+
     if not original_timestamps.is_monotonic_increasing:
         raise AssertionError(f"[DL] {pair_name}: processed timestamps are not monotonic increasing")
     if base.duplicated(subset=["pair", "_timestamp_original"]).any():
         raise AssertionError(f"[DL] {pair_name}: duplicate (pair, timestamp) rows before DL join")
 
+    # Compact overlap/range diagnostic (processed vs DL daily features)
+    try:
+        proc_min = pd.to_datetime(base["_timestamp_original"]).min()
+        proc_max = pd.to_datetime(base["_timestamp_original"]).max()
+        dl_min = pd.to_datetime(daily_pair["trading_day"]).min()
+        dl_max = pd.to_datetime(daily_pair["trading_day"]).max()
+        print(
+            f"  [DL] {pair_name}: processed range: {proc_min.date()} -> {proc_max.date()} | "
+            f"dl range: {dl_min.date()} -> {dl_max.date()}"
+        )
+    except Exception:
+        pass
+
     rows_before_join = len(base)
     daily_pair = daily_pair.rename(columns={"trading_day": "timestamp"})
     join_cols = ["pair", "timestamp", *D1_FEATURE_COLS]
+
     merged = base.merge(
         daily_pair[join_cols],
         on=["pair", "timestamp"],
@@ -461,16 +479,7 @@ def attach_dl_features(
     if merged.duplicated(subset=["pair", "_timestamp_original"]).any():
         raise AssertionError(f"[DL] {pair_name}: duplicate (pair, timestamp) rows after DL join")
 
-    feature_cols = [
-        col for col in merged.columns
-        if col not in PhaseMLExperiment.EXCLUDE_COLS
-        and is_numeric_dtype(merged[col])
-        and not is_bool_dtype(merged[col])
-    ]
-    # Diagnostic only (O(rows*features)): estimate retention after feature-mask filtering.
-    rows_after_mask = int(merged[feature_cols].notna().all(axis=1).sum()) if feature_cols else rows_after_join
-    retention_ratio = (rows_after_mask / rows_after_join) if rows_after_join else np.nan
-
+    # Coverage diagnostics
     print(f"  [DL] {pair_name}: attached DL columns={list(D1_FEATURE_COLS)}")
     for col in D1_FEATURE_COLS:
         nn = merged[col].notna()
@@ -486,6 +495,27 @@ def attach_dl_features(
         else:
             print(f"    [DL] {col}: coverage=0.00% first_non_null=None last_non_null=None")
 
+    # Robustness: if ALL D1 DL feature columns are fully NaN after join, drop them
+    # so we revert to baseline features and avoid eliminating all rows downstream.
+    zero_dl_coverage = all(merged[col].notna().sum() == 0 for col in D1_FEATURE_COLS)
+    if zero_dl_coverage:
+        print(
+            f"  [DL] {pair_name}: zero DL coverage after join; dropping DL feature columns "
+            f"and reverting to baseline features"
+        )
+        merged = merged.drop(columns=list(D1_FEATURE_COLS))
+
+    # Compute retention AFTER any DL-column drop so diagnostics reflect effective feature set
+    feature_cols = [
+        col for col in merged.columns
+        if col not in PhaseMLExperiment.EXCLUDE_COLS
+        and is_numeric_dtype(merged[col])
+        and not is_bool_dtype(merged[col])
+    ]
+    # Diagnostic only (O(rows*features)): estimate retention after feature-mask filtering.
+    rows_after_mask = int(merged[feature_cols].notna().all(axis=1).sum()) if feature_cols else rows_after_join
+    retention_ratio = (rows_after_mask / rows_after_join) if rows_after_join else np.nan
+
     print(f"  [DL] {pair_name}: rows before DL join={rows_before_join}")
     print(f"  [DL] {pair_name}: rows after DL join={rows_after_join}")
     print(f"  [DL] {pair_name}: rows after feature-mask filtering={rows_after_mask}")
@@ -494,7 +524,6 @@ def attach_dl_features(
     out = merged.drop(columns=["pair", "timestamp"]).set_index("_timestamp_original")
     out.index.name = processed_df.index.name
     return out
-
 
 def process_pair(pair_name: str,
                  df: pd.DataFrame,
