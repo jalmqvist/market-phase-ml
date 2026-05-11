@@ -109,35 +109,26 @@ class PhaseMLPredictor:
             verbosity=0
         )
 
-
     def fit_predict(self, df: pd.DataFrame) -> pd.Series:
         """
         Run walk-forward phase prediction on full DataFrame.
 
-        For each bar after the warmup period:
-            1. Train on rolling window of train_window bars
-               (only retrain every retrain_freq bars)
-            2. Predict next bar's phase
-            3. Store prediction
+        Key robustness change vs previous version:
+        - Mask out rows with NaNs BEFORE fitting StandardScaler.
+          This prevents sklearn RuntimeWarnings from StandardScaler.fit() when
+          sparse DL features introduce NaNs in training windows.
 
-        Bars in warmup period fall back to rule-based phase.
-
-        Args:
-            df: Processed DataFrame with features and phase column
-
-        Returns:
-            Series of predicted phase labels, same index as df.
-            Warmup bars contain rule-based phase (fallback).
+        Training/eval semantics otherwise unchanged.
         """
         feature_cols = self._get_feature_cols(df)
-        X            = df[feature_cols].copy()
+        X = df[feature_cols].copy()
 
         # Get phase target — optionally smoothed
-        raw_phase = df['phase'].copy()
+        raw_phase = df["phase"].copy()
         if self.smooth_labels:
             train_phase = smooth_phase_labels(
                 raw_phase,
-                confirmation_bars=self.confirmation_bars
+                confirmation_bars=self.confirmation_bars,
             )
         else:
             train_phase = raw_phase.copy()
@@ -147,10 +138,10 @@ class PhaseMLPredictor:
 
         # Fixed global mapping — avoids LabelEncoder gap bug
         PHASE_MAP = {
-            'HV_Ranging': 0,
-            'HV_Trend': 1,
-            'LV_Ranging': 2,
-            'LV_Trend': 3
+            "HV_Ranging": 0,
+            "HV_Trend": 1,
+            "LV_Ranging": 2,
+            "LV_Trend": 3,
         }
         PHASE_MAP_INV = {v: k for k, v in PHASE_MAP.items()}
 
@@ -163,17 +154,18 @@ class PhaseMLPredictor:
         scaler = None
         last_trained = None
 
-        print(f'  Walk-forward prediction: '
-              f'{n_bars} bars, '
-              f'warmup={self.train_window}, '
-              f'retrain_freq={self.retrain_freq}')
+        print(
+            f"  Walk-forward prediction: "
+            f"{n_bars} bars, "
+            f"warmup={self.train_window}, "
+            f"retrain_freq={self.retrain_freq}"
+        )
 
         for i in range(self.train_window, n_bars - 1):
-
             should_train = (
-                    model is None or
-                    last_trained is None or
-                    (i - last_trained) >= self.retrain_freq
+                    model is None
+                    or last_trained is None
+                    or (i - last_trained) >= self.retrain_freq
             )
 
             if should_train:
@@ -183,38 +175,42 @@ class PhaseMLPredictor:
                 X_train_raw = X.iloc[train_start:train_end]
                 y_train = y_encoded.iloc[train_start:train_end]
 
+                # IMPORTANT: mask before scaling to avoid StandardScaler warnings
+                raw_mask = X_train_raw.notna().all(axis=1) & y_train.notna()
+                X_train_raw = X_train_raw.loc[raw_mask]
+                y_train = y_train.loc[raw_mask]
+
+                if len(X_train_raw) < 50:
+                    continue
+
                 scaler = StandardScaler()
                 scaler.fit(X_train_raw)
+
                 X_train = pd.DataFrame(
                     scaler.transform(X_train_raw),
                     index=X_train_raw.index,
-                    columns=X_train_raw.columns
+                    columns=X_train_raw.columns,
                 )
 
-                mask = X_train.notna().all(axis=1) & y_train.notna()
-                X_train = X_train[mask]
-                y_train = y_train[mask]
-
-                if len(X_train) < 50:
-                    continue
-
-                y_train_int = y_train.dropna().astype(int)
+                # y_train already masked/aligned; cast to int
+                y_train_int = y_train.astype(int)
                 if len(y_train_int) == 0:
                     continue
 
                 # Ensure all 4 classes are represented
                 unique_classes = set(y_train_int.unique())
-                missing_classes = set([0, 1, 2, 3]) - unique_classes
+                missing_classes = {0, 1, 2, 3} - unique_classes
 
                 if missing_classes:
                     for missing_class in missing_classes:
                         X_train = pd.concat([X_train, X_train.iloc[[-1]]], ignore_index=False)
-                        y_train_int = pd.concat([
-                            y_train_int,
-                            pd.Series([missing_class], index=[X_train.index[-1]])
-                        ])
+                        y_train_int = pd.concat(
+                            [
+                                y_train_int,
+                                pd.Series([missing_class], index=[X_train.index[-1]]),
+                            ]
+                        )
 
-                # Build and train model
                 model = self._build_model()
                 model.fit(X_train, y_train_int)
 
@@ -222,21 +218,27 @@ class PhaseMLPredictor:
 
             # Predict current bar's next phase
             if model is not None and scaler is not None:
-                X_pred_raw = X.iloc[i:i + 1]
+                X_pred_raw = X.iloc[i: i + 1]
+
+                # Skip prediction if the raw row is incomplete (avoids propagating NaNs)
+                if not X_pred_raw.notna().all(axis=1).iloc[0]:
+                    continue
+
                 X_pred = pd.DataFrame(
                     scaler.transform(X_pred_raw),
                     index=X_pred_raw.index,
-                    columns=X_pred_raw.columns
+                    columns=X_pred_raw.columns,
                 )
 
-                if X_pred.notna().all(axis=1).iloc[0]:
-                    predicted_encoded = model.predict(X_pred)
-                    predicted = PHASE_MAP_INV[int(predicted_encoded[0])]
-                    predictions.iat[i] = predicted
+                predicted_encoded = model.predict(X_pred)
+                predicted = PHASE_MAP_INV[int(predicted_encoded[0])]
+                predictions.iat[i] = predicted
 
-        print(f'  ✓ Predictions generated for '
-              f'{n_bars - self.train_window - 1} bars '
-              f'({self.train_window} warmup bars use rule-based fallback)')
+        print(
+            f"  ✓ Predictions generated for "
+            f"{n_bars - self.train_window - 1} bars "
+            f"({self.train_window} warmup bars use rule-based fallback)"
+        )
 
         return predictions
 

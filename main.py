@@ -69,6 +69,9 @@ DL_SIGNAL_SURFACE = {
     "dl_regime": "LVTF",
 }
 
+# DL debug verbosity (controls noisy per-pair diagnostics)
+DL_DEBUG_VERBOSE = False
+
 # Expensive sweeps (disable by default)
 RUN_TAU_SWEEP = False
 RUN_POLICY_SWEEP = False
@@ -400,18 +403,32 @@ def attach_dl_features(
     Robustness:
     - If ALL D1 DL feature columns are fully NaN after join for this pair/surface,
       drop them and proceed with baseline features (prevents downstream row collapse).
+
+    Logging:
+    - When DL_DEBUG_VERBOSE is False, keep only compact/high-signal logs.
+    - When True, emit detailed per-column coverage and retention diagnostics.
     """
+    # ------------------------------------------------------------------
+    # Early exits / safety assertions
+    # ------------------------------------------------------------------
     if artifact_path is None:
         print(f"  [DL] {pair_name}: no DL artifact resolved; skipping attachment.")
         return processed_df
+
     if not processed_df.index.is_unique:
-        raise AssertionError(f"[DL] {pair_name}: processed_df index must be unique before DL join")
+        raise AssertionError(
+            f"[DL] {pair_name}: processed_df index must be unique before DL join"
+        )
+
     existing_d1_cols = [col for col in D1_FEATURE_COLS if col in processed_df.columns]
     if existing_d1_cols:
         raise AssertionError(
             f"[DL] {pair_name}: D1 DL feature columns already present before join: {existing_d1_cols}"
         )
 
+    # ------------------------------------------------------------------
+    # Load surface + aggregate to D1 daily features (existing infra)
+    # ------------------------------------------------------------------
     surface_df = load_dl_surface(cube_path=artifact_path, surface=surface, strict=False)
     if surface_df.empty:
         print(f"  [DL] {pair_name}: surface not available in artifact; skipping attachment.")
@@ -432,11 +449,15 @@ def attach_dl_features(
         print(f"  [DL] {pair_name}: no D1 DL rows for pair key '{pair_key}'; skipping attachment.")
         return processed_df
 
+    # Integrity assertions on daily features
     if not daily_pair["trading_day"].is_monotonic_increasing:
         raise AssertionError(f"[DL] {pair_name}: trading_day not monotonic increasing")
     if daily_pair.duplicated(subset=["pair", "trading_day"]).any():
         raise AssertionError(f"[DL] {pair_name}: duplicate (pair, trading_day) rows in D1 features")
 
+    # ------------------------------------------------------------------
+    # Build join frame (processed_df is D1 indexed by timestamp)
+    # ------------------------------------------------------------------
     base = processed_df.copy().reset_index(names="_timestamp_original")
     original_timestamps = pd.to_datetime(base["_timestamp_original"])
     base["timestamp"] = original_timestamps.dt.normalize()
@@ -447,7 +468,7 @@ def attach_dl_features(
     if base.duplicated(subset=["pair", "_timestamp_original"]).any():
         raise AssertionError(f"[DL] {pair_name}: duplicate (pair, timestamp) rows before DL join")
 
-    # Compact overlap/range diagnostic (processed vs DL daily features)
+    # Compact overlap/range diagnostic (always shown; high signal)
     try:
         proc_min = pd.to_datetime(base["_timestamp_original"]).min()
         proc_max = pd.to_datetime(base["_timestamp_original"]).max()
@@ -460,7 +481,11 @@ def attach_dl_features(
     except Exception:
         pass
 
+    # ------------------------------------------------------------------
+    # Left join daily features
+    # ------------------------------------------------------------------
     rows_before_join = len(base)
+
     daily_pair = daily_pair.rename(columns={"trading_day": "timestamp"})
     join_cols = ["pair", "timestamp", *D1_FEATURE_COLS]
 
@@ -479,48 +504,67 @@ def attach_dl_features(
     if merged.duplicated(subset=["pair", "_timestamp_original"]).any():
         raise AssertionError(f"[DL] {pair_name}: duplicate (pair, timestamp) rows after DL join")
 
-    # Coverage diagnostics
-    print(f"  [DL] {pair_name}: attached DL columns={list(D1_FEATURE_COLS)}")
-    for col in D1_FEATURE_COLS:
-        nn = merged[col].notna()
-        coverage = float(nn.mean() * 100.0) if len(nn) else 0.0
-        if nn.any():
-            ts_non_null = merged.loc[nn, "_timestamp_original"]
-            first_ts = ts_non_null.min()
-            last_ts = ts_non_null.max()
-            print(
-                f"    [DL] {col}: coverage={coverage:.2f}% "
-                f"first_non_null={first_ts} last_non_null={last_ts}"
-            )
-        else:
-            print(f"    [DL] {col}: coverage=0.00% first_non_null=None last_non_null=None")
-
-    # Robustness: if ALL D1 DL feature columns are fully NaN after join, drop them
-    # so we revert to baseline features and avoid eliminating all rows downstream.
+    # ------------------------------------------------------------------
+    # Coverage detection + optional verbose diagnostics
+    # ------------------------------------------------------------------
+    # Determine if DL coverage is zero (all DL cols fully NaN)
     zero_dl_coverage = all(merged[col].notna().sum() == 0 for col in D1_FEATURE_COLS)
+
+    # Keep a compact success summary even when not verbose
     if zero_dl_coverage:
         print(
             f"  [DL] {pair_name}: zero DL coverage after join; dropping DL feature columns "
             f"and reverting to baseline features"
         )
         merged = merged.drop(columns=list(D1_FEATURE_COLS))
+    else:
+        # Non-zero coverage summary (compact)
+        if not DL_DEBUG_VERBOSE:
+            # Print only the best single-line signal: % rows with any DL present
+            any_dl = merged[list(D1_FEATURE_COLS)].notna().any(axis=1)
+            any_dl_pct = float(any_dl.mean() * 100.0) if len(any_dl) else 0.0
+            print(f"  [DL] {pair_name}: DL coverage (any col)={any_dl_pct:.2f}%")
+        else:
+            print(f"  [DL] {pair_name}: attached DL columns={list(D1_FEATURE_COLS)}")
+            for col in D1_FEATURE_COLS:
+                nn = merged[col].notna()
+                coverage = float(nn.mean() * 100.0) if len(nn) else 0.0
+                if nn.any():
+                    ts_non_null = merged.loc[nn, "_timestamp_original"]
+                    first_ts = ts_non_null.min()
+                    last_ts = ts_non_null.max()
+                    print(
+                        f"    [DL] {col}: coverage={coverage:.2f}% "
+                        f"first_non_null={first_ts} last_non_null={last_ts}"
+                    )
+                else:
+                    print(f"    [DL] {col}: coverage=0.00% first_non_null=None last_non_null=None")
 
-    # Compute retention AFTER any DL-column drop so diagnostics reflect effective feature set
-    feature_cols = [
-        col for col in merged.columns
-        if col not in PhaseMLExperiment.EXCLUDE_COLS
-        and is_numeric_dtype(merged[col])
-        and not is_bool_dtype(merged[col])
-    ]
-    # Diagnostic only (O(rows*features)): estimate retention after feature-mask filtering.
-    rows_after_mask = int(merged[feature_cols].notna().all(axis=1).sum()) if feature_cols else rows_after_join
-    retention_ratio = (rows_after_mask / rows_after_join) if rows_after_join else np.nan
+    # ------------------------------------------------------------------
+    # Optional verbose retention diagnostics (can be very noisy)
+    # ------------------------------------------------------------------
+    if DL_DEBUG_VERBOSE:
+        feature_cols = [
+            col for col in merged.columns
+            if col not in PhaseMLExperiment.EXCLUDE_COLS
+            and is_numeric_dtype(merged[col])
+            and not is_bool_dtype(merged[col])
+        ]
+        rows_after_mask = (
+            int(merged[feature_cols].notna().all(axis=1).sum())
+            if feature_cols
+            else rows_after_join
+        )
+        retention_ratio = (rows_after_mask / rows_after_join) if rows_after_join else np.nan
 
-    print(f"  [DL] {pair_name}: rows before DL join={rows_before_join}")
-    print(f"  [DL] {pair_name}: rows after DL join={rows_after_join}")
-    print(f"  [DL] {pair_name}: rows after feature-mask filtering={rows_after_mask}")
-    print(f"  [DL] {pair_name}: retention ratio={retention_ratio:.4f}")
+        print(f"  [DL] {pair_name}: rows before DL join={rows_before_join}")
+        print(f"  [DL] {pair_name}: rows after DL join={rows_after_join}")
+        print(f"  [DL] {pair_name}: rows after feature-mask filtering={rows_after_mask}")
+        print(f"  [DL] {pair_name}: retention ratio={retention_ratio:.4f}")
 
+    # ------------------------------------------------------------------
+    # Rebuild output with original index
+    # ------------------------------------------------------------------
     out = merged.drop(columns=["pair", "timestamp"]).set_index("_timestamp_original")
     out.index.name = processed_df.index.name
     return out
