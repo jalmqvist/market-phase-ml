@@ -9,6 +9,7 @@ matplotlib.use('Agg')
 import pandas as pd
 import numpy as np
 import os
+from pathlib import Path
 
 from src.data import (
     MarketDataPipeline,
@@ -36,6 +37,9 @@ from src.models import (
 )
 from src.strategies import Backtester as BT, PhaseAwareStrategy, StrategySelector_Dynamic
 from src.repro import set_global_seed, build_run_config, write_manifest
+from src.dl_config import resolve_dl_prediction_artifact_path
+from src.dl_surface_loader import load_dl_surface, VALID_DL_REGIMES
+from src.dl_daily_features import load_and_aggregate_d1, D1_FEATURE_COLS
 
 # ── Uncomment to force cache refresh ─────
 # clear_cache('processed_data')
@@ -54,6 +58,15 @@ LABEL_HORIZON_BARS = 20  # must match StrategyPerformanceTracker(window_days=...
 # ─────────────────────────────────────────
 RUN_IN_SAMPLE_ABLATION = True
 RUN_WALKFORWARD = True
+
+# DL surface integration (optional)
+DL_SIGNALS_ENABLED = False
+DL_SIGNAL_SURFACE = {
+    "model": "mlp",
+    "target_horizon": 24,
+    "feature_set": "q0.5",
+    "dl_regime": "HVTF",
+}
 
 # Expensive sweeps (disable by default)
 RUN_TAU_SWEEP = False
@@ -346,6 +359,132 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _pair_to_dl_key(pair_name: str) -> str:
+    """Convert pair name to DL artifact pair key format (xxx-yyy)."""
+    p = str(pair_name).strip().lower().replace("/", "").replace("-", "")
+    if len(p) == 6:
+        return f"{p[:3]}-{p[3:]}"
+    return str(pair_name).strip().lower().replace("/", "-")
+
+
+def _dl_surface_string(surface: dict) -> str:
+    return (
+        f"{surface.get('model', '?')}/"
+        f"{surface.get('dl_regime', '?')}/"
+        f"h{surface.get('target_horizon', '?')}/"
+        f"{surface.get('feature_set', '?')}"
+    )
+
+
+def _with_mode_tag(path: str, mode_tag: str) -> str:
+    root, ext = os.path.splitext(path)
+    return f"{root}{mode_tag}{ext}"
+
+
+def attach_dl_features(
+    processed_df: pd.DataFrame,
+    pair_name: str,
+    surface: dict,
+    artifact_path: Path | None,
+) -> pd.DataFrame:
+    """
+    Attach D1-aggregated DL features to one processed pair frame via left join.
+
+    Join key: (pair, timestamp_start_of_day), where pair is normalized to
+    'xxx-yyy' and timestamp_start_of_day is daily midnight UTC.
+    """
+    if artifact_path is None:
+        print(f"  [DL] {pair_name}: no DL artifact resolved; skipping attachment.")
+        return processed_df
+
+    surface_df = load_dl_surface(cube_path=artifact_path, surface=surface, strict=False)
+    if surface_df.empty:
+        print(f"  [DL] {pair_name}: surface not available in artifact; skipping attachment.")
+        return processed_df
+
+    daily_df = load_and_aggregate_d1(
+        artifact_path=artifact_path,
+        surface=surface,
+        strict=False,
+    )
+    if daily_df.empty:
+        print(f"  [DL] {pair_name}: D1 aggregation produced no rows; skipping attachment.")
+        return processed_df
+
+    pair_key = _pair_to_dl_key(pair_name)
+    daily_pair = daily_df[daily_df["pair"] == pair_key].copy()
+    if daily_pair.empty:
+        print(f"  [DL] {pair_name}: no D1 DL rows for pair key '{pair_key}'; skipping attachment.")
+        return processed_df
+
+    if not daily_pair["trading_day"].is_monotonic_increasing:
+        raise AssertionError(f"[DL] {pair_name}: trading_day not monotonic increasing")
+    if daily_pair.duplicated(subset=["pair", "trading_day"]).any():
+        raise AssertionError(f"[DL] {pair_name}: duplicate (pair, trading_day) rows in D1 features")
+
+    base = processed_df.copy()
+    base = base.reset_index()
+    idx_col = base.columns[0]
+    base = base.rename(columns={idx_col: "__timestamp_original"})
+    base["timestamp"] = pd.to_datetime(base["__timestamp_original"]).dt.normalize()
+    base["pair"] = pair_key
+    if not pd.to_datetime(base["__timestamp_original"]).is_monotonic_increasing:
+        raise AssertionError(f"[DL] {pair_name}: processed timestamps are not monotonic increasing")
+    if base.duplicated(subset=["pair", "__timestamp_original"]).any():
+        raise AssertionError(f"[DL] {pair_name}: duplicate (pair, timestamp) rows before DL join")
+
+    rows_before_join = len(base)
+    daily_pair = daily_pair.rename(columns={"trading_day": "timestamp"})
+    join_cols = ["pair", "timestamp", *D1_FEATURE_COLS]
+    merged = base.merge(
+        daily_pair[join_cols],
+        on=["pair", "timestamp"],
+        how="left",
+        validate="many_to_one",
+    )
+
+    rows_after_join = len(merged)
+    if rows_after_join != rows_before_join:
+        raise AssertionError(
+            f"[DL] {pair_name}: DL join multiplied rows ({rows_before_join} -> {rows_after_join})"
+        )
+    if merged.duplicated(subset=["pair", "__timestamp_original"]).any():
+        raise AssertionError(f"[DL] {pair_name}: duplicate (pair, timestamp) rows after DL join")
+
+    feature_cols = [
+        col for col in merged.columns
+        if col not in PhaseMLExperiment.EXCLUDE_COLS
+        and merged[col].dtype in ["float64", "int64", "float32"]
+        and merged[col].dtype != bool
+    ]
+    rows_after_mask = int(merged[feature_cols].notna().all(axis=1).sum()) if feature_cols else rows_after_join
+    retention_ratio = (rows_after_mask / rows_after_join) if rows_after_join else np.nan
+
+    print(f"  [DL] {pair_name}: attached DL columns={list(D1_FEATURE_COLS)}")
+    for col in D1_FEATURE_COLS:
+        nn = merged[col].notna()
+        coverage = float(nn.mean() * 100.0) if len(nn) else 0.0
+        if nn.any():
+            ts_non_null = merged.loc[nn, "__timestamp_original"]
+            first_ts = pd.to_datetime(ts_non_null.iloc[0])
+            last_ts = pd.to_datetime(ts_non_null.iloc[-1])
+            print(
+                f"    [DL] {col}: coverage={coverage:.2f}% "
+                f"first_non_null={first_ts} last_non_null={last_ts}"
+            )
+        else:
+            print(f"    [DL] {col}: coverage=0.00% first_non_null=None last_non_null=None")
+
+    print(f"  [DL] {pair_name}: rows before DL join={rows_before_join}")
+    print(f"  [DL] {pair_name}: rows after DL join={rows_after_join}")
+    print(f"  [DL] {pair_name}: rows after feature-mask filtering={rows_after_mask}")
+    print(f"  [DL] {pair_name}: retention ratio={retention_ratio:.4f}")
+
+    out = merged.drop(columns=["pair", "timestamp"]).set_index("__timestamp_original")
+    out.index.name = processed_df.index.name
+    return out
+
+
 def process_pair(pair_name: str,
                  df: pd.DataFrame,
                  detector: MarketPhaseDetector) -> pd.DataFrame | None:
@@ -542,7 +681,8 @@ def print_phase_distribution(df: pd.DataFrame,
 
 def save_results(all_pair_results: dict,
                  majors_summary: pd.DataFrame,
-                 minors_summary: pd.DataFrame) -> None:
+                 minors_summary: pd.DataFrame,
+                 mode_tag: str = "__baseline") -> None:
     """Save all results to CSV files."""
     os.makedirs('results', exist_ok=True)
 
@@ -569,31 +709,29 @@ def save_results(all_pair_results: dict,
             })
 
     per_pair_df = pd.DataFrame(per_pair_rows)
-    per_pair_df.to_csv('results/results_per_pair.csv', index=False)
-    print('  ✓ Saved results/results_per_pair.csv')
+    per_pair_path = _with_mode_tag('results/results_per_pair.csv', mode_tag)
+    per_pair_df.to_csv(per_pair_path, index=False)
+    print(f'  ✓ Saved {per_pair_path}')
 
     # Group summaries
     if not majors_summary.empty:
-        majors_summary.to_csv(
-            'results/results_majors.csv', index=False
-        )
-        print('  ✓ Saved results/results_majors.csv')
+        majors_path = _with_mode_tag('results/results_majors.csv', mode_tag)
+        majors_summary.to_csv(majors_path, index=False)
+        print(f'  ✓ Saved {majors_path}')
 
     if not minors_summary.empty:
-        minors_summary.to_csv(
-            'results/results_minors.csv', index=False
-        )
-        print('  ✓ Saved results/results_minors.csv')
+        minors_path = _with_mode_tag('results/results_minors.csv', mode_tag)
+        minors_summary.to_csv(minors_path, index=False)
+        print(f'  ✓ Saved {minors_path}')
 
     # Combined summary
     combined_summary = pd.concat(
         [majors_summary, minors_summary],
         ignore_index=True
     )
-    combined_summary.to_csv(
-        'results/results_summary.csv', index=False
-    )
-    print('  ✓ Saved results/results_summary.csv')
+    summary_path = _with_mode_tag('results/results_summary.csv', mode_tag)
+    combined_summary.to_csv(summary_path, index=False)
+    print(f'  ✓ Saved {summary_path}')
 
 #======
 # fold generator helper functions:
@@ -735,6 +873,29 @@ def _assert_backtest_index_matches(pair_name: str, df_ref, results: dict, tag: s
 def main():
     run_cfg = build_run_config(seed=SEED, run_id=RUN_ID)
     set_global_seed(run_cfg.seed)
+    dl_surface = dict(DL_SIGNAL_SURFACE)
+    dl_regime = str(dl_surface.get("dl_regime", "")).upper()
+    dl_surface["dl_regime"] = dl_regime
+    dl_runtime_enabled = bool(DL_SIGNALS_ENABLED)
+    if dl_runtime_enabled and (dl_regime == "ALL" or dl_regime not in VALID_DL_REGIMES):
+        print(
+            f"[WARN] DL disabled for this run: invalid dl_regime={dl_regime!r}. "
+            f"Valid values={sorted(VALID_DL_REGIMES)} (no 'all' support in v1)."
+        )
+        dl_runtime_enabled = False
+    dl_artifact_path = resolve_dl_prediction_artifact_path() if dl_runtime_enabled else None
+    if dl_runtime_enabled and dl_artifact_path is None:
+        print("[WARN] DL enabled but no artifact resolved; DL features will be skipped.")
+    dl_mode_tag = "__dl" if dl_runtime_enabled else "__baseline"
+    dl_surface_str = _dl_surface_string(dl_surface)
+
+    print('=' * 60)
+    print("=== RUN MODE: DL ENABLED ===" if dl_runtime_enabled else "=== RUN MODE: BASELINE ===")
+    print(f"DL enabled: {dl_runtime_enabled}")
+    print(f"DL selected surface: {dl_surface}")
+    print(f"surface={dl_surface_str}")
+    print(f"DL resolved artifact path: {dl_artifact_path}")
+    print('=' * 60)
 
     # Convert ticker-keyed pip values into short-name-keyed pip values
     PIP_VALUES_BY_PAIRNAME = {
@@ -754,6 +915,14 @@ def main():
             "RUN_POLICY_SWEEP": RUN_POLICY_SWEEP,
             "DEBUG_FEATURE_COLUMNS": DEBUG_FEATURE_COLUMNS,
             "DEBUG_SIGNAL_TYPES": DEBUG_SIGNAL_TYPES,
+            "DL_SIGNALS_ENABLED": dl_runtime_enabled,
+        },
+        "dl": {
+            "dl_enabled": dl_runtime_enabled,
+            "dl_mode_tag": dl_mode_tag,
+            "dl_surface": dl_surface,
+            "dl_surface_string": dl_surface_str,
+            "dl_artifact_path": str(dl_artifact_path) if dl_artifact_path is not None else None,
         },
         "walkforward": {
             "train_years": WF_TRAIN_YEARS,
@@ -810,7 +979,7 @@ def main():
         },
     }
 
-    manifest_path = os.path.join("results", f"run_manifest_{run_cfg.run_id}.json")
+    manifest_path = os.path.join("results", f"run_manifest_{run_cfg.run_id}{dl_mode_tag}.json")
     write_manifest(manifest_path, manifest)
     print(f"Saved: {manifest_path}")
 
@@ -871,6 +1040,13 @@ def main():
         for pair_name, df in raw_data.items():
             processed_df = process_pair(pair_name, df, detector)
             if processed_df is not None:
+                if dl_runtime_enabled:
+                    processed_df = attach_dl_features(
+                        processed_df=processed_df,
+                        pair_name=pair_name,
+                        surface=dl_surface,
+                        artifact_path=dl_artifact_path,
+                    )
                 processed_data[pair_name] = processed_df
                 processed_df.to_csv(
                     f'data/processed/{pair_name}.csv'
@@ -967,8 +1143,9 @@ def main():
              for pair, df in ml_results_all.items()],
             ignore_index=True
         )
-        ml_combined.to_csv('results/results_ml.csv', index=False)
-        print('\n✓ ML results saved to results/results_ml.csv')
+        ml_results_path = _with_mode_tag('results/results_ml.csv', dl_mode_tag)
+        ml_combined.to_csv(ml_results_path, index=False)
+        print(f'\n✓ ML results saved to {ml_results_path}')
 
     # ─────────────────────────────────────────
     # 3b. ML PHASE PREDICTION
@@ -1129,8 +1306,9 @@ def main():
         })
 
     ml_df = pd.DataFrame(ml_rows)
-    ml_df.to_csv('results/results_ml_backtest.csv', index=False)
-    print(f'\n  ✓ Saved to results_ml_backtest.csv')
+    ml_backtest_path = _with_mode_tag('results/results_ml_backtest.csv', dl_mode_tag)
+    ml_df.to_csv(ml_backtest_path, index=False)
+    print(f'\n  ✓ Saved to {ml_backtest_path}')
     # ─────────────────────────────────────────
     # 4. RUN BACKTESTS
     # ─────────────────────────────────────────
@@ -1314,19 +1492,18 @@ def main():
     save_results(
         hardcoded_results,
         majors_hardcoded,
-        minors_hardcoded
+        minors_hardcoded,
+        mode_tag=dl_mode_tag,
     )
 
     # Save ATR results separately
     os.makedirs('results', exist_ok=True)
     if not majors_atr.empty:
-        majors_atr.to_csv(
-            'results/results_majors_atr.csv', index=False
-        )
+        majors_atr_path = _with_mode_tag('results/results_majors_atr.csv', dl_mode_tag)
+        majors_atr.to_csv(majors_atr_path, index=False)
     if not minors_atr.empty:
-        minors_atr.to_csv(
-            'results/results_minors_atr.csv', index=False
-        )
+        minors_atr_path = _with_mode_tag('results/results_minors_atr.csv', dl_mode_tag)
+        minors_atr.to_csv(minors_atr_path, index=False)
     print('  ✓ ATR sizing results saved')
 
 
@@ -1408,8 +1585,9 @@ def main():
                 })
 
             dyn_df = pd.DataFrame(dyn_rows).sort_values(["Pair"])
-            dyn_df.to_csv("results/dynamic_selector_results_per_pair.csv", index=False)
-            print("Saved: results/dynamic_selector_results_per_pair.csv")
+            dyn_path = _with_mode_tag("results/dynamic_selector_results_per_pair.csv", dl_mode_tag)
+            dyn_df.to_csv(dyn_path, index=False)
+            print(f"Saved: {dyn_path}")
             print(f'\n✓ StrategySelector_Dynamic tested on {len(dynamic_results)} pairs')
         else:
             print(f'✗ No dynamic backtest results')
@@ -1460,8 +1638,9 @@ def main():
             print(f'Avg Sharpe Δ:     {comp_df["Sharpe Δ"].mean():+.4f}')
             print(f'Avg Max DD Δ:     {comp_df["DD Δ"].mean():+.2f}%')
             print(f'Pairs where Sharpe improved: {(comp_df["Sharpe Δ"] > 0).sum()} / {len(comp_df)}')
-            comp_df.to_csv("results/baseline_vs_dynamic_comparison.csv", index=False)
-            print("Saved: results/baseline_vs_dynamic_comparison.csv")
+            comp_path = _with_mode_tag("results/baseline_vs_dynamic_comparison.csv", dl_mode_tag)
+            comp_df.to_csv(comp_path, index=False)
+            print(f"Saved: {comp_path}")
 
     # ─────────────────────────────────────────
     # 4e. ABLATION TABLE (TF-only vs MR-only vs PhaseAware vs Dynamic)
@@ -1515,8 +1694,9 @@ def main():
         else:
             # Save per-pair per-variant
             ablation_df = ablation_df.sort_values(["Pair", "Variant"])
-            ablation_df.to_csv("results/ablation_summary_per_pair.csv", index=False)
-            print("Saved: results/ablation_summary_per_pair.csv")
+            ablation_pair_path = _with_mode_tag("results/ablation_summary_per_pair.csv", dl_mode_tag)
+            ablation_df.to_csv(ablation_pair_path, index=False)
+            print(f"Saved: {ablation_pair_path}")
 
             # Aggregate (mean metrics across pairs per variant)
             agg = (ablation_df
@@ -1533,8 +1713,9 @@ def main():
             coverage = ablation_df.groupby("Variant")["Pair"].nunique().reset_index(name="Pairs")
             agg = agg.merge(coverage, on="Variant", how="left")
 
-            agg.to_csv("results/ablation_summary_aggregate.csv", index=False)
-            print("Saved: results/ablation_summary_aggregate.csv")
+            ablation_agg_path = _with_mode_tag("results/ablation_summary_aggregate.csv", dl_mode_tag)
+            agg.to_csv(ablation_agg_path, index=False)
+            print(f"Saved: {ablation_agg_path}")
 
             print("\nAblation aggregate (mean across pairs):")
             print(agg.to_string(index=False))
@@ -1700,7 +1881,10 @@ def main():
                             "near_spike": near_spike.values,
                         })
 
-                        out_path = f"results/selected_series_{pair_name}_fold{fold_id}.csv"
+                        out_path = _with_mode_tag(
+                            f"results/selected_series_{pair_name}_fold{fold_id}.csv",
+                            dl_mode_tag,
+                        )
                         sel_df.to_csv(out_path, index=False)
                         print(f"Saved: {out_path}")
 
@@ -1771,7 +1955,10 @@ def main():
                                 "signal_prev": signal_prev.values,
                             })
 
-                            out_path = f"results/equity_debug_{pair_name}_fold{fold_id}.csv"
+                            out_path = _with_mode_tag(
+                                f"results/equity_debug_{pair_name}_fold{fold_id}.csv",
+                                dl_mode_tag,
+                            )
                             eq_df.to_csv(out_path, index=False)
                             print(f"Saved: {out_path}")
 
@@ -1840,8 +2027,9 @@ def main():
             print("✗ Walk-forward produced no results.")
         else:
             os.makedirs("results", exist_ok=True)
-            wf_df.to_csv("results/walkforward_results_per_fold.csv", index=False)
-            print("Saved: results/walkforward_results_per_fold.csv")
+            wf_fold_path = _with_mode_tag("results/walkforward_results_per_fold.csv", dl_mode_tag)
+            wf_df.to_csv(wf_fold_path, index=False)
+            print(f"Saved: {wf_fold_path}")
 
             # Per-pair aggregation (mean across folds)
             wf_pair = (wf_df.groupby("Pair", as_index=False)
@@ -1852,8 +2040,9 @@ def main():
                 "Fold": "count",
             })
                        .rename(columns={"Fold": "Folds"}))
-            wf_pair.to_csv("results/walkforward_results_per_pair.csv", index=False)
-            print("Saved: results/walkforward_results_per_pair.csv")
+            wf_pair_path = _with_mode_tag("results/walkforward_results_per_pair.csv", dl_mode_tag)
+            wf_pair.to_csv(wf_pair_path, index=False)
+            print(f"Saved: {wf_pair_path}")
 
             # Overall summary
             overall = {
@@ -1864,14 +2053,16 @@ def main():
                 "Avg Max DD Δ": float(wf_df["DD Δ"].mean()),
                 "Folds Sharpe Improved": int((wf_df["Sharpe Δ"] > 0).sum()),
             }
-            pd.DataFrame([overall]).to_csv("results/walkforward_results_summary.csv", index=False)
-            print("Saved: results/walkforward_results_summary.csv")
+            wf_summary_path = _with_mode_tag("results/walkforward_results_summary.csv", dl_mode_tag)
+            pd.DataFrame([overall]).to_csv(wf_summary_path, index=False)
+            print(f"Saved: {wf_summary_path}")
 
             # --- New diagnostics outputs ---
             if vol_diag_rows:
                 diag_df = pd.DataFrame(vol_diag_rows)
-                diag_df.to_csv("results/vol_guard_diagnostics_per_fold.csv", index=False)
-                print("Saved: results/vol_guard_diagnostics_per_fold.csv")
+                vol_diag_path = _with_mode_tag("results/vol_guard_diagnostics_per_fold.csv", dl_mode_tag)
+                diag_df.to_csv(vol_diag_path, index=False)
+                print(f"Saved: {vol_diag_path}")
 
                 metric_aggs = {
                     "spike_pct": "mean",
@@ -1902,8 +2093,9 @@ def main():
                      _agg_group(diag_df, "MajorMinor")],
                     ignore_index=True
                 )
-                diag_summary.to_csv("results/vol_guard_diagnostics_summary.csv", index=False)
-                print("Saved: results/vol_guard_diagnostics_summary.csv")
+                vol_diag_summary_path = _with_mode_tag("results/vol_guard_diagnostics_summary.csv", dl_mode_tag)
+                diag_summary.to_csv(vol_diag_summary_path, index=False)
+                print(f"Saved: {vol_diag_summary_path}")
 
             print("\nWalk-forward summary:")
             print(pd.DataFrame([overall]).to_string(index=False))
@@ -2080,8 +2272,9 @@ def main():
             print("✗ Tau sweep produced no results.")
         else:
             os.makedirs("results", exist_ok=True)
-            tau_df.to_csv("results/walkforward_tau_sweep_per_fold.csv", index=False)
-            print("Saved: results/walkforward_tau_sweep_per_fold.csv")
+            tau_fold_path = _with_mode_tag("results/walkforward_tau_sweep_per_fold.csv", dl_mode_tag)
+            tau_df.to_csv(tau_fold_path, index=False)
+            print(f"Saved: {tau_fold_path}")
 
             # Global summary per tau
 
@@ -2101,8 +2294,9 @@ def main():
                     "Rows": ("Fold", "count"),
                 })
             )
-            summary.to_csv("results/walkforward_tau_sweep_summary.csv", index=False)
-            print("Saved: results/walkforward_tau_sweep_summary.csv")
+            tau_summary_path = _with_mode_tag("results/walkforward_tau_sweep_summary.csv", dl_mode_tag)
+            summary.to_csv(tau_summary_path, index=False)
+            print(f"Saved: {tau_summary_path}")
             print("\nTau sweep summary:")
             print(summary.to_string(index=False))
 
@@ -2274,8 +2468,9 @@ def main():
             print("✗ Policy sweep produced no results.")
         else:
             os.makedirs("results", exist_ok=True)
-            pol_df.to_csv("results/walkforward_policy_sweep_per_fold.csv", index=False)
-            print("Saved: results/walkforward_policy_sweep_per_fold.csv")
+            policy_fold_path = _with_mode_tag("results/walkforward_policy_sweep_per_fold.csv", dl_mode_tag)
+            pol_df.to_csv(policy_fold_path, index=False)
+            print(f"Saved: {policy_fold_path}")
 
             summary = (pol_df.groupby("Policy", as_index=False)
                        .agg({
@@ -2285,8 +2480,9 @@ def main():
                 "Fold": "count",
             })
                        .rename(columns={"Fold": "Rows"}))
-            summary.to_csv("results/walkforward_policy_sweep_summary.csv", index=False)
-            print("Saved: results/walkforward_policy_sweep_summary.csv")
+            policy_summary_path = _with_mode_tag("results/walkforward_policy_sweep_summary.csv", dl_mode_tag)
+            summary.to_csv(policy_summary_path, index=False)
+            print(f"Saved: {policy_summary_path}")
             print("\nPolicy sweep summary:")
             print(summary.to_string(index=False))
     # ─────────────────────────────────────────
@@ -2358,13 +2554,13 @@ def main():
     print('✓ ANALYSIS COMPLETE!')
     print('=' * 60)
     print('\nOutput files:')
-    print('  results/results_per_pair.csv')
-    print('  results/results_majors.csv')
-    print('  results/results_minors.csv')
-    print('  results/results_summary.csv')
-    print('  results/results_majors_atr.csv')
-    print('  results/results_minors_atr.csv')
-    print('  results/results_ml.csv')
+    print(f"  {_with_mode_tag('results/results_per_pair.csv', dl_mode_tag)}")
+    print(f"  {_with_mode_tag('results/results_majors.csv', dl_mode_tag)}")
+    print(f"  {_with_mode_tag('results/results_minors.csv', dl_mode_tag)}")
+    print(f"  {_with_mode_tag('results/results_summary.csv', dl_mode_tag)}")
+    print(f"  {_with_mode_tag('results/results_majors_atr.csv', dl_mode_tag)}")
+    print(f"  {_with_mode_tag('results/results_minors_atr.csv', dl_mode_tag)}")
+    print(f"  {_with_mode_tag('results/results_ml.csv', dl_mode_tag)}")
     print('  figures/phases_overview.png')
     print('  figures/phase_statistics.png')
     print('  figures/phase_distribution_heatmap.png')

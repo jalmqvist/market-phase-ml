@@ -71,7 +71,9 @@ A **surface** is the operational identity of a DL signal stream:
 - `feature_set`
 - `dl_regime` (producer taxonomy: `HVTF | LVTF | HVR | LVR`)
 
-This is treated as *signal identity*, not provenance.  In v1, `dl_regime` must be explicitly specified — do **not** allow `dl_regime=None` to mean "all regimes".  DL findings are regime-conditional; mixing regimes implicitly creates ambiguous semantics.
+This is treated as *signal identity*, not provenance. In v1, `dl_regime` must be explicitly specified and must be one of `HVTF | LVTF | HVR | LVR`.
+
+`main.py` does **not** support `dl_regime="all"` in v1. If `dl_regime` is `"all"` (or invalid), the run logs a warning and skips DL attachment (baseline behavior).
 
 > **For H1 DL artifacts**:
 > **target_horizon=24 means 24 hourly bars (~24h), NOT D1 bars.**
@@ -137,7 +139,7 @@ DL_SIGNALS_ENABLED = True
 DL_SIGNAL_SURFACE = {
     "model": "mlp",
     "target_horizon": 24,      # bars, not hours
-    "feature_set": "price_trend",
+    "feature_set": "q0.5",
     "dl_regime": "HVTF",       # required; exact-match surface selection
 }
 
@@ -253,11 +255,13 @@ df = attach_dl_signals(df, surface_df)
 
 ---
 
-## D1 aggregation layer (`src/dl_daily_features.py`)
+## D1 aggregation layer (`src/dl_daily_features.py`) and operational attachment in `main.py`
 
 ### Overview
 
-The D1 aggregation layer converts H1 DL signal rows into **daily** features suitable for joining to the D1 regime/trading pipeline.  It is implemented in `src/dl_daily_features.py` and is available as a standalone utility — it is **not** wired into `main.py` yet.
+The D1 aggregation layer converts H1 DL signal rows into **daily** features suitable for joining to the D1 regime/trading pipeline.
+
+`main.py` now operationally attaches these D1 features immediately after `process_pair(...)` in the processed-data pipeline when DL mode is enabled.
 
 ### No-leakage semantics
 
@@ -311,13 +315,10 @@ print(daily_df.head())
 # 0  eur-usd   2024-01-02        0.12               0.08           ...
 ```
 
-**Step 3 — how `main.py` would consume D1 daily features (future integration)**
-
-> **Note:** the snippet below is illustrative only — `main.py` does not currently
-> import or call `dl_daily_features`.
+**Step 3 — how `main.py` consumes D1 daily features (operational v1)**
 
 ```python
-# In main.py (future, when DL daily features are enabled):
+# In main.py:
 from src.dl_daily_features import load_and_aggregate_d1
 from src.dl_config import (
     DL_SIGNALS_ENABLED, DL_SIGNAL_SURFACE,
@@ -335,9 +336,21 @@ if DL_SIGNALS_ENABLED:
             on=["pair", "timestamp"],
             how="left",
         )
-        # dl_signal_mean_24h ... dl_signal_flip_count are now optional columns
-        # picked up by PhaseMLPredictor._get_feature_cols() when present.
+        # dl_signal_mean_24h ... dl_signal_flip_count are optional columns.
 ```
+
+Per pair, `main.py` logs:
+
+- attached DL columns
+- per-column coverage (% non-null)
+- first/last non-null timestamps
+- row counts before/after join and after feature-mask filtering + retention ratio
+
+Additionally, lightweight integrity assertions guard:
+
+- monotonic `trading_day` in D1 features
+- no duplicate `(pair, trading_day)` rows before join
+- no row multiplication across the left join
 
 ---
 
