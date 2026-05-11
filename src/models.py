@@ -12,19 +12,16 @@ import xgboost as xgb
 # DL daily feature constants
 # ---------------------------------------------------------------------------
 
+# Import D1_FEATURE_COLS from the authoritative source so that models.py
+# stays in sync with dl_daily_features.py automatically.
+# dl_daily_features -> dl_surface_loader -> pandas only; no circular risk.
+from src.dl_daily_features import D1_FEATURE_COLS as _D1_FEATURE_COLS  # noqa: E402
+
 #: Feature columns produced by src.dl_daily_features.compute_d1_features().
 #: When DL_SIGNALS_ENABLED is True and these columns are present in the D1
 #: DataFrame they are included as model features; otherwise they are excluded
 #: to avoid NaN-only columns in non-DL runs.
-DL_D1_FEATURE_COLS: frozenset[str] = frozenset(
-    {
-        "dl_signal_mean_24h",
-        "dl_signal_std_24h",
-        "dl_signal_last",
-        "dl_signal_abs_mean",
-        "dl_signal_flip_count",
-    }
-)
+DL_D1_FEATURE_COLS: frozenset[str] = frozenset(_D1_FEATURE_COLS)
 
 #: Columns that must NEVER be used as ML features regardless of dtype.
 #: These carry provenance / regime metadata and would introduce leakage.
