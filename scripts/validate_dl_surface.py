@@ -25,6 +25,7 @@ import argparse
 import os
 import sys
 import traceback
+import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -292,6 +293,43 @@ def check_no_surface_match_returns_empty(tmp_path: Path):
     assert df.empty, "Expected empty DF when surface not in cube"
 
 
+def check_attach_dl_features_zero_coverage_drops_dl_columns(tmp_path: Path):
+    """All-NaN joined D1 features are dropped for the affected pair."""
+    from main import attach_dl_features
+    from src.dl_daily_features import D1_FEATURE_COLS
+
+    cube = _make_cube(start=datetime(2024, 1, 1, 0, 0, 0), n_rows=24)
+    cube_file = tmp_path / "zero_coverage.parquet"
+    cube.to_parquet(cube_file, index=False)
+
+    processed_df = pd.DataFrame(
+        {
+            "base_feature": [1.0, 2.0, 3.0],
+            "phase": ["markup", "markdown", "accumulation"],
+        },
+        index=pd.to_datetime(
+            ["2025-01-01 00:00:00", "2025-01-01 01:00:00", "2025-01-01 02:00:00"]
+        ),
+    )
+    processed_df.index.name = "timestamp"
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        out = attach_dl_features(processed_df, "EURUSD", _SURFACE, cube_file)
+
+    assert out.equals(processed_df), "Expected original frame when attached DL coverage is zero"
+    assert not any(col in out.columns for col in D1_FEATURE_COLS), (
+        "Zero-coverage DL columns should not remain attached"
+    )
+
+    zero_coverage_warnings = [
+        str(w.message) for w in caught if "zero coverage after join" in str(w.message)
+    ]
+    assert len(zero_coverage_warnings) == 1, (
+        "Expected a single warning for zero-coverage DL attachment"
+    )
+
+
 def check_resolve_artifact_path_file(tmp_path: Path) -> None:
     """Resolver returns file path unchanged when given a parquet file."""
     test_dir = tmp_path / "resolver_file"
@@ -429,6 +467,7 @@ def run_checks(cube_path: Path | None, surface: dict) -> int:
         ("mpml_regime_mapping", check_mpml_regime_mapping, [tmp]),
         ("target_horizon_numeric", check_target_horizon_numeric, [tmp]),
         ("no_surface_match", check_no_surface_match_returns_empty, [tmp]),
+        ("attach_zero_coverage", check_attach_dl_features_zero_coverage_drops_dl_columns, [tmp]),
         ("resolve_artifact_file", check_resolve_artifact_path_file, [tmp]),
         ("resolve_artifact_latest", check_resolve_artifact_path_directory_latest, [tmp]),
         ("resolve_artifact_empty", check_resolve_artifact_path_directory_empty, [tmp]),

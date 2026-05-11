@@ -2,6 +2,7 @@
 import sys
 import importlib.metadata as importlib_metadata
 import traceback
+import warnings
 import matplotlib
 import platform
 matplotlib.use('Agg')
@@ -490,6 +491,14 @@ def attach_dl_features(
     print(f"  [DL] {pair_name}: rows after DL join={rows_after_join}")
     print(f"  [DL] {pair_name}: rows after feature-mask filtering={rows_after_mask}")
     print(f"  [DL] {pair_name}: retention ratio={retention_ratio:.4f}")
+
+    if not merged.loc[:, list(D1_FEATURE_COLS)].notna().any().any():
+        warnings.warn(
+            f"[DL] {pair_name}: attached D1 DL feature columns have zero coverage after join; "
+            "dropping them for this pair to avoid empty downstream feature masks.",
+            stacklevel=2,
+        )
+        return processed_df
 
     out = merged.drop(columns=["pair", "timestamp"]).set_index("_timestamp_original")
     out.index.name = processed_df.index.name
