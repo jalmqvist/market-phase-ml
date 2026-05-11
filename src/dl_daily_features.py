@@ -204,7 +204,7 @@ def empty_d1_df() -> pd.DataFrame:
             "dl_signal_std_24h": pd.Series(dtype="float64"),
             "dl_signal_last": pd.Series(dtype="float64"),
             "dl_signal_abs_mean": pd.Series(dtype="float64"),
-            "dl_signal_flip_count": pd.Series(dtype="int64"),
+            "dl_signal_flip_count": pd.Series(dtype="float64"),
         }
     )
 
