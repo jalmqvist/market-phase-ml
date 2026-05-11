@@ -492,7 +492,7 @@ def attach_dl_features(
     print(f"  [DL] {pair_name}: rows after feature-mask filtering={rows_after_mask}")
     print(f"  [DL] {pair_name}: retention ratio={retention_ratio:.4f}")
 
-    if not merged.loc[:, list(D1_FEATURE_COLS)].notna().to_numpy().any():
+    if not merged.loc[:, list(D1_FEATURE_COLS)].notna().any().any():
         warnings.warn(
             f"[DL] {pair_name}: attached D1 DL feature columns have zero coverage after join; "
             "dropping them for this pair to avoid empty downstream feature masks.",
