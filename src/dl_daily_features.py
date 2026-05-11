@@ -232,7 +232,7 @@ def _count_sign_flips(signal: np.ndarray) -> int:
     Returns 0 when fewer than two non-zero, non-NaN values exist.
     """
     # Drop NaN values; work only on observed finite values.
-    arr = signal[~np.isnan(signal)]
+    arr = signal[np.isfinite(signal)]
     if len(arr) < 2:
         return 0
 

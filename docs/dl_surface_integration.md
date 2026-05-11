@@ -257,17 +257,25 @@ Run the inference + consolidation pipeline in `market-sentiment-ml`:
 
 ```bash
 # Inside market-sentiment-ml/
-python -m research.deep_learning.train --dataset-version <version>   # per-run prediction artifacts
-python scripts/build_dl_signal_cube.py     # consolidated cube + manifest
+python -m research.deep_learning.train \
+  --dataset-version 1.3.2 \
+  --pairs EURUSD \
+  --regime HVTF \
+  --target-horizon 24   					# per-run prediction artifacts
+python scripts/build_dl_signal_cube.py     	# consolidated cube + manifest
 ```
 
-This produces:
+This produces one per-run prediction artifact (surface) under:
 
-```
-market-sentiment-ml/data/output/dl_signals/
-  dl_signals_h1_v1.parquet          ← consolidated cube
-  DL_SIGNAL_MANIFEST_h1_v1.json     ← manifest
-```
+- `data/output/dl_predictions/<run_id>.parquet`
+- `data/output/dl_predictions/<run_id>.manifest.json`
+
+Example (from a real run):
+
+- `data/output/dl_predictions/mlp__HVTF__24__price_trend__20260510T182643Z.parquet`
+- `data/output/dl_predictions/mlp__HVTF__24__price_trend__20260510T182643Z.manifest.json`
+
+
 
 ### Cube schema
 
