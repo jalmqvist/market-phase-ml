@@ -60,8 +60,8 @@ LABEL_HORIZON_BARS = 20  # must match StrategyPerformanceTracker(window_days=...
 RUN_IN_SAMPLE_ABLATION = True
 RUN_WALKFORWARD = True
 
-# DL surface integration (optional)
-DL_SIGNALS_ENABLED = False
+# DL surface integration (optional feature layer, v1 single-surface)
+DL_SIGNALS_ENABLED = True
 DL_SIGNAL_SURFACE = {
     "model": "mlp",
     "target_horizon": 24,
@@ -401,6 +401,13 @@ def attach_dl_features(
     if artifact_path is None:
         print(f"  [DL] {pair_name}: no DL artifact resolved; skipping attachment.")
         return processed_df
+    if not processed_df.index.is_unique:
+        raise AssertionError(f"[DL] {pair_name}: processed_df index must be unique before DL join")
+    existing_d1_cols = [col for col in D1_FEATURE_COLS if col in processed_df.columns]
+    if existing_d1_cols:
+        raise AssertionError(
+            f"[DL] {pair_name}: D1 DL feature columns already present before join: {existing_d1_cols}"
+        )
 
     surface_df = load_dl_surface(cube_path=artifact_path, surface=surface, strict=False)
     if surface_df.empty:
@@ -891,7 +898,7 @@ def main():
     dl_artifact_path = resolve_dl_prediction_artifact_path() if dl_runtime_enabled else None
     if dl_runtime_enabled and dl_artifact_path is None:
         print("[WARN] DL enabled but no artifact resolved; DL features will be skipped.")
-    dl_mode_tag = "__dl" if dl_runtime_enabled else "__baseline"
+    dl_mode_tag = "__dl_enabled" if dl_runtime_enabled else "__baseline"
     dl_surface_str = _dl_surface_string(dl_surface)
 
     print('=' * 60)
@@ -1031,13 +1038,26 @@ def main():
     )
     detector = MarketPhaseDetector(**detector_params)
 
-    # Cache key: hash of raw data + detector parameters
+    # Cache key: hash of raw data + detector parameters + DL runtime attachment state
     raw_data_hash  = _hash_dict_of_dataframes(raw_data)
     detector_hash  = _hash_params(**detector_params)
+    dl_cache_surface = dl_surface if dl_runtime_enabled else None
+    dl_cache_artifact = str(dl_artifact_path) if dl_runtime_enabled and dl_artifact_path is not None else None
+    dl_cache_hash = _hash_params(
+        dl_enabled=dl_runtime_enabled,
+        dl_surface=dl_cache_surface,
+        dl_artifact=dl_cache_artifact,
+    )
+    processed_param_hash = _hash_params(detector_hash=detector_hash, dl_cache_hash=dl_cache_hash)
+
+    print(f"[DL CACHE] enabled={dl_runtime_enabled}")
+    print(f"[DL CACHE] surface={dl_surface_str}")
+    print(f"[DL CACHE] artifact={dl_cache_artifact}")
 
     processed_data = load_cache(
-        'processed_data', raw_data_hash, detector_hash
+        'processed_data', raw_data_hash, processed_param_hash
     )
+    print(f"[DL CACHE] processed_data={'hit' if processed_data is not None else 'miss'}")
 
     if processed_data is None:
         print('  No cache found — running phase detection...')
@@ -1059,8 +1079,9 @@ def main():
 
         save_cache(
             'processed_data', processed_data,
-            raw_data_hash, detector_hash
+            raw_data_hash, processed_param_hash
         )
+        print("[DL CACHE] processed_data=save")
 
         print(f"\n✓ Processed {len(processed_data)} pairs")
 
