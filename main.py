@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 import os
 from pathlib import Path
+from pandas.api.types import is_bool_dtype, is_numeric_dtype
 
 from src.data import (
     MarketDataPipeline,
@@ -360,11 +361,15 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _pair_to_dl_key(pair_name: str) -> str:
-    """Convert pair name to DL artifact pair key format (xxx-yyy)."""
-    p = str(pair_name).strip().lower().replace("/", "").replace("-", "")
-    if len(p) == 6:
-        return f"{p[:3]}-{p[3:]}"
-    return str(pair_name).strip().lower().replace("/", "-")
+    """Convert pair name to DL artifact pair key format (xxx-yyy).
+
+    For unexpected non-6-char symbols, return a best-effort lowercase fallback.
+    """
+    normalized_pair = str(pair_name).strip().lower()
+    clean_pair = normalized_pair.replace("/", "").replace("-", "")
+    if len(clean_pair) == 6 and clean_pair.isalpha():
+        return f"{clean_pair[:3]}-{clean_pair[3:]}"
+    return normalized_pair.replace("/", "-")
 
 
 def _dl_surface_string(surface: dict) -> str:
@@ -422,15 +427,13 @@ def attach_dl_features(
     if daily_pair.duplicated(subset=["pair", "trading_day"]).any():
         raise AssertionError(f"[DL] {pair_name}: duplicate (pair, trading_day) rows in D1 features")
 
-    base = processed_df.copy()
-    base = base.reset_index()
-    idx_col = base.columns[0]
-    base = base.rename(columns={idx_col: "__timestamp_original"})
-    base["timestamp"] = pd.to_datetime(base["__timestamp_original"]).dt.normalize()
+    base = processed_df.copy().reset_index(names="_timestamp_original")
+    original_timestamps = pd.to_datetime(base["_timestamp_original"])
+    base["timestamp"] = original_timestamps.dt.normalize()
     base["pair"] = pair_key
-    if not pd.to_datetime(base["__timestamp_original"]).is_monotonic_increasing:
+    if not original_timestamps.is_monotonic_increasing:
         raise AssertionError(f"[DL] {pair_name}: processed timestamps are not monotonic increasing")
-    if base.duplicated(subset=["pair", "__timestamp_original"]).any():
+    if base.duplicated(subset=["pair", "_timestamp_original"]).any():
         raise AssertionError(f"[DL] {pair_name}: duplicate (pair, timestamp) rows before DL join")
 
     rows_before_join = len(base)
@@ -448,15 +451,16 @@ def attach_dl_features(
         raise AssertionError(
             f"[DL] {pair_name}: DL join multiplied rows ({rows_before_join} -> {rows_after_join})"
         )
-    if merged.duplicated(subset=["pair", "__timestamp_original"]).any():
+    if merged.duplicated(subset=["pair", "_timestamp_original"]).any():
         raise AssertionError(f"[DL] {pair_name}: duplicate (pair, timestamp) rows after DL join")
 
     feature_cols = [
         col for col in merged.columns
         if col not in PhaseMLExperiment.EXCLUDE_COLS
-        and merged[col].dtype in ["float64", "int64", "float32"]
-        and merged[col].dtype != bool
+        and is_numeric_dtype(merged[col])
+        and not is_bool_dtype(merged[col])
     ]
+    # Diagnostic only (O(rows*features)): estimate retention after feature-mask filtering.
     rows_after_mask = int(merged[feature_cols].notna().all(axis=1).sum()) if feature_cols else rows_after_join
     retention_ratio = (rows_after_mask / rows_after_join) if rows_after_join else np.nan
 
@@ -465,9 +469,9 @@ def attach_dl_features(
         nn = merged[col].notna()
         coverage = float(nn.mean() * 100.0) if len(nn) else 0.0
         if nn.any():
-            ts_non_null = merged.loc[nn, "__timestamp_original"]
-            first_ts = pd.to_datetime(ts_non_null.iloc[0])
-            last_ts = pd.to_datetime(ts_non_null.iloc[-1])
+            ts_non_null = merged.loc[nn, "_timestamp_original"]
+            first_ts = ts_non_null.min()
+            last_ts = ts_non_null.max()
             print(
                 f"    [DL] {col}: coverage={coverage:.2f}% "
                 f"first_non_null={first_ts} last_non_null={last_ts}"
@@ -480,7 +484,7 @@ def attach_dl_features(
     print(f"  [DL] {pair_name}: rows after feature-mask filtering={rows_after_mask}")
     print(f"  [DL] {pair_name}: retention ratio={retention_ratio:.4f}")
 
-    out = merged.drop(columns=["pair", "timestamp"]).set_index("__timestamp_original")
+    out = merged.drop(columns=["pair", "timestamp"]).set_index("_timestamp_original")
     out.index.name = processed_df.index.name
     return out
 
@@ -682,7 +686,7 @@ def print_phase_distribution(df: pd.DataFrame,
 def save_results(all_pair_results: dict,
                  majors_summary: pd.DataFrame,
                  minors_summary: pd.DataFrame,
-                 mode_tag: str = "__baseline") -> None:
+                 mode_tag: str) -> None:
     """Save all results to CSV files."""
     os.makedirs('results', exist_ok=True)
 
@@ -877,10 +881,11 @@ def main():
     dl_regime = str(dl_surface.get("dl_regime", "")).upper()
     dl_surface["dl_regime"] = dl_regime
     dl_runtime_enabled = bool(DL_SIGNALS_ENABLED)
-    if dl_runtime_enabled and (dl_regime == "ALL" or dl_regime not in VALID_DL_REGIMES):
+    if dl_runtime_enabled and dl_regime not in VALID_DL_REGIMES:
         print(
-            f"[WARN] DL disabled for this run: invalid dl_regime={dl_regime!r}. "
-            f"Valid values={sorted(VALID_DL_REGIMES)} (no 'all' support in v1)."
+            f"[WARN] DL features will not be attached (baseline mode): "
+            f"invalid dl_regime={dl_regime!r}. Valid values={sorted(VALID_DL_REGIMES)} "
+            f"(no 'all' support in v1)."
         )
         dl_runtime_enabled = False
     dl_artifact_path = resolve_dl_prediction_artifact_path() if dl_runtime_enabled else None

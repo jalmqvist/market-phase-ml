@@ -73,7 +73,7 @@ A **surface** is the operational identity of a DL signal stream:
 
 This is treated as *signal identity*, not provenance. In v1, `dl_regime` must be explicitly specified and must be one of `HVTF | LVTF | HVR | LVR`.
 
-`main.py` does **not** support `dl_regime="all"` in v1. If `dl_regime` is `"all"` (or invalid), the run logs a warning and skips DL attachment (baseline behavior).
+`main.py` does **not** support `dl_regime="all"` in v1. If `dl_regime` is `"all"` (or otherwise invalid), the run logs a warning, does not attach DL features, and proceeds in baseline mode.
 
 > **For H1 DL artifacts**:
 > **target_horizon=24 means 24 hourly bars (~24h), NOT D1 bars.**
