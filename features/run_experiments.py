@@ -164,14 +164,26 @@ def _maybe_attach_dl_signals(df: pd.DataFrame) -> pd.DataFrame:
     """
     _ensure_repo_root_on_path()
 
-    from src.dl_config import DL_SIGNALS_ENABLED, DL_SIGNALS_CUBE_PATH, DL_SIGNAL_SURFACE
+    from src.dl_config import (
+        DL_SIGNALS_ENABLED,
+        DL_SIGNAL_SURFACE,
+        resolve_dl_prediction_artifact_path,
+    )
     from src.dl_surface_loader import load_dl_surface
 
     if not DL_SIGNALS_ENABLED:
         return df
 
-    print(f"Loading DL signals from: {DL_SIGNALS_CUBE_PATH}")
-    surface_df = load_dl_surface(DL_SIGNALS_CUBE_PATH, DL_SIGNAL_SURFACE, strict=False)
+    artifact_path = resolve_dl_prediction_artifact_path()
+    if artifact_path is None:
+        print(
+            "  [warn] No DL parquet artifact found at configured path; "
+            "continuing without DL signals."
+        )
+        return df
+
+    print(f"Loading DL signals from: {artifact_path}")
+    surface_df = load_dl_surface(artifact_path, DL_SIGNAL_SURFACE, strict=False)
 
     if surface_df.empty:
         print("  [warn] DL surface is empty; continuing without DL signals.")
