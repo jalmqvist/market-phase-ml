@@ -73,6 +73,9 @@ A **surface** is the operational identity of a DL signal stream:
 
 This is treated as *signal identity*, not provenance.  In v1, `dl_regime` must be explicitly specified — do **not** allow `dl_regime=None` to mean "all regimes".  DL findings are regime-conditional; mixing regimes implicitly creates ambiguous semantics.
 
+> **For H1 DL artifacts**:
+> **target_horizon=24 means 24 hourly bars (~24h), NOT D1 bars.**
+
 ---
 
 ## Expected parquet schema (upstream naming)
