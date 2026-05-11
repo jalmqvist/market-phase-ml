@@ -48,7 +48,7 @@ from src.dl_daily_features import load_and_aggregate_d1, D1_FEATURE_COLS
 # clear_cache('ml_results')
 # clear_cache('ml_predicted_phases')
 # clear_cache('ml_backtest_results')
-# clear_cache()   # clears everything
+clear_cache()   # clears everything
 # ─────────────────────────────────────────
 WF_TRAIN_YEARS = 7
 WF_TEST_MONTHS = 6
@@ -65,8 +65,8 @@ DL_SIGNALS_ENABLED = True
 DL_SIGNAL_SURFACE = {
     "model": "mlp",
     "target_horizon": 24,
-    "feature_set": "q0.5",
-    "dl_regime": "HVTF",
+    "feature_set": "price_trend",
+    "dl_regime": "LVTF",
 }
 
 # Expensive sweeps (disable by default)
