@@ -66,6 +66,38 @@ The notebook (`notebooks/01_regime_gating_walkforward.ipynb`) reads these artifa
 
 ---
 
+## DL integration quickstart (v1)
+
+`market-sentiment-ml` exports per-run H1 DL prediction artifacts, and `market-phase-ml` consumes one selected surface, aggregates it to D1, and feeds those numeric features into the existing pipeline.
+
+```bash
+# 1) In market-sentiment-ml/: export one surface artifact
+python -m research.deep_learning.train \
+  --dataset-version 1.3.2 \
+  --pairs EURUSD \
+  --regime HVTF \
+  --target-horizon 24
+
+# Output example:
+# data/output/dl_predictions/mlp__HVTF__24__price_trend__20260510T182643Z.parquet
+# data/output/dl_predictions/mlp__HVTF__24__price_trend__20260510T182643Z.manifest.json
+```
+
+```bash
+# 2) In market-phase-ml/: point to that parquet and enable DL integration
+export DL_PREDICTION_ARTIFACT_PATH=../market-sentiment-ml/data/output/dl_predictions/mlp__HVTF__24__price_trend__20260510T182643Z.parquet
+export DL_SIGNALS_ENABLED=true
+python main.py
+```
+
+v1 limitations:
+- single-surface only per run (no ensembles / multi-surface aggregation)
+- explicit `dl_regime` required (`HVTF|LVTF|HVR|LVR`), no `"all"` support
+- DL integration is optional and degrades gracefully when unavailable
+- no guarantee of performance improvement; treat as an experimental feature layer
+
+---
+
 ## What is a “fold” (walk-forward terminology)
 
 A **fold** is one out-of-sample (OOS) evaluation step in a walk-forward backtest.

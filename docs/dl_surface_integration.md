@@ -5,7 +5,7 @@ This document describes how `market-phase-ml` consumes **row-level DL prediction
 Key design principles:
 
 - Integration is **artifact-based**, not code-based.
-- `market-phase-ml` remains fully functional when DL artifacts are missing (opt-in, off by default).
+- `market-phase-ml` remains fully functional when DL artifacts are missing (optional feature layer with graceful fallback).
 - The interface is a **semantic surface selector** (stable) rather than training internals (unstable).
 - No implicit aggregation/ensembling in v1: one selector → one surface → one interpretation.
 
@@ -351,6 +351,40 @@ Additionally, lightweight integrity assertions guard:
 - monotonic `trading_day` in D1 features
 - no duplicate `(pair, trading_day)` rows before join
 - no row multiplication across the left join
+
+---
+
+## Processed-data cache semantics (DL-safe invalidation)
+
+`main.py` computes a DL-aware hash for the `processed_data` cache key:
+
+- `raw_data_hash` (existing)
+- `detector_hash` (existing)
+- `dl_cache_hash = hash(dl_enabled, dl_surface, dl_artifact_path)` (new)
+
+This ensures:
+
+- baseline and DL-enabled runs never share `processed_data` cache entries
+- changing DL artifact path or surface invalidates the processed-data cache
+- when DL is disabled, cache behavior remains baseline-compatible
+
+Operational diagnostics now print concise cache context and outcome:
+
+- `[DL CACHE] enabled=True|False`
+- `[DL CACHE] surface=model/regime/horizon/feature_set`
+- `[DL CACHE] artifact=<resolved-path-or-None>`
+- `[DL CACHE] processed_data=hit|miss|save`
+
+---
+
+## Run-mode tagging
+
+`main.py` tags outputs and manifest files with run mode:
+
+- `__baseline` for baseline runs
+- `__dl_enabled` for DL-enabled runs
+
+This is included in logs/startup banner and in output filenames (for reproducible side-by-side comparisons).
 
 ---
 
