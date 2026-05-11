@@ -113,7 +113,7 @@ def load_and_aggregate_d1(
     """
     surface_df = load_dl_surface(artifact_path, surface, strict=strict)
     if surface_df.empty:
-        return _empty_d1_df()
+        return empty_d1_df()
     return compute_d1_features(surface_df)
 
 
@@ -184,7 +184,7 @@ def compute_d1_features(surface_df: pd.DataFrame) -> pd.DataFrame:
         )
 
     if not records:
-        return _empty_d1_df()
+        return empty_d1_df()
 
     result = pd.DataFrame(records)
     result["trading_day"] = pd.to_datetime(result["trading_day"])
@@ -194,25 +194,17 @@ def compute_d1_features(surface_df: pd.DataFrame) -> pd.DataFrame:
 
 def empty_d1_df() -> pd.DataFrame:
     """Return an empty D1 daily features DataFrame with consistent dtypes."""
-    return _empty_d1_df()
-
-
-# ---------------------------------------------------------------------------
-# Private helpers
-# ---------------------------------------------------------------------------
-
-
-def _empty_d1_df() -> pd.DataFrame:
-    cols = {
-        "pair": pd.Series(dtype="object"),
-        "trading_day": pd.Series(dtype="datetime64[ns]"),
-        "dl_signal_mean_24h": pd.Series(dtype="float64"),
-        "dl_signal_std_24h": pd.Series(dtype="float64"),
-        "dl_signal_last": pd.Series(dtype="float64"),
-        "dl_signal_abs_mean": pd.Series(dtype="float64"),
-        "dl_signal_flip_count": pd.Series(dtype="int64"),
-    }
-    return pd.DataFrame(cols)
+    return pd.DataFrame(
+        {
+            "pair": pd.Series(dtype="object"),
+            "trading_day": pd.Series(dtype="datetime64[ns]"),
+            "dl_signal_mean_24h": pd.Series(dtype="float64"),
+            "dl_signal_std_24h": pd.Series(dtype="float64"),
+            "dl_signal_last": pd.Series(dtype="float64"),
+            "dl_signal_abs_mean": pd.Series(dtype="float64"),
+            "dl_signal_flip_count": pd.Series(dtype="int64"),
+        }
+    )
 
 
 def _validate_surface_df(df: pd.DataFrame) -> None:

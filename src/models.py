@@ -42,6 +42,8 @@ _DL_LEAKAGE_GUARD_COLS: frozenset[str] = frozenset(
 _DL_SIGNALS_ENABLED: bool = (
     os.environ.get("DL_SIGNALS_ENABLED", "false").lower() == "true"
 )
+#: Public alias — matches the naming convention of DL_D1_FEATURE_COLS.
+DL_SIGNALS_ENABLED: bool = _DL_SIGNALS_ENABLED
 
 class PhaseMLPredictor:
     """
