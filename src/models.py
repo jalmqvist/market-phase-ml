@@ -131,16 +131,6 @@ class PhaseMLPredictor:
         """
         feature_cols = self._get_feature_cols(df)
         X            = df[feature_cols].copy()
-        # ------------------------------------------------------------------
-        # GLOBAL FEATURE SCALING (Option 3 speed improvement)
-        # ------------------------------------------------------------------
-        scaler = StandardScaler()
-        X_scaled_full = scaler.fit_transform(X)
-        X_scaled_full = pd.DataFrame(
-            X_scaled_full,
-            index=X.index,
-            columns=X.columns
-        )
 
         # Get phase target — optionally smoothed
         raw_phase = df['phase'].copy()
@@ -190,8 +180,16 @@ class PhaseMLPredictor:
                 train_start = i - self.train_window
                 train_end = i
 
-                X_train = X_scaled_full.iloc[train_start:train_end]
+                X_train_raw = X.iloc[train_start:train_end]
                 y_train = y_encoded.iloc[train_start:train_end]
+
+                scaler = StandardScaler()
+                scaler.fit(X_train_raw)
+                X_train = pd.DataFrame(
+                    scaler.transform(X_train_raw),
+                    index=X_train_raw.index,
+                    columns=X_train_raw.columns
+                )
 
                 mask = X_train.notna().all(axis=1) & y_train.notna()
                 X_train = X_train[mask]
@@ -223,8 +221,13 @@ class PhaseMLPredictor:
                 last_trained = i
 
             # Predict current bar's next phase
-            if model is not None:
-                X_pred = X_scaled_full.iloc[i:i + 1]
+            if model is not None and scaler is not None:
+                X_pred_raw = X.iloc[i:i + 1]
+                X_pred = pd.DataFrame(
+                    scaler.transform(X_pred_raw),
+                    index=X_pred_raw.index,
+                    columns=X_pred_raw.columns
+                )
 
                 if X_pred.notna().all(axis=1).iloc[0]:
                     predicted_encoded = model.predict(X_pred)
