@@ -24,6 +24,8 @@ Produced daily feature columns
 - ``dl_signal_last``       — last (most recent) dl_signal_strength value
 - ``dl_signal_abs_mean``   — mean of |dl_signal_strength|
 - ``dl_signal_flip_count`` — number of sign changes in dl_signal_strength
+                           (NaN-safe; zeros are forward-filled so they do
+                           not create spurious flips)
 
 Usage
 -----
@@ -218,8 +220,34 @@ def _validate_surface_df(df: pd.DataFrame) -> None:
 
 
 def _count_sign_flips(signal: np.ndarray) -> int:
-    """Count the number of times the signal changes sign."""
-    if len(signal) < 2:
+    """Count sign flips between strictly positive and strictly negative values.
+
+    NaN values are ignored entirely (removed before processing).
+
+    Zeros do not create flips: each zero is forward-filled with the previous
+    non-zero sign so that a run of zeros holds the last observed direction
+    until the signal commits to a new one.  Zeros that appear before the first
+    non-zero value are discarded (they carry no prior sign information).
+
+    Returns 0 when fewer than two non-zero, non-NaN values exist.
+    """
+    # Drop NaN values; work only on observed finite values.
+    arr = signal[~np.isnan(signal)]
+    if len(arr) < 2:
         return 0
-    signs = np.sign(signal)
-    return int(np.sum(signs[1:] != signs[:-1]))
+
+    # Map each value to +1.0 (positive), -1.0 (negative), or NaN (zero).
+    # Using NaN for zero allows pd.Series.ffill() to propagate the last
+    # non-zero sign through any run of zeros.
+    signs = np.where(arr > 0, 1.0, np.where(arr < 0, -1.0, np.nan))
+
+    # Forward-fill zeros (NaN) with the last non-zero sign.
+    # Leading zeros (before the first non-zero value) remain NaN.
+    filled = pd.Series(signs).ffill().to_numpy()
+
+    # Drop any remaining NaN (i.e., leading zeros with no prior sign).
+    valid = filled[~np.isnan(filled)]
+    if len(valid) < 2:
+        return 0
+
+    return int(np.sum(valid[1:] != valid[:-1]))
