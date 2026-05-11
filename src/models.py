@@ -1,7 +1,5 @@
 # src/models.py
 
-import os
-
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
@@ -39,11 +37,10 @@ _DL_LEAKAGE_GUARD_COLS: frozenset[str] = frozenset(
     }
 )
 
-_DL_SIGNALS_ENABLED: bool = (
-    os.environ.get("DL_SIGNALS_ENABLED", "false").lower() == "true"
-)
-#: Public alias — matches the naming convention of DL_D1_FEATURE_COLS.
-DL_SIGNALS_ENABLED: bool = _DL_SIGNALS_ENABLED
+# Single source of truth: read DL_SIGNALS_ENABLED from src.dl_config so that
+# the env-var parsing logic lives in one place and models.py stays in sync
+# automatically.  dl_config only imports os and pathlib — no circular imports.
+from src.dl_config import DL_SIGNALS_ENABLED  # noqa: E402
 
 class PhaseMLPredictor:
     """
@@ -97,7 +94,7 @@ class PhaseMLPredictor:
             and df[col].dtype != bool
         ]
         # Gate DL D1 daily feature columns behind DL_SIGNALS_ENABLED.
-        if not _DL_SIGNALS_ENABLED:
+        if not DL_SIGNALS_ENABLED:
             cols = [c for c in cols if c not in DL_D1_FEATURE_COLS]
         return cols
 
@@ -434,7 +431,7 @@ class PhaseMLExperiment:
         # Gate DL D1 daily feature columns behind DL_SIGNALS_ENABLED.
         # When DL signals are disabled the columns are absent from the
         # DataFrame, but guard explicitly in case they are present with NaN.
-        if not _DL_SIGNALS_ENABLED:
+        if not DL_SIGNALS_ENABLED:
             feature_cols = [c for c in feature_cols if c not in DL_D1_FEATURE_COLS]
 
         return feature_cols

@@ -257,7 +257,7 @@ Run the inference + consolidation pipeline in `market-sentiment-ml`:
 
 ```bash
 # Inside market-sentiment-ml/
-python scripts/export_dl_predictions.py    # per-run prediction artifacts
+python -m research.deep_learning.train --dataset-version <version>   # per-run prediction artifacts
 python scripts/build_dl_signal_cube.py     # consolidated cube + manifest
 ```
 
@@ -483,7 +483,7 @@ H1 bar at 2024-01-04 xx:00  →  trading_day = 2024-01-05  (D1 prediction day)
 
 ```bash
 # Inside market-sentiment-ml/
-python scripts/export_dl_predictions.py
+python -m research.deep_learning.train --dataset-version <version>
 # Produces: data/output/dl_predictions/<run_id>.parquet
 ```
 

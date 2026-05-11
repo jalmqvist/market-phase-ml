@@ -43,6 +43,7 @@ from src.dl_surface_loader import (  # noqa: E402
     load_dl_surface,
 )
 from src.dl_config import resolve_dl_prediction_artifact_path  # noqa: E402
+from src.dl_daily_features import _count_sign_flips  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -331,6 +332,59 @@ def check_resolve_artifact_path_missing_file(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# _count_sign_flips invariant checks
+# ---------------------------------------------------------------------------
+
+
+def check_sign_flips_basic():
+    """Basic positive-to-negative transitions are counted correctly."""
+    import numpy as np
+
+    # [+, -, +, -]: 3 flips
+    assert _count_sign_flips(np.array([1.0, -1.0, 1.0, -1.0])) == 3
+    # [+, +, -, -]: 1 flip
+    assert _count_sign_flips(np.array([0.5, 0.3, -0.2, -0.8])) == 1
+    # All positive: 0 flips
+    assert _count_sign_flips(np.array([0.1, 0.2, 0.3])) == 0
+    # Single element: 0 flips
+    assert _count_sign_flips(np.array([0.5])) == 0
+    # Empty array: 0 flips
+    assert _count_sign_flips(np.array([])) == 0
+
+
+def check_sign_flips_nan_ignored():
+    """NaN values are ignored; sign flips are counted over the remaining values."""
+    import numpy as np
+
+    # NaN between two values of the same sign: no flip
+    assert _count_sign_flips(np.array([1.0, np.nan, 1.0])) == 0
+    # NaN between positive and negative: 1 flip
+    assert _count_sign_flips(np.array([1.0, np.nan, -1.0])) == 1
+    # All NaN: 0 flips
+    assert _count_sign_flips(np.array([np.nan, np.nan])) == 0
+    # Leading/trailing NaN do not affect count
+    assert _count_sign_flips(np.array([np.nan, 1.0, -1.0, np.nan])) == 1
+
+
+def check_sign_flips_zeros_no_extra_flips():
+    """Zeros are forward-filled and do not create extra flip counts."""
+    import numpy as np
+
+    # Zero between two positives: 0 flips (zero takes prior positive sign)
+    assert _count_sign_flips(np.array([1.0, 0.0, 1.0])) == 0
+    # Zero between positive and negative: 1 flip
+    assert _count_sign_flips(np.array([1.0, 0.0, -1.0])) == 1
+    # Multiple zeros between same-sign values: 0 flips
+    assert _count_sign_flips(np.array([0.5, 0.0, 0.0, 0.5])) == 0
+    # All zeros: 0 flips
+    assert _count_sign_flips(np.array([0.0, 0.0, 0.0])) == 0
+    # Leading zeros (no prior sign): discarded, not counted as flip
+    assert _count_sign_flips(np.array([0.0, 0.0, 1.0, -1.0])) == 1
+    # Zero run spanning a sign boundary: only one flip counted
+    assert _count_sign_flips(np.array([1.0, 0.0, 0.0, -1.0, 0.0, -1.0])) == 1
+
+
+# ---------------------------------------------------------------------------
 # Real artifact check (optional)
 # ---------------------------------------------------------------------------
 
@@ -379,6 +433,9 @@ def run_checks(cube_path: Path | None, surface: dict) -> int:
         ("resolve_artifact_latest", check_resolve_artifact_path_directory_latest, [tmp]),
         ("resolve_artifact_empty", check_resolve_artifact_path_directory_empty, [tmp]),
         ("resolve_artifact_missing_file", check_resolve_artifact_path_missing_file, [tmp]),
+        ("sign_flips_basic", check_sign_flips_basic, []),
+        ("sign_flips_nan_ignored", check_sign_flips_nan_ignored, []),
+        ("sign_flips_zeros_no_extra", check_sign_flips_zeros_no_extra_flips, []),
     ]
 
     for name, fn, args in synthetic:
