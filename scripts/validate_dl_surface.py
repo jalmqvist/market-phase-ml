@@ -167,6 +167,10 @@ def check_valid_cube_roundtrip(tmp_path: Path):
     assert "mpml_regime_equiv" in df.columns
     assert "signal_strength" not in df.columns, "signal_strength should be renamed"
     assert "entry_time" not in df.columns, "entry_time should be renamed to timestamp"
+    # pred_prob_up is optional in the cube; _make_cube() always includes it, so
+    # after loading it must have been renamed to dl_pred_prob_up.
+    assert "pred_prob_up" not in df.columns, "pred_prob_up should be renamed to dl_pred_prob_up"
+    assert "dl_pred_prob_up" in df.columns, "dl_pred_prob_up should be present (cube includes pred_prob_up)"
 
     # Check MPML mapping
     assert set(df["mpml_regime_equiv"].unique()) == {"HVTF"}
