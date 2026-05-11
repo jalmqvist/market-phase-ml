@@ -37,7 +37,7 @@ Usage
         },
     )
     # Returns DataFrame with columns: pair, timestamp, dl_signal_strength,
-    # mpml_regime_equiv, and optional dl_confidence / pred_prob_up.
+    # mpml_regime_equiv, and optional dl_confidence / dl_pred_prob_up.
 """
 from __future__ import annotations
 
@@ -100,7 +100,7 @@ MSML_TO_MPML: dict[str, str] = {
 # Columns in the output DF that must never be used as ML features.
 # Kept here as documentation; enforcement is in the caller (assembler).
 _LEAKAGE_GUARD_COLUMNS: frozenset[str] = frozenset(
-    {"prediction_timestamp", "mpml_regime_equiv"}
+    {"dl_prediction_timestamp", "mpml_regime_equiv"}
 )
 
 
@@ -136,7 +136,7 @@ def load_dl_surface(
         Always a DataFrame (never ``None``).
         Columns: ``pair``, ``timestamp``, ``dl_signal_strength``,
         ``mpml_regime_equiv`` plus any of
-        ``dl_confidence``, ``pred_prob_up``, ``prediction_timestamp``
+        ``dl_confidence``, ``dl_pred_prob_up``, ``dl_prediction_timestamp``
         that are present in the cube.
         Keyed (sorted) by ``(pair, timestamp)``.
 
@@ -254,10 +254,14 @@ def load_dl_surface(
     # signal_strength -> dl_signal_strength (avoids name collisions downstream)
     out["dl_signal_strength"] = surface_df["signal_strength"].astype("float64")
 
-    # Pass-through optional columns when present
-    for col in ("dl_confidence", "pred_prob_up", "prediction_timestamp"):
-        if col in surface_df.columns:
-            out[col] = surface_df[col]
+    # Pass-through optional columns when present, renaming to dl_* prefix
+    if "dl_confidence" in surface_df.columns:
+        out["dl_confidence"] = surface_df["dl_confidence"]
+    if "pred_prob_up" in surface_df.columns:
+        # Rename to dl_pred_prob_up to avoid name collisions and clarify provenance
+        out["dl_pred_prob_up"] = surface_df["pred_prob_up"].astype("float64")
+    if "prediction_timestamp" in surface_df.columns:
+        out["dl_prediction_timestamp"] = surface_df["prediction_timestamp"]
 
     # Add MPML regime equivalence (informational; must not be used as a feature)
     out["mpml_regime_equiv"] = surface_df["dl_regime"].map(MSML_TO_MPML)
@@ -284,7 +288,7 @@ def empty_dl_surface_df() -> pd.DataFrame:
             "timestamp": pd.Series(dtype="datetime64[ns]"),
             "dl_signal_strength": pd.Series(dtype="float64"),
             "dl_confidence": pd.Series(dtype="float64"),
-            "pred_prob_up": pd.Series(dtype="float64"),
+            "dl_pred_prob_up": pd.Series(dtype="float64"),
             "mpml_regime_equiv": pd.Series(dtype="object"),
         }
     )

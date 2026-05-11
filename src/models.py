@@ -1,5 +1,7 @@
 # src/models.py
 
+import os
+
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
@@ -7,6 +9,39 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score
 import xgboost as xgb
+
+# ---------------------------------------------------------------------------
+# DL daily feature constants
+# ---------------------------------------------------------------------------
+
+#: Feature columns produced by src.dl_daily_features.compute_d1_features().
+#: When DL_SIGNALS_ENABLED is True and these columns are present in the D1
+#: DataFrame they are included as model features; otherwise they are excluded
+#: to avoid NaN-only columns in non-DL runs.
+DL_D1_FEATURE_COLS: frozenset[str] = frozenset(
+    {
+        "dl_signal_mean_24h",
+        "dl_signal_std_24h",
+        "dl_signal_last",
+        "dl_signal_abs_mean",
+        "dl_signal_flip_count",
+    }
+)
+
+#: Columns that must NEVER be used as ML features regardless of dtype.
+#: These carry provenance / regime metadata and would introduce leakage.
+_DL_LEAKAGE_GUARD_COLS: frozenset[str] = frozenset(
+    {
+        "dl_regime",
+        "mpml_regime_equiv",
+        "prediction_timestamp",
+        "dl_prediction_timestamp",
+    }
+)
+
+_DL_SIGNALS_ENABLED: bool = (
+    os.environ.get("DL_SIGNALS_ENABLED", "false").lower() == "true"
+)
 
 class PhaseMLPredictor:
     """
@@ -53,12 +88,16 @@ class PhaseMLPredictor:
 
     def _get_feature_cols(self, df: pd.DataFrame) -> list:
         """Auto-detect usable feature columns."""
-        return [
+        cols = [
             col for col in df.columns
             if col not in self._exclude_cols
             and df[col].dtype in ['float64', 'int64', 'float32']
             and df[col].dtype != bool
         ]
+        # Gate DL D1 daily feature columns behind DL_SIGNALS_ENABLED.
+        if not _DL_SIGNALS_ENABLED:
+            cols = [c for c in cols if c not in DL_D1_FEATURE_COLS]
+        return cols
 
     def _build_model(self) -> xgb.XGBClassifier:
         """Build a fresh XGBoost classifier."""
@@ -309,6 +348,11 @@ class PhaseMLExperiment:
 
         # Position sizing columns from phases.py
         'stop_atr_mult', 'size_multiplier',
+
+        # DL leakage guard — regime metadata and inference timestamps must
+        # never be used as ML features (see _DL_LEAKAGE_GUARD_COLS).
+        'dl_regime', 'mpml_regime_equiv',
+        'prediction_timestamp', 'dl_prediction_timestamp',
     }
 
     def __init__(self,
@@ -372,6 +416,9 @@ class PhaseMLExperiment:
             return_mean_*, return_std_*, return_skew_*,
             di_spread, di_ratio
 
+        DL D1 daily features (``dl_signal_*``) are included only when
+        ``DL_SIGNALS_ENABLED=true`` and the columns are present in *df*.
+
         Returns:
             List of column names to use as features.
         """
@@ -381,6 +428,13 @@ class PhaseMLExperiment:
                and df[col].dtype in ['float64', 'int64', 'float32']
                and df[col].dtype != bool
         ]
+
+        # Gate DL D1 daily feature columns behind DL_SIGNALS_ENABLED.
+        # When DL signals are disabled the columns are absent from the
+        # DataFrame, but guard explicitly in case they are present with NaN.
+        if not _DL_SIGNALS_ENABLED:
+            feature_cols = [c for c in feature_cols if c not in DL_D1_FEATURE_COLS]
+
         return feature_cols
 
     def prepare_features(self,

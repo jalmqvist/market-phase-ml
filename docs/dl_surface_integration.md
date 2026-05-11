@@ -342,11 +342,14 @@ informational purposes.  It must **not** be used as an ML feature.
 When DL signals are attached, the following columns are available in the
 `dl_signal` feature group (`features/registry.py`):
 
-| Feature column       | Source column      | Notes                          |
-|----------------------|--------------------|--------------------------------|
-| `dl_signal_strength` | `signal_strength`  | renamed to avoid collision     |
-| `dl_confidence`      | `dl_confidence`    | NaN if absent from cube        |
-| `pred_prob_up`       | `pred_prob_up`     | NaN if absent from cube        |
+| Feature column       | Source column      | Notes                                    |
+|----------------------|--------------------|------------------------------------------|
+| `dl_signal_strength` | `signal_strength`  | renamed to avoid collision               |
+| `dl_confidence`      | `dl_confidence`    | NaN if absent from cube                  |
+| `dl_pred_prob_up`    | `pred_prob_up`     | renamed to `dl_*` prefix; NaN if absent  |
+
+All DL feature column names carry the `dl_` prefix to avoid name collisions
+with MPML native features and to make provenance clear.
 
 The `baseline_plus_dl` experiment in `features/experiments.py` combines the
 `baseline` and `dl_signal` groups and is automatically included when
@@ -421,7 +424,7 @@ from features.assembler import attach_dl_signals
 
 # df must have 'pair' and 'entry_time' columns
 df = attach_dl_signals(df, surface_df)
-# dl_signal_strength, dl_confidence, pred_prob_up now available in df
+# dl_signal_strength, dl_confidence, dl_pred_prob_up now available in df
 # rows without a matching DL signal get NaN
 ```
 
@@ -439,3 +442,103 @@ df = attach_dl_signals(df, surface_df)
   deterministic behavior.
 - `strict=True` is recommended for production runs where a missing or corrupt
   cube should be treated as a hard error.
+- All DL feature column names carry the `dl_` prefix to avoid collisions with
+  native MPML features. The loader always renames `pred_prob_up` →
+  `dl_pred_prob_up` and `prediction_timestamp` → `dl_prediction_timestamp`.
+
+---
+
+## D1 aggregation layer (`src/dl_daily_features.py`)
+
+### Overview
+
+The D1 aggregation layer converts H1 DL signal rows into daily features that
+can be joined to the D1 regime/trading pipeline.  It is implemented in
+`src/dl_daily_features.py` and is **not** integrated into `main.py` yet — it
+is available as a standalone utility for future integration.
+
+### No-leakage semantics
+
+For a D1 prediction at the **start** of trading day D (timestamp 00:00 UTC),
+features are aggregated from H1 bars whose `entry_time` falls on calendar day
+**D − 1** only (strictly before D 00:00 UTC).
+
+```
+H1 bar at 2024-01-04 xx:00  →  trading_day = 2024-01-05  (D1 prediction day)
+```
+
+### Produced daily feature columns
+
+| Column                | Description                                              |
+|-----------------------|----------------------------------------------------------|
+| `dl_signal_mean_24h`  | Mean of `dl_signal_strength` over all H1 bars in D−1    |
+| `dl_signal_std_24h`   | Std  of `dl_signal_strength` (ddof=1)                   |
+| `dl_signal_last`      | Last (23:00 UTC) `dl_signal_strength` value              |
+| `dl_signal_abs_mean`  | Mean of `|dl_signal_strength|`                           |
+| `dl_signal_flip_count`| Number of sign changes in `dl_signal_strength`          |
+
+### End-to-end example
+
+**Step 1 — market-sentiment-ml: export the per-run DL artifact**
+
+```bash
+# Inside market-sentiment-ml/
+python scripts/export_dl_predictions.py
+# Produces: data/output/dl_predictions/<run_id>.parquet
+```
+
+**Step 2 — market-phase-ml: run D1 aggregation**
+
+```python
+from pathlib import Path
+from src.dl_daily_features import load_and_aggregate_d1
+
+daily_df = load_and_aggregate_d1(
+    artifact_path=Path(
+        "../market-sentiment-ml/data/output/dl_predictions/"
+        "lstm__HVTF__24__price_trend__20260510T182643Z.parquet"
+    ),
+    surface={
+        "model": "lstm",
+        "target_horizon": 24,
+        "feature_set": "price_trend",
+        "dl_regime": "HVTF",
+    },
+    strict=False,
+)
+# daily_df: DataFrame keyed by (pair, trading_day) with 5 dl_signal_* columns
+print(daily_df.head())
+#         pair  trading_day  dl_signal_mean_24h  dl_signal_std_24h  ...
+# 0  eur-usd   2024-01-02        0.12               0.08           ...
+```
+
+**Step 3 — how main.py would consume D1 daily features (future integration)**
+
+> **Note:** the code below is illustrative only — `main.py` does not currently
+> import or call `dl_daily_features`.  The integration point is documented
+> here to show where and how it would be wired in when ready.
+
+```python
+# In main.py (future, when DL daily features are enabled):
+from src.dl_daily_features import load_and_aggregate_d1
+from src.dl_config import (
+    DL_SIGNALS_ENABLED, DL_SIGNAL_SURFACE,
+    resolve_dl_prediction_artifact_path,
+)
+
+if DL_SIGNALS_ENABLED:
+    artifact_path = resolve_dl_prediction_artifact_path()
+    if artifact_path is not None:
+        daily_df = load_and_aggregate_d1(artifact_path, DL_SIGNAL_SURFACE)
+
+        # d1_df is the D1 DataFrame keyed by (pair, timestamp) where
+        # timestamp is the start-of-day D1 prediction timestamp.
+        d1_df = d1_df.merge(
+            daily_df.rename(columns={"trading_day": "timestamp"}),
+            on=["pair", "timestamp"],
+            how="left",
+        )
+        # dl_signal_mean_24h … dl_signal_flip_count are now optional columns
+        # in d1_df and will be picked up by PhaseMLExperiment.get_feature_columns()
+        # and PhaseMLPredictor._get_feature_cols() when DL_SIGNALS_ENABLED=True.
+```
