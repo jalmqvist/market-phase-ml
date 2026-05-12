@@ -1,9 +1,6 @@
 # Market Phase–Based Strategy Selection (Regime-Aware Time Series Gating)
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue)
-![scikit-learn](https://img.shields.io/badge/scikit--learn-latest-orange)
-![XGBoost](https://img.shields.io/badge/XGBoost-latest-green)
-![License](https://img.shields.io/badge/license-MIT-blue)
+![Python](https://img.shields.io/badge/Python-3.10+-blue)![scikit-learn](https://img.shields.io/badge/scikit--learn-latest-orange)![XGBoost](https://img.shields.io/badge/XGBoost-latest-green)![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
@@ -26,7 +23,7 @@ After you run `python main.py` and the `results/*.csv` artifacts are generated, 
 
 - `notebooks/01_regime_gating_walkforward.ipynb`
 
-It is intentionally “read-only” on the artifacts: it loads the CSV outputs + selected debug exports and produces the main figures (fold distributions, per-pair breakdown, and a fold-level case study showing volatility spikes + strategy selection).
+It is intentionally “read-only” on the artifacts: it loads the CSV outputs + selected debug exports and produces the main figures (fold distributions, per-pair breakdown, and a fold-level case stu[...]
 
 ---
 
@@ -40,7 +37,7 @@ This repo is intentionally built as an end-to-end ML engineering project for **n
 - Failure-mode driven iteration (volatility guard, max-hold reset)
 - Code that’s structured like a small production pipeline (data → features → labels → model → evaluation)
 
-Trading is simply the “toy domain”; the underlying pattern generalizes to many real ML systems where the best decision policy depends on context (e.g., demand forecasting regimes, anomaly handling, recommender exploration/exploitation, etc.).
+Trading is simply the “toy domain”; the underlying pattern generalizes to many real ML systems where the best decision policy depends on context (e.g., demand forecasting regimes, anomaly handling[...]
 
 ---
 
@@ -52,6 +49,7 @@ python main.py
 ```
 
 Key outputs (written to `results/`):
+
 - `ablation_summary_aggregate.csv` — headline in-sample ablation numbers
 - `ablation_summary_per_pair.csv` — per-pair breakdown
 - `walkforward_results_summary.csv` — walk-forward (OOS) summary vs baseline
@@ -64,7 +62,7 @@ The notebook (`notebooks/01_regime_gating_walkforward.ipynb`) reads these artifa
 
 > Note: expensive sweeps (τ/policy sweeps) are gated behind flags in `main.py`.
 
----
+------
 
 ## DL integration quickstart (v1)
 
@@ -91,6 +89,7 @@ python main.py
 ```
 
 v1 limitations:
+
 - single-surface only per run (no ensembles / multi-surface aggregation)
 - explicit `dl_regime` required (`HVTF|LVTF|HVR|LVR`), no `"all"` support
 - DL integration is optional and degrades gracefully when unavailable

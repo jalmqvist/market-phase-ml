@@ -1,0 +1,89 @@
+{
+  "costs": {
+    "commission_per_trade": 0.0,
+    "pip_value": {
+      "jpy_pairs_pip": 0.01,
+      "mapping": "converted to short pair names in main.py",
+      "non_jpy_pairs_pip": 0.0001,
+      "source": "PIP_VALUES from src/data.py"
+    },
+    "slippage_pips": 0.5,
+    "spread_pips": 1.0
+  },
+  "dl": {
+    "dl_artifact_path": "../market-sentiment-ml/data/output/dl_predictions/mlp__LVTF__24__price_trend__20260511T183157Z.parquet",
+    "dl_enabled": true,
+    "dl_mode_tag": "__dl_enabled",
+    "dl_surface": {
+      "dl_regime": "LVTF",
+      "feature_set": "price_trend",
+      "model": "mlp",
+      "target_horizon": 24
+    },
+    "dl_surface_string": "mlp/LVTF/h24/price_trend"
+  },
+  "dynamic_policy": {
+    "max_hold_bars": 60,
+    "min_hold_bars": 10,
+    "p_margin": 0.2,
+    "tau_enter": 0.62,
+    "tau_exit": 0.57,
+    "use_hysteresis": true,
+    "use_max_hold": true,
+    "use_min_hold": true,
+    "use_prob_margin": true
+  },
+  "flags": {
+    "DEBUG_FEATURE_COLUMNS": false,
+    "DEBUG_SIGNAL_TYPES": false,
+    "DL_SIGNALS_ENABLED": true,
+    "RUN_IN_SAMPLE_ABLATION": true,
+    "RUN_POLICY_SWEEP": false,
+    "RUN_TAU_SWEEP": false,
+    "RUN_WALKFORWARD": true
+  },
+  "run": {
+    "git_sha": "89c8197418ac56659469c9d6bf1c8aa0b08dbf3f",
+    "platform": "Linux-6.17.0-23-generic-x86_64-with-glibc2.39",
+    "python_version": "3.12.3",
+    "run_id": "run_20260512T074801Z",
+    "seed": 42,
+    "timestamp_utc": "20260512T074801Z"
+  },
+  "versions": {
+    "packages": {
+      "ipykernel": "7.2.0",
+      "jupyter": "1.1.1",
+      "matplotlib": "3.10.9",
+      "notebook": "7.5.6",
+      "numpy": "2.4.4",
+      "pandas": "3.0.2",
+      "scikit-learn": "1.8.0",
+      "seaborn": "0.13.2",
+      "ta": "0.11.0",
+      "xgboost": "3.2.0",
+      "yfinance": "1.3.0"
+    },
+    "platform": "Linux-6.17.0-23-generic-x86_64-with-glibc2.39",
+    "python_full": "3.12.3 (main, Mar 23 2026, 19:04:32) [GCC 13.3.0]",
+    "python_version": "3.12.3"
+  },
+  "vol_guard": {
+    "comparison": "atr_pct >= vol_thr",
+    "feature": "atr_pct",
+    "mode_default": "no_mr",
+    "overrides": {
+      "USD-quote": "force_tf"
+    },
+    "quantile": 0.8,
+    "threshold_source": "per-fold train slice quantile (no leakage)"
+  },
+  "walkforward": {
+    "label_horizon_bars": 20,
+    "step_months": 6,
+    "test_months": 6,
+    "train_years": 7,
+    "wf_tau": 0.62,
+    "wf_tau_exit": 0.57
+  }
+}

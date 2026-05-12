@@ -1,0 +1,108 @@
+DL v1 integration evidence (MSML → MPML)
+Preliminary baseline vs DL-enabled comparison (EURUSD / LVTF surface)
+
+Date: 2026-05-12
+
+Scope / intent
+- Preserve first proof-of-concept evidence that MPML can ingest MSML DL prediction artifacts,
+  attach D1-aggregated DL features, and observe downstream metric differences in early ML stages.
+- This snapshot is NOT a full “DL propagated through all stages” result.
+
+----------------------------------------------------------------------
+Run A: DL-enabled (MPML)
+----------------------------------------------------------------------
+
+Command (MPML):
+- export DL_SIGNALS_ENABLED=true
+- export DL_PREDICTION_ARTIFACT_PATH=../market-sentiment-ml/data/output/dl_predictions/mlp__LVTF__24__price_trend__20260511T183157Z.parquet
+- python -u main.py > logfile 2>&1 &
+
+Run manifest:
+- results/run_manifest_run_20260512T074801Z__dl_enabled.json
+  - run_id: run_20260512T074801Z
+  - git_sha: 89c8197418ac56659469c9d6bf1c8aa0b08dbf3f
+  - DL enabled: true
+  - surface: mlp/LVTF/h24/price_trend
+  - artifact: ../market-sentiment-ml/data/output/dl_predictions/mlp__LVTF__24__price_trend__20260511T183157Z.parquet
+
+Observed DL attachment (MPML stdout, EURUSD):
+- processed range: 2005-02-17 -> 2024-12-27
+- DL (D1) range:    2019-04-12 -> 2024-10-30
+- DL coverage (any col): 8.13%
+
+Key ML experiment outputs (DL-enabled)
+File: results/results_ml__dl_enabled.csv
+
+EURUSD (N=419):
+- Phase as Feature:         Accuracy=0.582608695652174  Std=0.07412586581185171
+- Baseline (No Phases):     Accuracy=0.5710144927536231 Std=0.025268979382844482
+- Separate Phase Models:    Accuracy=0.4894886363636364 Std=0.058062371840636444
+
+Key ML backtest outputs (DL-enabled)
+File: results/results_ml_backtest__dl_enabled.csv
+
+EURUSD:
+- Strategy: PhaseAware_TF4_MR42_ML
+- Total Return (%): 28.07
+- Sharpe Ratio:     0.2280
+- Max Drawdown (%): -20.01
+- Win Rate (%):     60.29
+- Profit Factor:    1.1159
+- Total Trades:     549
+
+----------------------------------------------------------------------
+Run B: Baseline (no DL)
+----------------------------------------------------------------------
+
+Command (MPML baseline):
+- export DL_SIGNALS_ENABLED=false
+  (NOTE: baseline for this snapshot was produced with DL disabled via config in code / run manifest)
+- python -u main.py > logfile.noDL 2>&1 &
+
+Run manifest:
+- results/run_manifest_run_20260512T064904Z__baseline.json
+  - run_id: run_20260512T064904Z
+  - git_sha: 89c8197418ac56659469c9d6bf1c8aa0b08dbf3f
+  - DL enabled: false
+  - artifact: null
+  - surface string (config reference): mlp/LVTF/h24/price_trend
+
+Key ML experiment outputs (baseline)
+File: results/results_ml__baseline.csv
+
+EURUSD (N=5154):
+- Baseline (No Phases):     Accuracy=0.5736903376018626 Std=0.046875570182194466
+- Phase as Feature:         Accuracy=0.5692665890570432 Std=0.05358605904662081
+- Separate Phase Models:    Accuracy=0.5496560827219015 Std=0.019395757433255584
+
+Key ML backtest outputs (baseline)
+File: results/results_ml_backtest__baseline.csv
+
+EURUSD:
+- Strategy: PhaseAware_TF4_MR42_ML
+- Total Return (%): 11.77
+- Sharpe Ratio:     0.1192
+- Max Drawdown (%): -20.86
+- Win Rate (%):     60.03
+- Profit Factor:    1.0610
+- Total Trades:     578
+
+----------------------------------------------------------------------
+Interpretation (preliminary)
+----------------------------------------------------------------------
+
+- DL v1 integration is functioning end-to-end for attachment:
+  artifact resolved → surface loaded → H1→D1 aggregated → joined into EURUSD D1 frame.
+- The DL-enabled run shows non-zero DL coverage and materially different early ML outputs for EURUSD
+  (notably smaller effective sample size due to partial DL coverage window and/or masking).
+- Later pipeline stages (dynamic selector / walk-forward selector training / volatility-guard reporting)
+  are expected to remain unchanged in v1 until DL features are propagated into those components
+  (many downstream stages use a fixed baseline feature set).
+
+Files captured in this evidence folder (source-of-truth snapshot)
+- results_ml__baseline.csv
+- results_ml_backtest__baseline.csv
+- run_manifest_run_20260512T064904Z__baseline.json
+- results_ml__dl_enabled.csv
+- results_ml_backtest__dl_enabled.csv
+- run_manifest_run_20260512T074801Z__dl_enabled.json
