@@ -61,7 +61,8 @@ RUN_IN_SAMPLE_ABLATION = True
 RUN_WALKFORWARD = True
 
 # DL surface integration (optional feature layer, v1 single-surface)
-DL_SIGNALS_ENABLED = True
+# DL_SIGNALS_ENABLED = True
+DL_SIGNALS_ENABLED = os.environ.get("DL_SIGNALS_ENABLED", "false").lower() == "true"
 DL_SIGNAL_SURFACE = {
     "model": "mlp",
     "target_horizon": 24,
@@ -81,7 +82,59 @@ DEBUG_BASELINE_KEYS = False
 DEBUG_FEATURE_COLUMNS = False
 DEBUG_SIGNAL_TYPES = False
 DEBUG_VOL_GUARD = False   # gate verbose per-fold vol-guard train/test prints
+# ─────────────────────────────────────────
+# OPTIONAL PAIR UNIVERSE FILTER
+# ─────────────────────────────────────────
+# Backwards compatible:
+# - unset ACTIVE_PAIRS => use full universe (existing behavior)
+# - set ACTIVE_PAIRS => restrict entire MPML pipeline to those pairs
+#
+# Example:
+# export ACTIVE_PAIRS=USDJPY,EURJPY,GBPJPY,EURCHF,USDCHF
+#
+ACTIVE_PAIRS_ENV = os.environ.get("ACTIVE_PAIRS", "").strip()
 
+if ACTIVE_PAIRS_ENV:
+    ACTIVE_PAIRS = {
+        p.strip().upper()
+        for p in ACTIVE_PAIRS_ENV.split(",")
+        if p.strip()
+    }
+else:
+    ACTIVE_PAIRS = None
+
+
+def filter_pair_universe(raw_data: dict) -> dict:
+    """
+    Restrict pipeline universe to ACTIVE_PAIRS if configured.
+
+    Preserves metadata keys beginning with "_".
+    """
+    if ACTIVE_PAIRS is None:
+        print("[PAIR FILTER] inactive (full universe)")
+        return raw_data
+
+    filtered = {}
+
+    for key, value in raw_data.items():
+        # Preserve metadata entries
+        if str(key).startswith("_"):
+            filtered[key] = value
+            continue
+
+        if str(key).upper() in ACTIVE_PAIRS:
+            filtered[key] = value
+
+    kept_pairs = sorted([
+        k for k in filtered.keys()
+        if not str(k).startswith("_")
+    ])
+
+    print(f"[PAIR FILTER] active")
+    print(f"[PAIR FILTER] requested={sorted(ACTIVE_PAIRS)}")
+    print(f"[PAIR FILTER] kept={kept_pairs}")
+
+    return filtered
 os.makedirs("results", exist_ok=True)
 
 # ─────────────────────────────────────────
@@ -976,6 +1029,7 @@ def main():
 
     print('=' * 60)
     print("=== RUN MODE: DL ENABLED ===" if dl_runtime_enabled else "=== RUN MODE: BASELINE ===")
+    print(f"ACTIVE_PAIRS={sorted(ACTIVE_PAIRS) if ACTIVE_PAIRS else 'ALL'}")
     print(f"DL enabled: {dl_runtime_enabled}")
     print(f"DL selected surface: {dl_surface}")
     print(f"surface={dl_surface_str}")
@@ -1087,6 +1141,9 @@ def main():
         use_cache=True
     )
     raw_data = pipeline.run(pairs=ALL_PAIRS)
+
+    # Optional pair-universe restriction
+    raw_data = filter_pair_universe(raw_data)
 
     loaded_majors = raw_data.pop('_majors')
     loaded_minors = raw_data.pop('_minors')
