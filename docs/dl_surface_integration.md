@@ -444,3 +444,40 @@ Per-run artifacts are per-run; point `DL_PREDICTION_ARTIFACT_PATH` at the correc
 - Consolidated multi-surface cube (aggregating across runs/surfaces).
 
 When those are introduced, they should be explicit orchestration rather than overloaded selector semantics.
+
+---
+
+# Current Research Interpretation (May 2026)
+
+DL surfaces are increasingly interpreted as:
+
+- structural behavioral descriptors
+rather than:
+- direct standalone alpha predictors.
+
+Current experiments suggest DL may encode:
+
+- persistence structure
+- transition timing
+- release dynamics
+- regime confidence
+- behavioral-family differences
+
+rather than universally predictive directional signal.
+
+Operationally, DL integration currently affects:
+
+- phase prediction
+- downstream backtests
+- strategy behavior
+
+but does not yet propagate through the full MPML pipeline.
+
+Future integration work will likely focus on:
+
+- strategy weighting
+- dynamic selector conditioning
+- volatility-aware activation
+- behavior-conditioned allocation
+
+rather than fixed global DL overlays.

@@ -7,6 +7,66 @@ stratified by market regime (phase) and currency group (JPY vs non-JPY).
 
 ---
 
+# Updated Interpretation (May 2026)
+
+Subsequent deep-learning and ABM experiments have refined the interpretation
+of the regime-conditioned JPY findings described below.
+
+Earlier work interpreted JPY behavior primarily as:
+
+- a conditional contrarian effect
+- strongest under low-volatility conditions
+
+However, newer grouped DL experiments suggest a broader structural distinction
+between FX pair families:
+
+## Persistent / accumulation-oriented structure
+
+Examples:
+- EURUSD
+- GBPUSD
+- NZDUSD
+- EURGBP
+- EURAUD
+
+Characteristics:
+- smoother persistence
+- weaker directional generalization
+- accumulation-dominated behavior
+
+## Reactive / release-oriented structure
+
+Examples:
+- USDJPY
+- EURJPY
+- GBPJPY
+- EURCHF
+- USDCHF
+
+Characteristics:
+- sharper transitions
+- stronger directional precision
+- release / instability dynamics
+
+Importantly, this divergence now appears:
+
+- in grouped DL experiments
+- in MPML downstream integration
+- and in ABM persistence/release simulations.
+
+This suggests the earlier “JPY effect” may actually have been observing part
+of a broader behavioral-family structure rather than a purely currency-specific
+phenomenon.
+
+Current interpretation:
+
+- persistent-family markets may reflect slower accumulation dynamics
+- reactive-family markets may reflect volatility-conditioned release dynamics
+
+This is now an active research direction.
+
+---
+
 ## Data Inputs
 
 ### Sibling Repository
