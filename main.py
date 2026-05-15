@@ -64,7 +64,7 @@ RUN_WALKFORWARD = True
 # DL_SIGNALS_ENABLED = True
 DL_SIGNALS_ENABLED = os.environ.get("DL_SIGNALS_ENABLED", "false").lower() == "true"
 DL_SIGNAL_SURFACE = {
-    "model": "mlp",
+    "model": os.getenv("DL_MODEL", "mlp"),
     "target_horizon": 24,
     "feature_set": "price_trend",
     "dl_regime": "LVTF",
