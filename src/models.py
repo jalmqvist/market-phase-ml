@@ -902,6 +902,12 @@ class StrategyPerformanceTracker:
                 'volatility_recent': df['atr_pct'].iloc[max(0, i - 5):i].mean(),
             }
 
+            # Propagate DL feature columns when present (DL_SIGNALS_ENABLED=True path).
+            # When DL is disabled, DL_D1_FEATURE_COLS are absent from df so this loop is a no-op.
+            for col in DL_D1_FEATURE_COLS:
+                if col in df.columns:
+                    row[col] = df[col].iloc[i]
+
             # Strategy returns over next window_days
             for strategy_name in equity_curves.keys():
                 eq_current = eq_df[strategy_name].iloc[i]
@@ -982,14 +988,27 @@ class StrategySelector:
         from sklearn.model_selection import StratifiedKFold, cross_val_score
         from sklearn.pipeline import Pipeline
 
+        # Build feature column list: base features + any DL columns present in training_data.
+        # DL columns are absent in baseline runs (DL_SIGNALS_ENABLED=False) so this is a no-op
+        # in that case and baseline behavior is fully preserved.
+        base_feature_cols = self.get_feature_columns()
+        dl_feature_cols = [
+            c for c in DL_D1_FEATURE_COLS
+            if c in training_data.columns and c not in _DL_LEAKAGE_GUARD_COLS
+        ]
+        if DL_SIGNALS_ENABLED and dl_feature_cols:
+            all_feature_cols = base_feature_cols + dl_feature_cols
+        else:
+            all_feature_cols = base_feature_cols
+
         # Get base training data
-        train_df = training_data.dropna(subset=self.get_feature_columns() + ['best_strategy'])
+        train_df = training_data.dropna(subset=all_feature_cols + ['best_strategy'])
 
         if len(train_df) < 100:
             print(f"  ✗ Too few training samples ({len(train_df)})")
             return {}
 
-        X = train_df[self.get_feature_columns()].copy()
+        X = train_df[all_feature_cols].copy()
         y_strategy = train_df['best_strategy'].copy()
 
         # ✅ Map 31 strategies to 3 categories
@@ -1057,7 +1076,7 @@ class StrategySelector:
         )
 
         self.model.fit(X_scaled, y_encoded)
-        self.feature_cols = self.get_feature_columns()
+        self.feature_cols = all_feature_cols
 
         print(f'\n  StrategySelector Training (3-class):')
         print(f'    Samples: {len(X)}')
