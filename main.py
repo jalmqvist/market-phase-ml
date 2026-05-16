@@ -34,7 +34,7 @@ from src.cache import (
 from src.models import (
     PhaseMLExperiment, PhaseMLPredictor,
     StrategyPerformanceTracker, StrategySelector,
-    smooth_phase_labels,
+    smooth_phase_labels, safe_existing_columns,
 )
 from src.strategies import Backtester as BT, PhaseAwareStrategy, StrategySelector_Dynamic
 from src.repro import set_global_seed, build_run_config, write_manifest
@@ -1613,6 +1613,16 @@ def main():
     print('\n[4b/5] Training strategy selector ML...')
     print('  (Predicting strategy TYPE: TrendFollowing vs MeanReversion vs PhaseAware)')
 
+    # DL pipeline diagnostics before strategy selector training
+    _sample_df_4b = next(iter(processed_data.values())) if processed_data else None
+    _dl_cols_4b = get_dl_feature_columns(_sample_df_4b) if _sample_df_4b is not None else []
+    print(
+        f"[DL PIPELINE] strategy-selector training: "
+        f"dl_enabled={dl_runtime_enabled} "
+        f"dl_cols={sorted(_dl_cols_4b)} "
+        f"pairs={sorted(processed_data.keys())}"
+    )
+
     selector_trained = {}
 
     for pair_name, df in processed_data.items():
@@ -1649,6 +1659,13 @@ def main():
         print(f'✗ No strategy selectors trained')
 
     # Aggregate by group for both sizing methods
+    # DL pipeline diagnostics before aggregation
+    print(
+        f"[DL PIPELINE] aggregation: "
+        f"dl_enabled={dl_runtime_enabled} "
+        f"pairs={sorted(processed_data.keys())} "
+        f"hardcoded_pairs={sorted(hardcoded_results.keys())}"
+    )
     print('\n--- Hardcoded Size Multipliers ---')
     majors_hardcoded = aggregate_backtest_results(
         hardcoded_results, loaded_majors, 'Majors'
@@ -1680,6 +1697,13 @@ def main():
 
     # Save results
     print('\nSaving results...')
+    # DL pipeline diagnostics before final export
+    print(
+        f"[DL PIPELINE] final export: "
+        f"dl_enabled={dl_runtime_enabled} "
+        f"dl_cols={sorted(_dl_cols_4b)} "
+        f"mode_tag={dl_mode_tag}"
+    )
     save_results(
         hardcoded_results,
         majors_hardcoded,
@@ -1708,9 +1732,22 @@ def main():
         dynamic_results = {}
     else:
         dynamic_results = {}
+        # DL pipeline diagnostics before dynamic backtests
+        for _pn, _sel in selector_trained.items():
+            _sel_dl = [c for c in (_sel.feature_cols or []) if c.startswith("dl_")]
+            print(
+                f"[DL PIPELINE] dynamic-bt selector: pair={_pn} "
+                f"feature_count={len(_sel.feature_cols or [])} "
+                f"dl_cols_in_selector={sorted(_sel_dl)}"
+            )
 
         for pair_name, df in processed_data.items():
             print(f'\n  --- {pair_name} ---')
+            _pair_dl_cols = get_dl_feature_columns(df)
+            print(
+                f"  [DL PIPELINE] {pair_name}: "
+                f"dl_cols_in_df={sorted(_pair_dl_cols)}"
+            )
 
             if pair_name not in selector_trained:
                 print(f'    ✗ No selector for this pair')

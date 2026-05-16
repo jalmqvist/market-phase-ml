@@ -39,6 +39,29 @@ _DL_LEAKAGE_GUARD_COLS: frozenset[str] = frozenset(
 # automatically.  dl_config only imports os and pathlib — no circular imports.
 from src.dl_config import DL_SIGNALS_ENABLED  # noqa: E402
 
+
+# ---------------------------------------------------------------------------
+# Schema-tolerant helpers
+# ---------------------------------------------------------------------------
+
+def safe_existing_columns(df: pd.DataFrame, cols: list) -> list:
+    """Return only the columns from *cols* that are present in *df*.
+
+    Use this instead of ``df[expected_cols]`` wherever downstream pipeline
+    stages must tolerate DL feature columns being present or absent depending
+    on DL enabled/disabled state, per-pair artifact coverage, or model family.
+
+    For truly required columns (e.g. 'phase', 'adx') raise explicitly with an
+    informative error rather than silently dropping them.
+
+    Example::
+
+        safe_cols = safe_existing_columns(df, selector.feature_cols)
+        X = df[safe_cols]  # never raises KeyError for optional DL columns
+    """
+    return [c for c in cols if c in df.columns]
+
+
 class PhaseMLPredictor:
     """
     Walk-forward ML phase predictor.
@@ -1117,7 +1140,10 @@ class StrategySelector:
         if self.model is None:
             raise ValueError("Model not trained. Call train() first.")
 
-        X = features_df[self.feature_cols].copy()
+        # Use reindex so that columns absent from features_df (e.g. DL columns
+        # that were trained on but are missing in the current inference slice)
+        # become NaN rather than raising KeyError.
+        X = features_df.reindex(columns=self.feature_cols).copy()
 
         # Either return a fallback category, or keep returning None if you prefer
         if X.isnull().any().any():
@@ -1148,7 +1174,9 @@ class StrategySelector:
         if self.scaler is None:
             raise ValueError("Scaler not fitted. Call train() first.")
 
-        X = features_df[self.feature_cols].copy()
+        # Use reindex so missing columns (e.g. absent DL columns) become NaN
+        # instead of raising KeyError; callers check for NaN before predicting.
+        X = features_df.reindex(columns=self.feature_cols).copy()
         X_scaled = self.scaler.transform(X)
 
         probs = self.model.predict_proba(X_scaled)[0]
@@ -1162,6 +1190,7 @@ class StrategySelector:
         Vectorized predict_proba for a feature DataFrame with columns = feature_cols.
         Returns ndarray shape (n_samples, n_classes).
         """
-        X = X_df[self.feature_cols].copy()
+        # Use reindex so missing columns become NaN instead of raising KeyError.
+        X = X_df.reindex(columns=self.feature_cols).copy()
         X_scaled = self.scaler.transform(X)
         return self.model.predict_proba(X_scaled)

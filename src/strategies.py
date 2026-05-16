@@ -1814,7 +1814,14 @@ class StrategySelector_Dynamic:
             pred_type = None
 
             if selector is not None:
-                features_df = df.loc[df.index[[i]], selector.feature_cols].copy()
+                # Use reindex so that columns present in selector.feature_cols
+                # but absent from df (e.g. DL columns with zero coverage for
+                # this pair/slice) become NaN rather than raising KeyError.
+                # The isnull check below then correctly falls through to the
+                # PhaseAware fallback for any bar without complete features.
+                features_df = df.loc[df.index[[i]]].reindex(
+                    columns=selector.feature_cols
+                ).copy()
                 if not features_df.isnull().any().any():
                     try:
                         probs = selector.predict_proba(features_df)  # dict: class -> prob

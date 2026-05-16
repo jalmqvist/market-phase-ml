@@ -113,6 +113,22 @@ When `DL_SIGNALS_ENABLED=true`, DL feature columns now flow through the **entire
 | Walk-forward experiments | ✓ **(new in v2)** — DL columns preserved in fold slices |
 | Ablation experiments | ✓ **(new in v2)** — same selector as walk-forward |
 
+### Schema-tolerant feature access (v2 stabilization)
+
+Downstream stages are now **schema-tolerant**: they safely handle DataFrames
+where DL columns may be absent (e.g. pair with zero DL artifact coverage,
+baseline runs, or MLP vs LSTM column differences).
+
+Key patterns:
+
+- `StrategySelector.predict()` / `predict_proba()` use `reindex` to fill
+  missing columns with `NaN` instead of raising `KeyError`; existing `NaN`
+  guards return a `PhaseAware` fallback.
+- `StrategySelector_Dynamic.generate_signals()` uses the same `reindex`
+  pattern when building the per-bar feature row.
+- `safe_existing_columns(df, cols)` helper in `main.py` and `src/models.py`
+  for any additional projection that must tolerate optional DL columns.
+
 ### Backward compatibility
 
 When `DL_SIGNALS_ENABLED=false` (the default), the pipeline behaves **identically** to the previous baseline. No new required env vars, no breaking CLI changes.
@@ -123,6 +139,14 @@ After each pair's DL attachment, MPML logs the detected DL feature surface:
 
 ```
 [DL FEATURE SURFACE] EURUSD: columns=['dl_signal_mean_24h', 'dl_signal_std_24h', ...] count=5
+```
+
+At key downstream stages, `[DL PIPELINE]` log lines report the active DL configuration:
+
+```
+[DL PIPELINE] strategy-selector training: dl_enabled=True dl_cols=[...] pairs=[...]
+[DL PIPELINE] aggregation: dl_enabled=True pairs=[...] hardcoded_pairs=[...]
+[DL PIPELINE] final export: dl_enabled=True dl_cols=[...] mode_tag=__dl_enabled
 ```
 
 Enable verbose per-call selector diagnostics with `DL_DEBUG_VERBOSE=True` in `main.py`.

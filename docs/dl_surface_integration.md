@@ -495,7 +495,7 @@ This section describes the infrastructure capability expansion added in the full
 
 ### Centralized DL feature registry
 
-Two helpers in `main.py` provide the canonical way to detect DL columns:
+Three helpers in `main.py` provide the canonical way to detect and safely project DL columns:
 
 ```python
 def get_dl_feature_columns(df: pd.DataFrame) -> list[str]:
@@ -505,14 +505,98 @@ def get_dl_feature_columns(df: pd.DataFrame) -> list[str]:
 def has_dl_features(df: pd.DataFrame) -> bool:
     """Return True if df contains at least one DL feature column."""
     return bool(get_dl_feature_columns(df))
+
+def safe_existing_columns(df: pd.DataFrame, cols: list) -> list:
+    """Return only columns from *cols* that are present in *df*.
+
+    Use instead of df[expected_cols] for schema-tolerant projection when
+    downstream consumers must tolerate DL columns being present or absent.
+    """
+    return [c for c in cols if c in df.columns]
 ```
 
+The same `safe_existing_columns` helper is also available in `src/models.py`.
+
 These replace any hardcoded assumptions about DL column presence throughout the pipeline.
+
+### Schema-tolerant feature access
+
+After the full-pipeline propagation refactor, downstream stages that select
+features from DataFrames must tolerate DL columns being present or absent
+depending on:
+- `DL_SIGNALS_ENABLED` state
+- per-pair artifact coverage (zero-coverage pairs have DL columns dropped)
+- model family (MLP vs LSTM may produce different column sets)
+- ablation mode (`trend_vol_only` vs `price_trend`)
+
+**`StrategySelector` inference** uses `reindex` to fill missing columns with
+`NaN` instead of raising `KeyError`:
+
+```python
+# Safe: missing columns become NaN; existing NaN guard returns PhaseAware fallback
+X = features_df.reindex(columns=self.feature_cols).copy()
+if X.isnull().any().any():
+    return 'PhaseAware'
+```
+
+**`StrategySelector_Dynamic.generate_signals()`** applies the same pattern
+when building the per-bar feature row:
+
+```python
+# Safe: reindex tolerates selector trained on DL cols when df lacks them
+features_df = df.loc[df.index[[i]]].reindex(
+    columns=selector.feature_cols
+).copy()
+if not features_df.isnull().any().any():
+    probs = selector.predict_proba(features_df)
+```
+
+For brittle `df[expected_cols]` projections elsewhere, use:
+
+```python
+df[safe_existing_columns(df, expected_cols)]
+```
+
+For truly required columns, raise an informative error:
+
+```python
+missing = [c for c in required_cols if c not in df.columns]
+if missing:
+    raise ValueError(f"Required columns missing from DataFrame: {missing}")
+```
+
+### DL pipeline diagnostics
+
+At key pipeline stages, `[DL PIPELINE]` log lines report the active DL
+configuration so problems are immediately visible:
+
+```
+[DL PIPELINE] strategy-selector training: dl_enabled=True dl_cols=['dl_signal_mean_24h', ...] pairs=[...]
+[DL PIPELINE] aggregation: dl_enabled=True pairs=[...] hardcoded_pairs=[...]
+[DL PIPELINE] final export: dl_enabled=True dl_cols=[...] mode_tag=__dl_enabled
+[DL PIPELINE] dynamic-bt selector: pair=EURUSD feature_count=12 dl_cols_in_selector=[...]
+[DL PIPELINE] EURUSD: dl_cols_in_df=['dl_signal_mean_24h', ...]
+```
+
+### Cache identity (DL-safe)
+
+The `processed_data` cache key includes DL surface identity:
+- `dl_enabled` state
+- `dl_surface` (model / regime / horizon / feature_set)
+- `dl_artifact` (resolved parquet path)
+
+Downstream caches (`ml_results`, `backtest_results`, etc.) are keyed on
+`_hash_dict_of_dataframes(processed_data)`, which naturally differs between
+DL-enabled and baseline runs because the DataFrames themselves differ.
+
+The pair filter is captured by hashing the already-filtered `raw_data`, so
+changing `MPML_PAIR_FILTER` automatically invalidates all downstream caches.
 
 ### Backward compatibility
 
 When `DL_SIGNALS_ENABLED=false` (the default):
 - `get_dl_feature_columns(df)` returns `[]` (DL columns are absent from the DataFrames)
+- `safe_existing_columns(df, cols)` returns `cols` unchanged (no DL cols to drop)
 - `StrategyPerformanceTracker` adds no extra columns
 - `StrategySelector` trains on the original 7 base features only
 - `StrategySelector_Dynamic` behaves identically to baseline
