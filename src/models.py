@@ -79,7 +79,7 @@ def apply_optional_feature_imputation(
     optional_feature_cols: list[str],
     *,
     fill_value: float = 0.0,
-    add_missing_indicators: bool = False,
+    add_missing_indicators: bool = True,
 ) -> pd.DataFrame:
     """Impute optional feature columns deterministically."""
     X_out = X.copy()
@@ -103,7 +103,7 @@ def build_training_matrix(
     required_feature_cols: list[str] | None = None,
     optional_feature_cols: list[str] | None = None,
     diagnostics_label: str | None = None,
-    add_optional_missing_indicators: bool = False,
+    add_optional_missing_indicators: bool = True,
 ) -> tuple[pd.DataFrame, pd.Series, dict]:
     """Build robust training matrices with required-only masking and optional DL imputation."""
     feature_cols = list(dict.fromkeys(feature_cols))
@@ -134,6 +134,10 @@ def build_training_matrix(
 
     optional_cols_present = [c for c in optional_cols if c in X_required.columns]
     if optional_cols_present and len(X_required):
+        missingness_stats = {
+            col: float(X_required[col].isna().mean() * 100.0)
+            for col in optional_cols_present
+        }
         dl_coverage_pct = float(
             X_required[optional_cols_present].notna().any(axis=1).mean() * 100.0
         )
@@ -168,6 +172,12 @@ def build_training_matrix(
 
     rows_after_optional_imputation = len(X_final)
     effective_training_samples = rows_after_optional_imputation
+    if effective_training_samples < 100:
+        print(
+            f"  ⚠️  [{diagnostics_label}] "
+            f"very small effective sample size: "
+            f"{effective_training_samples}"
+        )
 
     if rows_after_required_mask > 0:
         min_expected_rows = int(np.floor(rows_after_required_mask * 0.5))
@@ -181,6 +191,7 @@ def build_training_matrix(
         "rows_after_optional_imputation": rows_after_optional_imputation,
         "dl_coverage_pct": dl_coverage_pct,
         "effective_training_samples": effective_training_samples,
+        "missingness_stats": missingness_stats,
     }
 
     if diagnostics_label is not None:
@@ -390,7 +401,7 @@ class PhaseMLPredictor:
                     X_pred_raw,
                     optional_dl_feature_cols,
                     fill_value=0.0,
-                    add_missing_indicators=False,
+                    add_missing_indicators=True,
                 )
 
                 X_pred = pd.DataFrame(

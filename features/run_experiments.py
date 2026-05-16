@@ -3,6 +3,10 @@ import numpy as np
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
+from src.models import (
+    build_training_matrix,
+    OPTIONAL_DL_FEATURE_COLS,
+)
 
 from features.experiments import EXPERIMENTS
 from features.assembler import assemble_features, attach_dl_signals
@@ -100,25 +104,37 @@ def run_walk_forward(df, feature_groups, target_col):
             X_test = assemble_features(test, groups)
             y_test = test[target_col]
 
-            optional_dl_cols_train = [c for c in X_train.columns if c.startswith("dl_")]
-            required_cols_train = [c for c in X_train.columns if c not in optional_dl_cols_train]
-            mask_train = y_train.notna()
-            if required_cols_train:
-                mask_train &= X_train[required_cols_train].notna().all(axis=1)
-            X_train = X_train[mask_train].copy()
-            y_train = y_train[mask_train]
-            if optional_dl_cols_train:
-                X_train.loc[:, optional_dl_cols_train] = X_train[optional_dl_cols_train].fillna(0.0)
+            feature_cols = list(X_train.columns)
 
-            optional_dl_cols_test = [c for c in X_test.columns if c.startswith("dl_")]
-            required_cols_test = [c for c in X_test.columns if c not in optional_dl_cols_test]
-            mask_test = y_test.notna()
-            if required_cols_test:
-                mask_test &= X_test[required_cols_test].notna().all(axis=1)
-            X_test = X_test[mask_test].copy()
-            y_test = y_test[mask_test]
-            if optional_dl_cols_test:
-                X_test.loc[:, optional_dl_cols_test] = X_test[optional_dl_cols_test].fillna(0.0)
+            required_feature_cols = [
+                c for c in feature_cols
+                if c not in OPTIONAL_DL_FEATURE_COLS
+            ]
+
+            optional_feature_cols = [
+                c for c in feature_cols
+                if c in OPTIONAL_DL_FEATURE_COLS
+            ]
+
+            X_train, y_train, train_diag = build_training_matrix(
+                X_train,
+                y_train,
+                feature_cols=feature_cols,
+                required_feature_cols=required_feature_cols,
+                optional_feature_cols=optional_feature_cols,
+                diagnostics_label=f"wf_train_{year}_{name}",
+                add_optional_missing_indicators=True,
+            )
+
+            X_test, y_test, test_diag = build_training_matrix(
+                X_test,
+                y_test,
+                feature_cols=feature_cols,
+                required_feature_cols=required_feature_cols,
+                optional_feature_cols=optional_feature_cols,
+                diagnostics_label=f"wf_test_{year}_{name}",
+                add_optional_missing_indicators=True,
+            )
 
             if len(X_train) == 0 or len(X_test) == 0:
                 continue
