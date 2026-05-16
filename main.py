@@ -42,6 +42,26 @@ from src.dl_config import resolve_dl_prediction_artifact_path
 from src.dl_surface_loader import load_dl_surface, VALID_DL_REGIMES
 from src.dl_daily_features import load_and_aggregate_d1, D1_FEATURE_COLS
 
+
+# ─────────────────────────────────────────
+# DL FEATURE REGISTRY HELPERS
+# ─────────────────────────────────────────
+
+def get_dl_feature_columns(df: pd.DataFrame) -> list[str]:
+    """Return the canonical DL feature columns that are present in df.
+
+    These are the columns produced by attach_dl_features() via D1 aggregation.
+    Used everywhere instead of hardcoded assumptions about DL column presence.
+    Returns an empty list when DL is disabled or no DL features were attached.
+    """
+    return [c for c in D1_FEATURE_COLS if c in df.columns]
+
+
+def has_dl_features(df: pd.DataFrame) -> bool:
+    """Return True if df contains at least one DL feature column."""
+    return bool(get_dl_feature_columns(df))
+
+
 # ── Uncomment to force cache refresh ─────
 # clear_cache('processed_data')
 # clear_cache('backtest_results')
@@ -1062,6 +1082,9 @@ def main():
             "dl_surface": dl_surface,
             "dl_surface_string": dl_surface_str,
             "dl_artifact_path": str(dl_artifact_path) if dl_artifact_path is not None else None,
+            # Populated after pair processing (see below)
+            "dl_feature_columns": [],
+            "dl_feature_count": 0,
         },
         "walkforward": {
             "train_years": WF_TRAIN_YEARS,
@@ -1202,6 +1225,11 @@ def main():
                         surface=dl_surface,
                         artifact_path=dl_artifact_path,
                     )
+                    dl_cols_attached = get_dl_feature_columns(processed_df)
+                    print(
+                        f"  [DL FEATURE SURFACE] {pair_name}: "
+                        f"columns={dl_cols_attached} count={len(dl_cols_attached)}"
+                    )
                 processed_data[pair_name] = processed_df
                 processed_df.to_csv(
                     f'data/processed/{pair_name}.csv'
@@ -1231,6 +1259,13 @@ def main():
     if not processed_data:
         print('✗ No pairs processed successfully. Exiting.')
         return
+
+    # ── Update manifest with DL feature surface metadata (per run) ─────────
+    sample_pair_df = next(iter(processed_data.values()))
+    _run_dl_feature_cols = get_dl_feature_columns(sample_pair_df) if dl_runtime_enabled else []
+    manifest["dl"]["dl_feature_columns"] = _run_dl_feature_cols
+    manifest["dl"]["dl_feature_count"] = len(_run_dl_feature_cols)
+    write_manifest(manifest_path, manifest)
 
     for pair_name, df in processed_data.items():
         print_phase_distribution(df, pair_name)
@@ -1691,6 +1726,7 @@ def main():
                     default_mr="MR42",
                     tau_enter=WF_TAU,
                     tau_exit=max(0.0, WF_TAU - 0.05),
+                    dl_debug_verbose=DL_DEBUG_VERBOSE,
                     **DYNAMIC_POLICY_KWARGS,
                 )
                 pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
@@ -1989,6 +2025,7 @@ def main():
                     default_mr='MR42',
                     tau_enter=WF_TAU,
                     tau_exit=max(0.0, WF_TAU - 0.05),
+                    dl_debug_verbose=DL_DEBUG_VERBOSE,
                     **DYNAMIC_POLICY_KWARGS,
                     use_vol_guard=USE_VOL_GUARD,
                     vol_feature=VOL_FEATURE,
@@ -2364,6 +2401,7 @@ def main():
                         default_mr="MR42",
                         tau_enter=tau,
                         tau_exit=max(0.0, tau - 0.05),
+                        dl_debug_verbose=DL_DEBUG_VERBOSE,
                         **DYNAMIC_POLICY_KWARGS,
                         use_vol_guard=USE_VOL_GUARD,
                         vol_feature=VOL_FEATURE,
@@ -2585,6 +2623,7 @@ def main():
                         # prob margin settings
                         p_margin=DYNAMIC_POLICY_KWARGS.get("p_margin", 0.20),
                         use_prob_margin=DYNAMIC_POLICY_KWARGS.get("use_prob_margin", True),
+                        dl_debug_verbose=DL_DEBUG_VERBOSE,
                         # vol guard
                         use_vol_guard=USE_VOL_GUARD,
                         vol_feature=VOL_FEATURE,

@@ -8,6 +8,8 @@ from ta.volatility import BollingerBands
 from ta.trend import SMAIndicator, ADXIndicator
 from ta.momentum import StochasticOscillator, RSIIndicator
 
+from src.dl_daily_features import D1_FEATURE_COLS as _DL_D1_FEATURE_COLS
+
 @dataclass
 class TradeResult:
     """Represents a single completed trade."""
@@ -1687,6 +1689,8 @@ class StrategySelector_Dynamic:
             # --- NEW: max-hold reset ---
             max_hold_bars: int = 20,
             use_max_hold: bool = True,
+            # --- DL diagnostics verbosity ---
+            dl_debug_verbose: bool = False,
     ):
         self.tau_enter = float(tau_enter)
         self.tau_exit = float(tau_exit)
@@ -1721,6 +1725,7 @@ class StrategySelector_Dynamic:
         self.vol_feature = str(vol_feature)
         self.vol_threshold_by_pair = vol_threshold_by_pair or {}
         self.vol_guard_mode = str(vol_guard_mode)
+        self.dl_debug_verbose = bool(dl_debug_verbose)
 
     @staticmethod
     def _usd_role(pair_name: str) -> str:
@@ -1783,6 +1788,25 @@ class StrategySelector_Dynamic:
         # DEBUG
         if use_vol_guard and vol_thr is None:
             print(f"[vol-guard] No threshold for {pair_name} (guard inactive)")
+
+        # --- DL feature surface diagnostics (only when dl_debug_verbose=True) ---
+        if self.dl_debug_verbose:
+            dl_cols_in_df = [c for c in _DL_D1_FEATURE_COLS if c in df.columns]
+            selector_feat_count = len(selector.feature_cols) if selector is not None else 0
+            if dl_cols_in_df:
+                any_dl_pct = (
+                    float(df[dl_cols_in_df].notna().any(axis=1).mean() * 100.0)
+                    if len(df) else 0.0
+                )
+                print(
+                    f"  [DL selector] {pair_name}: DL columns detected={dl_cols_in_df} "
+                    f"coverage={any_dl_pct:.2f}% selector_feat_count={selector_feat_count}"
+                )
+            else:
+                print(
+                    f"  [DL selector] {pair_name}: no DL columns in df "
+                    f"selector_feat_count={selector_feat_count}"
+                )
 
         for i in range(len(df)):
             pmax = -1.0

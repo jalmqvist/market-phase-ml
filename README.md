@@ -97,6 +97,44 @@ v1 limitations:
 
 ---
 
+## Full-Pipeline DL Propagation (infrastructure capability expansion)
+
+> This is an **infra-only** change. It does not alter strategy logic, backtester semantics, transaction costs, or signal generation.
+
+When `DL_SIGNALS_ENABLED=true`, DL feature columns now flow through the **entire** MPML pipeline:
+
+| Pipeline stage | DL columns now present |
+|---|---|
+| `attach_dl_features()` | ✓ (v1 — unchanged) |
+| `PhaseMLExperiment` / `PhaseMLPredictor` | ✓ (v1 — unchanged) |
+| `StrategyPerformanceTracker` | ✓ **(new in v2)** — DL columns propagated into training rows |
+| `StrategySelector.train()` | ✓ **(new in v2)** — DL columns included in feature set automatically |
+| `StrategySelector_Dynamic.generate_signals()` | ✓ **(new in v2)** — DL-aware diagnostics available |
+| Walk-forward experiments | ✓ **(new in v2)** — DL columns preserved in fold slices |
+| Ablation experiments | ✓ **(new in v2)** — same selector as walk-forward |
+
+### Backward compatibility
+
+When `DL_SIGNALS_ENABLED=false` (the default), the pipeline behaves **identically** to the previous baseline. No new required env vars, no breaking CLI changes.
+
+### Startup diagnostics
+
+After each pair's DL attachment, MPML logs the detected DL feature surface:
+
+```
+[DL FEATURE SURFACE] EURUSD: columns=['dl_signal_mean_24h', 'dl_signal_std_24h', ...] count=5
+```
+
+Enable verbose per-call selector diagnostics with `DL_DEBUG_VERBOSE=True` in `main.py`.
+
+### Manifest
+
+The run manifest now includes `dl_feature_columns` and `dl_feature_count` in the `dl` section.
+
+For full details, see [`docs/dl_surface_integration.md`](docs/dl_surface_integration.md).
+
+---
+
 ## What is a “fold” (walk-forward terminology)
 
 A **fold** is one out-of-sample (OOS) evaluation step in a walk-forward backtest.

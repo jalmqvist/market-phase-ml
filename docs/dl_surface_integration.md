@@ -470,8 +470,91 @@ Operationally, DL integration currently affects:
 - phase prediction
 - downstream backtests
 - strategy behavior
+- strategy selector training (via `StrategyPerformanceTracker` + `StrategySelector`)
+- dynamic selector inference (via `StrategySelector_Dynamic.generate_signals()`)
+- walk-forward experiments (per-fold selector training and inference)
 
-but does not yet propagate through the full MPML pipeline.
+---
+
+## Full-Pipeline DL Propagation (v2)
+
+This section describes the infrastructure capability expansion added in the full-pipeline DL propagation refactor.  This is an **infra-only** change — it does **not** alter strategy logic, backtester semantics, transaction costs, or signal generation.
+
+### What changed
+
+**DL feature columns now flow through the entire MPML pipeline** when `DL_SIGNALS_ENABLED=true`, including:
+
+| Stage | What was added |
+|---|---|
+| Startup diagnostics | Per-pair `[DL FEATURE SURFACE]` log line after `attach_dl_features()` |
+| Manifest | `dl_feature_columns` + `dl_feature_count` fields in `manifest["dl"]` |
+| `StrategyPerformanceTracker` | DL columns propagated into training rows dynamically |
+| `StrategySelector.train()` | DL columns detected from training data and included in feature set |
+| `StrategySelector_Dynamic.generate_signals()` | DL-aware diagnostics when `dl_debug_verbose=True` |
+| Walk-forward folds | DL columns preserved via `df_full` slicing; feature masks recomputed dynamically |
+
+### Centralized DL feature registry
+
+Two helpers in `main.py` provide the canonical way to detect DL columns:
+
+```python
+def get_dl_feature_columns(df: pd.DataFrame) -> list[str]:
+    """Return DL feature columns from D1_FEATURE_COLS that are present in df."""
+    return [c for c in D1_FEATURE_COLS if c in df.columns]
+
+def has_dl_features(df: pd.DataFrame) -> bool:
+    """Return True if df contains at least one DL feature column."""
+    return bool(get_dl_feature_columns(df))
+```
+
+These replace any hardcoded assumptions about DL column presence throughout the pipeline.
+
+### Backward compatibility
+
+When `DL_SIGNALS_ENABLED=false` (the default):
+- `get_dl_feature_columns(df)` returns `[]` (DL columns are absent from the DataFrames)
+- `StrategyPerformanceTracker` adds no extra columns
+- `StrategySelector` trains on the original 7 base features only
+- `StrategySelector_Dynamic` behaves identically to baseline
+- All existing results remain reproducible
+
+### DL diagnostics
+
+At startup, each pair logs its DL feature surface after attachment:
+
+```
+[DL FEATURE SURFACE] EURUSD: columns=['dl_signal_mean_24h', ...] count=5
+```
+
+When `DL_DEBUG_VERBOSE=True`, `StrategySelector_Dynamic.generate_signals()` logs per-call DL coverage:
+
+```
+[DL selector] EURUSD: DL columns detected=['dl_signal_mean_24h', ...] coverage=94.30% selector_feat_count=12
+```
+
+### Feature surface in manifest
+
+The run manifest (`results/run_manifest_*.json`) now includes:
+
+```json
+"dl": {
+  "dl_enabled": true,
+  "dl_feature_columns": ["dl_signal_mean_24h", "dl_signal_std_24h", ...],
+  "dl_feature_count": 5
+}
+```
+
+### Future DL-aware policy selection research
+
+This refactor enables future experiments such as:
+- Strategy weighting conditioned on DL signal strength
+- Dynamic selector gating using DL confidence
+- Volatility-aware activation via DL regime signals
+- Behavior-conditioned allocation across expert policies
+
+MPML now has the infrastructure to support these without further pipeline rewrites.
+
+---
 
 Future integration work will likely focus on:
 
