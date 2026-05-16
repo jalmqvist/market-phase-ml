@@ -100,15 +100,25 @@ def run_walk_forward(df, feature_groups, target_col):
             X_test = assemble_features(test, groups)
             y_test = test[target_col]
 
-            # Drop NA rows (train)
-            mask_train = X_train.notna().all(axis=1) & y_train.notna()
-            X_train = X_train[mask_train]
+            optional_dl_cols_train = [c for c in X_train.columns if c.startswith("dl_")]
+            required_cols_train = [c for c in X_train.columns if c not in optional_dl_cols_train]
+            mask_train = y_train.notna()
+            if required_cols_train:
+                mask_train &= X_train[required_cols_train].notna().all(axis=1)
+            X_train = X_train[mask_train].copy()
             y_train = y_train[mask_train]
+            if optional_dl_cols_train:
+                X_train.loc[:, optional_dl_cols_train] = X_train[optional_dl_cols_train].fillna(0.0)
 
-            # Drop NA rows (test)
-            mask_test = X_test.notna().all(axis=1) & y_test.notna()
-            X_test = X_test[mask_test]
+            optional_dl_cols_test = [c for c in X_test.columns if c.startswith("dl_")]
+            required_cols_test = [c for c in X_test.columns if c not in optional_dl_cols_test]
+            mask_test = y_test.notna()
+            if required_cols_test:
+                mask_test &= X_test[required_cols_test].notna().all(axis=1)
+            X_test = X_test[mask_test].copy()
             y_test = y_test[mask_test]
+            if optional_dl_cols_test:
+                X_test.loc[:, optional_dl_cols_test] = X_test[optional_dl_cols_test].fillna(0.0)
 
             if len(X_train) == 0 or len(X_test) == 0:
                 continue

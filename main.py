@@ -623,16 +623,33 @@ def attach_dl_features(
             and is_numeric_dtype(merged[col])
             and not is_bool_dtype(merged[col])
         ]
-        rows_after_mask = (
-            int(merged[feature_cols].notna().all(axis=1).sum())
-            if feature_cols
-            else rows_after_join
+        optional_dl_cols = [c for c in D1_FEATURE_COLS if c in feature_cols]
+        required_feature_cols = [c for c in feature_cols if c not in optional_dl_cols]
+
+        required_mask = (
+            merged[required_feature_cols].notna().all(axis=1)
+            if required_feature_cols
+            else pd.Series(True, index=merged.index)
         )
-        retention_ratio = (rows_after_mask / rows_after_join) if rows_after_join else np.nan
+        rows_after_required_mask = int(required_mask.sum())
+        rows_after_optional_imputation = rows_after_required_mask
+        dl_coverage_pct = (
+            float(merged[optional_dl_cols].notna().any(axis=1).mean() * 100.0)
+            if optional_dl_cols and len(merged)
+            else 0.0
+        )
+        retention_ratio = (
+            rows_after_optional_imputation / rows_after_join
+            if rows_after_join
+            else np.nan
+        )
 
         print(f"  [DL] {pair_name}: rows before DL join={rows_before_join}")
         print(f"  [DL] {pair_name}: rows after DL join={rows_after_join}")
-        print(f"  [DL] {pair_name}: rows after feature-mask filtering={rows_after_mask}")
+        print(f"  [DL] {pair_name}: rows_after_required_mask={rows_after_required_mask}")
+        print(f"  [DL] {pair_name}: rows_after_optional_imputation={rows_after_optional_imputation}")
+        print(f"  [DL] {pair_name}: dl_coverage_pct={dl_coverage_pct:.2f}")
+        print(f"  [DL] {pair_name}: effective_training_samples={rows_after_optional_imputation}")
         print(f"  [DL] {pair_name}: retention ratio={retention_ratio:.4f}")
 
     # ------------------------------------------------------------------
@@ -1641,7 +1658,10 @@ def main():
 
             # Train selector model (3-class: TF vs MR vs PhaseAware)
             selector = StrategySelector()
-            metrics = selector.train(training_data)
+            metrics = selector.train(
+                training_data,
+                diagnostics_label=f"dynamic selector training pair={pair_name}",
+            )
 
             if metrics:
                 selector_trained[pair_name] = selector
@@ -2027,7 +2047,11 @@ def main():
 
                 # --- Train selector on this fold ---
                 selector = StrategySelector()
-                selector.train(training_data, do_cv=False)  # outer WF is evaluation
+                selector.train(
+                    training_data,
+                    do_cv=False,
+                    diagnostics_label=f"walkforward fold={fold_id} pair={pair_name}",
+                )  # outer WF is evaluation
 
                 # --- Test slice ---
                 df_test = df_full.iloc[test_start_pos:test_end_pos + 1].copy()
@@ -2391,7 +2415,11 @@ def main():
                     continue
 
                 selector = StrategySelector()
-                selector.train(training_data, do_cv=False)
+                selector.train(
+                    training_data,
+                    do_cv=False,
+                    diagnostics_label=f"walkforward tau-sweep fold={fold_id} pair={pair_name}",
+                )
 
                 # Test slice
                 df_test = df_full.iloc[test_start_pos:test_end_pos + 1].copy()
@@ -2617,7 +2645,11 @@ def main():
                     continue
 
                 selector = StrategySelector()
-                selector.train(training_data, do_cv=False)
+                selector.train(
+                    training_data,
+                    do_cv=False,
+                    diagnostics_label=f"walkforward policy-sweep fold={fold_id} pair={pair_name}",
+                )
 
                 # ---- test slice ----
                 df_test = df_full.iloc[test_start_pos:test_end_pos + 1].copy()
