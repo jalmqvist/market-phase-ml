@@ -1822,7 +1822,15 @@ class StrategySelector_Dynamic:
                 features_df = df.loc[df.index[[i]]].reindex(
                     columns=selector.feature_cols
                 ).copy()
-                if not features_df.isnull().any().any():
+                required_cols = [
+                    c for c in (getattr(selector, "required_feature_cols", []) or [])
+                    if c in features_df.columns
+                ]
+                required_ready = (
+                    not required_cols
+                    or not features_df[required_cols].isnull().any().any()
+                )
+                if required_ready:
                     try:
                         probs = selector.predict_proba(features_df)  # dict: class -> prob
 

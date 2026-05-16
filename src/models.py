@@ -22,6 +22,18 @@ from src.dl_daily_features import D1_FEATURE_COLS as _D1_FEATURE_COLS  # noqa: E
 #: DataFrame they are included as model features; otherwise they are excluded
 #: to avoid NaN-only columns in non-DL runs.
 DL_D1_FEATURE_COLS: frozenset[str] = frozenset(_D1_FEATURE_COLS)
+OPTIONAL_DL_FEATURE_COLS: tuple[str, ...] = tuple(sorted(DL_D1_FEATURE_COLS))
+
+# Core market features that are required for dynamic selector training.
+REQUIRED_FEATURE_COLS: tuple[str, ...] = (
+    "adx",
+    "atr_pct",
+    "plus_di",
+    "minus_di",
+    "rsi",
+    "returns_recent",
+    "volatility_recent",
+)
 
 #: Columns that must NEVER be used as ML features regardless of dtype.
 #: These carry provenance / regime metadata and would introduce leakage.
@@ -60,6 +72,128 @@ def safe_existing_columns(df: pd.DataFrame, cols: list) -> list:
         X = df[safe_cols]  # never raises KeyError for optional DL columns
     """
     return [c for c in cols if c in df.columns]
+
+
+def apply_optional_feature_imputation(
+    X: pd.DataFrame,
+    optional_feature_cols: list[str],
+    *,
+    fill_value: float = 0.0,
+    add_missing_indicators: bool = False,
+) -> pd.DataFrame:
+    """Impute optional feature columns deterministically."""
+    X_out = X.copy()
+    optional_cols_present = [c for c in optional_feature_cols if c in X_out.columns]
+
+    for col in optional_cols_present:
+        if add_missing_indicators:
+            indicator_col = f"{col}_missing"
+            if indicator_col not in X_out.columns:
+                X_out[indicator_col] = X_out[col].isna().astype("int8")
+        X_out[col] = X_out[col].fillna(fill_value)
+
+    return X_out
+
+
+def build_training_matrix(
+    X_raw: pd.DataFrame,
+    y_raw: pd.Series,
+    feature_cols: list[str],
+    *,
+    required_feature_cols: list[str] | None = None,
+    optional_feature_cols: list[str] | None = None,
+    diagnostics_label: str | None = None,
+    add_optional_missing_indicators: bool = False,
+) -> tuple[pd.DataFrame, pd.Series, dict]:
+    """Build robust training matrices with required-only masking and optional DL imputation."""
+    feature_cols = list(dict.fromkeys(feature_cols))
+    X_source = X_raw.reindex(columns=feature_cols).copy()
+    y_source = y_raw.copy()
+
+    optional_set = set(
+        optional_feature_cols
+        if optional_feature_cols is not None
+        else [c for c in feature_cols if c in OPTIONAL_DL_FEATURE_COLS]
+    )
+    optional_cols = [c for c in feature_cols if c in optional_set]
+
+    if required_feature_cols is None:
+        required_cols = [c for c in feature_cols if c not in optional_set]
+    else:
+        required_set = set(required_feature_cols)
+        required_cols = [c for c in feature_cols if c in required_set]
+
+    rows_before_mask = len(X_source)
+    required_mask = y_source.notna()
+    if required_cols:
+        required_mask &= X_source[required_cols].notna().all(axis=1)
+
+    rows_after_required_mask = int(required_mask.sum())
+    X_required = X_source.loc[required_mask].copy()
+    y_required = y_source.loc[required_mask].copy()
+
+    optional_cols_present = [c for c in optional_cols if c in X_required.columns]
+    if optional_cols_present and len(X_required):
+        dl_coverage_pct = float(
+            X_required[optional_cols_present].notna().any(axis=1).mean() * 100.0
+        )
+    else:
+        dl_coverage_pct = 0.0
+
+    rows_if_optional_required = rows_after_required_mask
+    if optional_cols_present and rows_after_required_mask > 0:
+        rows_if_optional_required = int(
+            X_required[optional_cols_present].notna().all(axis=1).sum()
+        )
+
+    optional_collapse_pct = (
+        float((rows_after_required_mask - rows_if_optional_required) / rows_after_required_mask * 100.0)
+        if rows_after_required_mask > 0
+        else 0.0
+    )
+
+    if optional_collapse_pct > 50.0:
+        label = diagnostics_label or "training"
+        print(
+            f"  ⚠️  [{label}] optional DL features would collapse "
+            f"{optional_collapse_pct:.2f}% of rows under full-feature masking"
+        )
+
+    X_final = apply_optional_feature_imputation(
+        X_required,
+        optional_cols_present,
+        fill_value=0.0,
+        add_missing_indicators=add_optional_missing_indicators,
+    )
+
+    rows_after_optional_imputation = len(X_final)
+    effective_training_samples = rows_after_optional_imputation
+
+    if rows_after_required_mask > 0:
+        min_expected_rows = int(np.floor(rows_after_required_mask * 0.5))
+        assert (
+            rows_after_optional_imputation >= min_expected_rows
+        ), "Training rows collapsed >50% due to optional feature handling"
+
+    diagnostics = {
+        "rows_before_mask": rows_before_mask,
+        "rows_after_required_mask": rows_after_required_mask,
+        "rows_after_optional_imputation": rows_after_optional_imputation,
+        "dl_coverage_pct": dl_coverage_pct,
+        "effective_training_samples": effective_training_samples,
+    }
+
+    if diagnostics_label is not None:
+        print(
+            f"  [TRAINING DIAGNOSTICS] {diagnostics_label}: "
+            f"rows_before_mask={rows_before_mask} "
+            f"rows_after_required_mask={rows_after_required_mask} "
+            f"rows_after_optional_imputation={rows_after_optional_imputation} "
+            f"dl_coverage_pct={dl_coverage_pct:.2f} "
+            f"effective_training_samples={effective_training_samples}"
+        )
+
+    return X_final, y_required, diagnostics
 
 
 class PhaseMLPredictor:
@@ -144,6 +278,8 @@ class PhaseMLPredictor:
         Training/eval semantics otherwise unchanged.
         """
         feature_cols = self._get_feature_cols(df)
+        required_feature_cols = [c for c in feature_cols if c not in OPTIONAL_DL_FEATURE_COLS]
+        optional_dl_feature_cols = [c for c in feature_cols if c in OPTIONAL_DL_FEATURE_COLS]
         X = df[feature_cols].copy()
 
         # Get phase target — optionally smoothed
@@ -198,10 +334,14 @@ class PhaseMLPredictor:
                 X_train_raw = X.iloc[train_start:train_end]
                 y_train = y_encoded.iloc[train_start:train_end]
 
-                # IMPORTANT: mask before scaling to avoid StandardScaler warnings
-                raw_mask = X_train_raw.notna().all(axis=1) & y_train.notna()
-                X_train_raw = X_train_raw.loc[raw_mask]
-                y_train = y_train.loc[raw_mask]
+                X_train_raw, y_train, _ = build_training_matrix(
+                    X_train_raw,
+                    y_train,
+                    feature_cols=feature_cols,
+                    required_feature_cols=required_feature_cols,
+                    optional_feature_cols=optional_dl_feature_cols,
+                    diagnostics_label=f"walkforward fold={i} pair-train-window",
+                )
 
                 if len(X_train_raw) < 50:
                     continue
@@ -243,9 +383,15 @@ class PhaseMLPredictor:
             if model is not None and scaler is not None:
                 X_pred_raw = X.iloc[i: i + 1]
 
-                # Skip prediction if the raw row is incomplete (avoids propagating NaNs)
-                if not X_pred_raw.notna().all(axis=1).iloc[0]:
+                if required_feature_cols and not X_pred_raw[required_feature_cols].notna().all(axis=1).iloc[0]:
                     continue
+
+                X_pred_raw = apply_optional_feature_imputation(
+                    X_pred_raw,
+                    optional_dl_feature_cols,
+                    fill_value=0.0,
+                    add_missing_indicators=False,
+                )
 
                 X_pred = pd.DataFrame(
                     scaler.transform(X_pred_raw),
@@ -579,9 +725,16 @@ class PhaseMLExperiment:
 
         X = self.prepare_features(df, include_phase=False)
         y = df['next_direction_binary']
-
-        mask = X.notna().all(axis=1) & y.notna()
-        X, y = X[mask], y[mask]
+        required_cols = [c for c in X.columns if c not in OPTIONAL_DL_FEATURE_COLS]
+        optional_cols = [c for c in X.columns if c in OPTIONAL_DL_FEATURE_COLS]
+        X, y, _ = build_training_matrix(
+            X,
+            y,
+            feature_cols=list(X.columns),
+            required_feature_cols=required_cols,
+            optional_feature_cols=optional_cols,
+            diagnostics_label="per-phase models baseline",
+        )
 
         scores = self._cross_validate(self._build_model(), X, y)
         self.results['baseline'] = scores
@@ -604,9 +757,16 @@ class PhaseMLExperiment:
 
         X = self.prepare_features(df, include_phase=True)
         y = df['next_direction_binary']
-
-        mask = X.notna().all(axis=1) & y.notna()
-        X, y = X[mask], y[mask]
+        required_cols = [c for c in X.columns if c not in OPTIONAL_DL_FEATURE_COLS]
+        optional_cols = [c for c in X.columns if c in OPTIONAL_DL_FEATURE_COLS]
+        X, y, _ = build_training_matrix(
+            X,
+            y,
+            feature_cols=list(X.columns),
+            required_feature_cols=required_cols,
+            optional_feature_cols=optional_cols,
+            diagnostics_label="per-phase models phase-features",
+        )
 
         scores = self._cross_validate(self._build_model(), X, y)
         self.results['phase_features'] = scores
@@ -652,13 +812,19 @@ class PhaseMLExperiment:
                       f'only {count} samples')
                 continue
 
-            mask = (
-                (phases == phase) &
-                X.notna().all(axis=1) &
-                y.notna()
+            phase_mask = phases == phase
+            X_phase_raw = X[phase_mask]
+            y_phase_raw = y[phase_mask]
+            required_cols = [c for c in X_phase_raw.columns if c not in OPTIONAL_DL_FEATURE_COLS]
+            optional_cols = [c for c in X_phase_raw.columns if c in OPTIONAL_DL_FEATURE_COLS]
+            X_phase, y_phase, _ = build_training_matrix(
+                X_phase_raw,
+                y_phase_raw,
+                feature_cols=list(X_phase_raw.columns),
+                required_feature_cols=required_cols,
+                optional_feature_cols=optional_cols,
+                diagnostics_label=f"per-phase models phase={phase}",
             )
-            X_phase = X[mask]
-            y_phase = y[mask]
 
             print(f'\n  Phase: {phase} ({len(X_phase)} samples)')
 
@@ -754,17 +920,25 @@ class PhaseMLExperiment:
         y = df['next_direction_binary']
 
         if phase is not None:
-            mask = (
-                (df['phase'] == phase) &
-                X.notna().all(axis=1) &
-                y.notna()
-            )
+            phase_mask = df['phase'] == phase
+            X_raw = X[phase_mask]
+            y_raw = y[phase_mask]
             label = f'phase={phase}'
         else:
-            mask = X.notna().all(axis=1) & y.notna()
+            X_raw = X
+            y_raw = y
             label = 'all phases'
 
-        X, y = X[mask], y[mask]
+        required_cols = [c for c in X_raw.columns if c not in OPTIONAL_DL_FEATURE_COLS]
+        optional_cols = [c for c in X_raw.columns if c in OPTIONAL_DL_FEATURE_COLS]
+        X, y, _ = build_training_matrix(
+            X_raw,
+            y_raw,
+            feature_cols=list(X_raw.columns),
+            required_feature_cols=required_cols,
+            optional_feature_cols=optional_cols,
+            diagnostics_label=f"feature-importance {label}",
+        )
 
         if len(X) < 50:
             print(f'  Too few samples for feature importance '
@@ -966,6 +1140,8 @@ class StrategySelector:
         self.model = None
         self.label_encoder = None
         self.feature_cols = None
+        self.required_feature_cols = None
+        self.optional_feature_cols = None
         self.scaler = None
         self.random_state = seed
 
@@ -973,15 +1149,7 @@ class StrategySelector:
 
     def get_feature_columns(self) -> list:
         """Features used for prediction."""
-        return [
-            'adx',
-            'atr_pct',
-            'plus_di',
-            'minus_di',
-            'rsi',
-            'returns_recent',
-            'volatility_recent',
-        ]
+        return list(REQUIRED_FEATURE_COLS)
 
     @staticmethod
     def _strategy_to_category(strategy_name: str) -> str:
@@ -996,7 +1164,13 @@ class StrategySelector:
             return None
 
 
-    def train(self, training_data: pd.DataFrame, do_cv: bool = True, cv_folds: int = 3) -> dict:
+    def train(
+        self,
+        training_data: pd.DataFrame,
+        do_cv: bool = True,
+        cv_folds: int = 3,
+        diagnostics_label: str | None = None,
+    ) -> dict:
 
         """
         Train the strategy TYPE selector model.
@@ -1027,15 +1201,20 @@ class StrategySelector:
         else:
             all_feature_cols = base_feature_cols
 
-        # Get base training data
-        train_df = training_data.dropna(subset=all_feature_cols + ['best_strategy'])
+        X_train, y_strategy, diag = build_training_matrix(
+            training_data,
+            training_data["best_strategy"],
+            feature_cols=all_feature_cols,
+            required_feature_cols=base_feature_cols,
+            optional_feature_cols=dl_feature_cols,
+            diagnostics_label=diagnostics_label or "dynamic selector training",
+        )
 
-        if len(train_df) < 100:
-            print(f"  ✗ Too few training samples ({len(train_df)})")
+        if len(X_train) < 100:
+            print(f"  ✗ Too few training samples ({len(X_train)})")
             return {}
 
-        X = train_df[all_feature_cols].copy()
-        y_strategy = train_df['best_strategy'].copy()
+        X = X_train.copy()
 
         # ✅ Map 31 strategies to 3 categories
         y_category = y_strategy.apply(self._strategy_to_category)
@@ -1102,7 +1281,9 @@ class StrategySelector:
         )
 
         self.model.fit(X_scaled, y_encoded)
-        self.feature_cols = all_feature_cols
+        self.feature_cols = list(X.columns)
+        self.required_feature_cols = list(base_feature_cols)
+        self.optional_feature_cols = list(dl_feature_cols)
 
         print(f'\n  StrategySelector Training (3-class):')
         print(f'    Samples: {len(X)}')
@@ -1124,7 +1305,8 @@ class StrategySelector:
             'cv_accuracy': cv_mean,
             'cv_std': cv_std,
             'n_samples': len(X),
-            'categories': list(self.label_encoder.classes_)
+            'categories': list(self.label_encoder.classes_),
+            'diagnostics': diag,
         }
 
     def predict(self, features_df: pd.DataFrame) -> str:
@@ -1144,10 +1326,17 @@ class StrategySelector:
         # that were trained on but are missing in the current inference slice)
         # become NaN rather than raising KeyError.
         X = features_df.reindex(columns=self.feature_cols).copy()
-
-        # Either return a fallback category, or keep returning None if you prefer
-        if X.isnull().any().any():
+        required_cols = [c for c in (self.required_feature_cols or []) if c in X.columns]
+        if required_cols and X[required_cols].isnull().any().any():
             return 'PhaseAware'  # or: return None
+        X = apply_optional_feature_imputation(
+            X,
+            self.optional_feature_cols or [],
+            fill_value=0.0,
+            add_missing_indicators=False,
+        )
+        if X.isnull().any().any():
+            return 'PhaseAware'
 
         if getattr(self, "scaler", None) is None:
             raise ValueError("Scaler not fitted. Train() must set self.scaler.")
@@ -1177,6 +1366,15 @@ class StrategySelector:
         # Use reindex so missing columns (e.g. absent DL columns) become NaN
         # instead of raising KeyError; callers check for NaN before predicting.
         X = features_df.reindex(columns=self.feature_cols).copy()
+        required_cols = [c for c in (self.required_feature_cols or []) if c in X.columns]
+        if required_cols and X[required_cols].isnull().any().any():
+            raise ValueError("Required selector features contain NaN")
+        X = apply_optional_feature_imputation(
+            X,
+            self.optional_feature_cols or [],
+            fill_value=0.0,
+            add_missing_indicators=False,
+        )
         X_scaled = self.scaler.transform(X)
 
         probs = self.model.predict_proba(X_scaled)[0]
@@ -1192,5 +1390,14 @@ class StrategySelector:
         """
         # Use reindex so missing columns become NaN instead of raising KeyError.
         X = X_df.reindex(columns=self.feature_cols).copy()
+        required_cols = [c for c in (self.required_feature_cols or []) if c in X.columns]
+        if required_cols and X[required_cols].isnull().any().any():
+            raise ValueError("Required selector features contain NaN")
+        X = apply_optional_feature_imputation(
+            X,
+            self.optional_feature_cols or [],
+            fill_value=0.0,
+            add_missing_indicators=False,
+        )
         X_scaled = self.scaler.transform(X)
         return self.model.predict_proba(X_scaled)
