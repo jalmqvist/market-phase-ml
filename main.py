@@ -34,7 +34,7 @@ from src.cache import (
 from src.models import (
     PhaseMLExperiment, PhaseMLPredictor,
     StrategyPerformanceTracker, StrategySelector,
-    smooth_phase_labels,
+    smooth_phase_labels, safe_existing_columns,
 )
 from src.strategies import Backtester as BT, PhaseAwareStrategy, StrategySelector_Dynamic
 from src.repro import set_global_seed, build_run_config, write_manifest
@@ -60,19 +60,6 @@ def get_dl_feature_columns(df: pd.DataFrame) -> list[str]:
 def has_dl_features(df: pd.DataFrame) -> bool:
     """Return True if df contains at least one DL feature column."""
     return bool(get_dl_feature_columns(df))
-
-
-def safe_existing_columns(df: pd.DataFrame, cols: list) -> list:
-    """Return only the columns from *cols* that are present in *df*.
-
-    Use this instead of ``df[expected_cols]`` wherever downstream pipeline
-    stages must tolerate DL feature columns being present or absent depending
-    on DL enabled/disabled state, per-pair artifact coverage, or model family.
-
-    For truly required columns (e.g. 'phase', 'adx') raise explicitly with an
-    informative error rather than silently dropping them.
-    """
-    return [c for c in cols if c in df.columns]
 
 
 # ── Uncomment to force cache refresh ─────
