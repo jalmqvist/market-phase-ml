@@ -66,7 +66,7 @@ DL_SIGNALS_ENABLED = os.environ.get("DL_SIGNALS_ENABLED", "false").lower() == "t
 DL_SIGNAL_SURFACE = {
     "model": os.getenv("DL_MODEL", "mlp"),
     "target_horizon": 24,
-    "feature_set": "price_trend",
+    "feature_set": os.getenv("DL_FEATURE_SET", "price_trend"),
     "dl_regime": "LVTF",
 }
 
