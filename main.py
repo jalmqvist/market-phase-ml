@@ -1261,8 +1261,8 @@ def main():
         return
 
     # ── Update manifest with DL feature surface metadata (per run) ─────────
-    _first_pair_df = next(iter(processed_data.values()))
-    _run_dl_feature_cols = get_dl_feature_columns(_first_pair_df) if dl_runtime_enabled else []
+    sample_pair_df = next(iter(processed_data.values()))
+    _run_dl_feature_cols = get_dl_feature_columns(sample_pair_df) if dl_runtime_enabled else []
     manifest["dl"]["dl_feature_columns"] = _run_dl_feature_cols
     manifest["dl"]["dl_feature_count"] = len(_run_dl_feature_cols)
     write_manifest(manifest_path, manifest)

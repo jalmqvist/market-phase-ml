@@ -995,6 +995,9 @@ class StrategySelector:
         dl_feature_cols = [
             c for c in DL_D1_FEATURE_COLS
             if c in training_data.columns and c not in _DL_LEAKAGE_GUARD_COLS
+            # _DL_LEAKAGE_GUARD_COLS excludes regime metadata and inference timestamps
+            # (dl_regime, mpml_regime_equiv, prediction_timestamp, dl_prediction_timestamp)
+            # that would introduce future leakage if used as model features.
         ]
         if DL_SIGNALS_ENABLED and dl_feature_cols:
             all_feature_cols = base_feature_cols + dl_feature_cols

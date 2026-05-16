@@ -1791,15 +1791,15 @@ class StrategySelector_Dynamic:
 
         # --- DL feature surface diagnostics (only when dl_debug_verbose=True) ---
         if self.dl_debug_verbose:
-            dl_cols_detected = [c for c in _DL_D1_FEATURE_COLS if c in df.columns]
+            dl_cols_in_df = [c for c in _DL_D1_FEATURE_COLS if c in df.columns]
             selector_feat_count = len(selector.feature_cols) if selector is not None else 0
-            if dl_cols_detected:
+            if dl_cols_in_df:
                 any_dl_pct = (
-                    float(df[dl_cols_detected].notna().any(axis=1).mean() * 100.0)
+                    float(df[dl_cols_in_df].notna().any(axis=1).mean() * 100.0)
                     if len(df) else 0.0
                 )
                 print(
-                    f"  [DL selector] {pair_name}: DL columns detected={dl_cols_detected} "
+                    f"  [DL selector] {pair_name}: DL columns detected={dl_cols_in_df} "
                     f"coverage={any_dl_pct:.2f}% selector_feat_count={selector_feat_count}"
                 )
             else:
