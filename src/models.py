@@ -377,11 +377,13 @@ class PhaseMLPredictor:
             print(f"  [WALKFORWARD DL] global_dl_non_null_counts={global_dl_non_null}")
             dl_any_non_null_mask = X[global_dl_numeric_cols].notna().any(axis=1)
             if dl_any_non_null_mask.any():
-                first_dl_row_pos = int(np.flatnonzero(dl_any_non_null_mask.to_numpy())[0])
-                walkforward_start = max(
-                    self.train_window,
-                    first_dl_row_pos + self.train_window,
-                )
+                non_null_positions = np.flatnonzero(dl_any_non_null_mask.to_numpy())
+                if len(non_null_positions):
+                    first_dl_row_pos = int(non_null_positions[0])
+                    walkforward_start = max(
+                        self.train_window,
+                        first_dl_row_pos + self.train_window,
+                    )
             print(
                 f"  [WALKFORWARD DL] first_non_null_dl_row_pos={first_dl_row_pos} "
                 f"dl_aware_walkforward_start={walkforward_start} "
@@ -547,22 +549,22 @@ class PhaseMLPredictor:
         if global_dl_numeric_cols:
             if dl_train_coverage_values:
                 coverage_arr = np.array(dl_train_coverage_values)
-                folds_with_nonzero_dl_coverage = np.count_nonzero(coverage_arr > 0.0)
+                retrain_attempts_with_nonzero_dl_coverage = np.count_nonzero(coverage_arr > 0.0)
                 median_cov = float(np.median(coverage_arr))
                 max_cov = float(np.max(coverage_arr))
                 p25_cov = float(np.percentile(coverage_arr, 25))
                 p75_cov = float(np.percentile(coverage_arr, 75))
                 print(
                     "  [WALKFORWARD DL SUMMARY] "
-                    f"train_coverage_folds={len(dl_train_coverage_values)} "
-                    f"folds_with_dl_coverage_gt_0={folds_with_nonzero_dl_coverage} "
+                    f"train_coverage_retrain_attempt_folds={len(dl_train_coverage_values)} "
+                    f"retrain_attempts_with_dl_coverage_gt_0={retrain_attempts_with_nonzero_dl_coverage} "
                     f"first_fold_with_dl_history={first_fold_with_dl_history} "
                     f"median_dl_coverage_pct={median_cov:.2f} "
                     f"max_dl_coverage_pct={max_cov:.2f} "
                     f"p25_dl_coverage_pct={p25_cov:.2f} "
                     f"p75_dl_coverage_pct={p75_cov:.2f}"
                 )
-                if folds_with_nonzero_dl_coverage == 0:
+                if retrain_attempts_with_nonzero_dl_coverage == 0:
                     print(
                         "  [WALKFORWARD DL SUMMARY] No fold achieved nonzero "
                         "train_dl_coverage_pct; investigate fold slicing/index alignment."
