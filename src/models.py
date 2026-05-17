@@ -299,7 +299,7 @@ class PhaseMLPredictor:
         ]
         global_dl_numeric_cols = [
             c for c in global_dl_cols
-            if c in df.columns and is_numeric_dtype(df[c]) and not is_bool_dtype(df[c])
+            if is_numeric_dtype(df[c]) and not is_bool_dtype(df[c])
         ]
         optional_dl_feature_cols = [c for c in feature_cols if c in set(global_dl_numeric_cols)]
         required_feature_cols = [c for c in feature_cols if c not in set(optional_dl_feature_cols)]
@@ -318,7 +318,7 @@ class PhaseMLPredictor:
                     "feature set is empty."
                 )
 
-        X = df.reindex(columns=feature_cols).copy()
+        X = df[feature_cols].copy()
 
         # Get phase target — optionally smoothed
         raw_phase = df["phase"].copy()
@@ -475,10 +475,10 @@ class PhaseMLPredictor:
                 )
                 if global_dl_numeric_cols:
                     pred_dl_non_null_counts = {
-                        c: int(X_pred_raw[c].notna().sum()) for c in global_dl_numeric_cols if c in X_pred_raw.columns
+                        c: int(X_pred_raw[c].notna().sum()) for c in global_dl_numeric_cols
                     }
                     pred_dl_coverage = float(
-                        X_pred_raw[[c for c in global_dl_numeric_cols if c in X_pred_raw.columns]]
+                        X_pred_raw[global_dl_numeric_cols]
                         .notna()
                         .any(axis=1)
                         .mean() * 100.0
