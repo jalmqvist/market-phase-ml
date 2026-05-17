@@ -387,6 +387,12 @@ class PhaseMLPredictor:
                 f"dl_aware_walkforward_start={walkforward_start} "
                 f"min_dl_coverage_pct={self.min_dl_coverage_pct:.2f}"
             )
+            if walkforward_start >= (n_bars - 1):
+                print(
+                    "  [WALKFORWARD DL] dl_aware_walkforward_start is beyond available "
+                    f"history ({walkforward_start} >= {n_bars - 1}); "
+                    "no ML fold can be trained."
+                )
 
         for i in range(walkforward_start, n_bars - 1):
             should_train = (
@@ -541,7 +547,7 @@ class PhaseMLPredictor:
         if global_dl_numeric_cols:
             if dl_train_coverage_values:
                 coverage_arr = np.array(dl_train_coverage_values, dtype=float)
-                folds_with_dl_history = int(np.sum(coverage_arr > 0.0))
+                folds_with_nonzero_dl_coverage = int(np.sum(coverage_arr > 0.0))
                 median_cov = float(np.median(coverage_arr))
                 max_cov = float(np.max(coverage_arr))
                 p25_cov = float(np.percentile(coverage_arr, 25))
@@ -549,21 +555,21 @@ class PhaseMLPredictor:
                 print(
                     "  [WALKFORWARD DL SUMMARY] "
                     f"train_coverage_folds={len(dl_train_coverage_values)} "
-                    f"folds_with_dl_coverage_gt_0={folds_with_dl_history} "
+                    f"folds_with_dl_coverage_gt_0={folds_with_nonzero_dl_coverage} "
                     f"first_fold_with_dl_history={first_fold_with_dl_history} "
                     f"median_dl_coverage_pct={median_cov:.2f} "
                     f"max_dl_coverage_pct={max_cov:.2f} "
                     f"p25_dl_coverage_pct={p25_cov:.2f} "
                     f"p75_dl_coverage_pct={p75_cov:.2f}"
                 )
-                if folds_with_dl_history == 0:
+                if folds_with_nonzero_dl_coverage == 0:
                     print(
                         "  [WALKFORWARD DL SUMMARY] No fold achieved nonzero "
                         "train_dl_coverage_pct; investigate fold slicing/index alignment."
                     )
                 else:
                     print(
-                        f"  [WALKFORWARD DL SUMMARY] Later folds achieve nonzero "
+                        f"  [WALKFORWARD DL SUMMARY] Folds achieve nonzero "
                         f"train_dl_coverage_pct starting at fold={first_fold_with_dl_history}."
                     )
             else:
