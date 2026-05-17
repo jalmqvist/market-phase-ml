@@ -242,13 +242,15 @@ class PhaseMLPredictor:
                  confirmation_bars: int  = 5,
                  smooth_labels:     bool = True,
                  random_state:      int  = 42,
-                 seed:              int = 42):
+                 seed:              int = 42,
+                 min_dl_coverage_pct: float = 5.0):
         self.train_window      = train_window
         self.retrain_freq      = retrain_freq
         self.confirmation_bars = confirmation_bars
         self.smooth_labels     = smooth_labels
         self.random_state      = random_state
         self.seed              = int(seed)
+        self.min_dl_coverage_pct = float(min_dl_coverage_pct)
         self._exclude_cols     = PhaseMLExperiment.EXCLUDE_COLS
         self._label_encoder    = None
 
@@ -359,6 +361,10 @@ class PhaseMLPredictor:
             f"warmup={self.train_window}, "
             f"retrain_freq={self.retrain_freq}"
         )
+        walkforward_start = self.train_window
+        first_dl_row_pos = None
+        dl_train_coverage_values: list[float] = []
+        first_fold_with_dl_history = None
         print(
             f"  [WALKFORWARD DL] global_dl_cols={sorted(global_dl_numeric_cols)} "
             f"feature_cols_includes_dl={bool(optional_dl_feature_cols)} "
@@ -369,8 +375,20 @@ class PhaseMLPredictor:
                 c: int(df[c].notna().sum()) for c in global_dl_numeric_cols
             }
             print(f"  [WALKFORWARD DL] global_dl_non_null_counts={global_dl_non_null}")
+            dl_any_non_null_mask = X[global_dl_numeric_cols].notna().any(axis=1)
+            if bool(dl_any_non_null_mask.any()):
+                first_dl_row_pos = int(np.flatnonzero(dl_any_non_null_mask.to_numpy())[0])
+                walkforward_start = max(
+                    self.train_window,
+                    first_dl_row_pos + self.train_window,
+                )
+            print(
+                f"  [WALKFORWARD DL] first_non_null_dl_row_pos={first_dl_row_pos} "
+                f"dl_aware_walkforward_start={walkforward_start} "
+                f"min_dl_coverage_pct={self.min_dl_coverage_pct:.2f}"
+            )
 
-        for i in range(self.train_window, n_bars - 1):
+        for i in range(walkforward_start, n_bars - 1):
             should_train = (
                     model is None
                     or last_trained is None
@@ -398,6 +416,9 @@ class PhaseMLPredictor:
                     fold_dl_coverage = float(
                         X_train_raw[global_dl_numeric_cols].notna().any(axis=1).mean() * 100.0
                     ) if len(X_train_raw) else 0.0
+                    dl_train_coverage_values.append(float(fold_dl_coverage))
+                    if first_fold_with_dl_history is None and fold_dl_coverage > 0.0:
+                        first_fold_with_dl_history = int(i)
                     print(
                         f"  [WALKFORWARD DL] fold={i} detected_dl_cols={sorted(global_dl_numeric_cols)} "
                         f"feature_cols_includes_dl={all(c in feature_cols for c in global_dl_numeric_cols)} "
@@ -405,6 +426,13 @@ class PhaseMLPredictor:
                         f"train_dl_non_null_counts={fold_dl_non_null_counts} "
                         f"train_dl_coverage_pct={fold_dl_coverage:.2f}"
                     )
+                    if fold_dl_coverage < self.min_dl_coverage_pct:
+                        print(
+                            f"  [WALKFORWARD DL] fold={i} retrain_skipped_due_to_low_dl_coverage "
+                            f"train_dl_coverage_pct={fold_dl_coverage:.2f} "
+                            f"threshold={self.min_dl_coverage_pct:.2f}"
+                        )
+                        continue
 
                 # build_training_matrix diagnostics keys include:
                 # rows_before_mask, rows_after_required_mask,
@@ -507,9 +535,42 @@ class PhaseMLPredictor:
 
         print(
             f"  ✓ Predictions generated for "
-            f"{n_bars - self.train_window - 1} bars "
-            f"({self.train_window} warmup bars use rule-based fallback)"
+            f"{max(0, n_bars - walkforward_start - 1)} bars "
+            f"({walkforward_start} warmup bars use rule-based fallback)"
         )
+        if global_dl_numeric_cols:
+            if dl_train_coverage_values:
+                coverage_arr = np.array(dl_train_coverage_values, dtype=float)
+                folds_with_dl_history = int(np.sum(coverage_arr > 0.0))
+                median_cov = float(np.median(coverage_arr))
+                max_cov = float(np.max(coverage_arr))
+                p25_cov = float(np.percentile(coverage_arr, 25))
+                p75_cov = float(np.percentile(coverage_arr, 75))
+                print(
+                    "  [WALKFORWARD DL SUMMARY] "
+                    f"train_coverage_folds={len(dl_train_coverage_values)} "
+                    f"folds_with_dl_coverage_gt_0={folds_with_dl_history} "
+                    f"first_fold_with_dl_history={first_fold_with_dl_history} "
+                    f"median_dl_coverage_pct={median_cov:.2f} "
+                    f"max_dl_coverage_pct={max_cov:.2f} "
+                    f"p25_dl_coverage_pct={p25_cov:.2f} "
+                    f"p75_dl_coverage_pct={p75_cov:.2f}"
+                )
+                if folds_with_dl_history == 0:
+                    print(
+                        "  [WALKFORWARD DL SUMMARY] No fold achieved nonzero "
+                        "train_dl_coverage_pct; investigate fold slicing/index alignment."
+                    )
+                else:
+                    print(
+                        f"  [WALKFORWARD DL SUMMARY] Later folds achieve nonzero "
+                        f"train_dl_coverage_pct starting at fold={first_fold_with_dl_history}."
+                    )
+            else:
+                print(
+                    "  [WALKFORWARD DL SUMMARY] No training folds executed under DL-aware "
+                    "start logic; verify dataset length vs train_window."
+                )
 
         return predictions
 

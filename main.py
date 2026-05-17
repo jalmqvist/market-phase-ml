@@ -92,6 +92,7 @@ DL_SIGNAL_SURFACE = {
 
 # DL debug verbosity (controls noisy per-pair diagnostics)
 DL_DEBUG_VERBOSE = False
+MIN_DL_TRAIN_COVERAGE_PCT = float(os.environ.get("MIN_DL_TRAIN_COVERAGE_PCT", "5.0"))
 
 # Expensive sweeps (disable by default)
 RUN_TAU_SWEEP = False
@@ -1449,7 +1450,8 @@ def main():
         retrain_freq=21,
         confirmation_bars=5,
         smooth_labels=True,
-        random_state=42
+        random_state=42,
+        min_dl_coverage_pct=MIN_DL_TRAIN_COVERAGE_PCT,
     )
 
     # Cache key: hash of processed data + predictor parameters
