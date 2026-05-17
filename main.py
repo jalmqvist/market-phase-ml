@@ -1058,7 +1058,29 @@ def main():
             f"(no 'all' support in v1)."
         )
         dl_runtime_enabled = False
-    dl_artifact_path = resolve_dl_prediction_artifact_path() if dl_runtime_enabled else None
+    # ----------------------------------------------------------
+    # DL artifact resolution
+    #
+    # Precedence:
+    #   1. Explicit env override
+    #   2. Automatic resolver
+    # ----------------------------------------------------------
+
+    explicit_dl_artifact = os.getenv("DL_PREDICTION_ARTIFACT_PATH", "").strip()
+
+    if dl_runtime_enabled:
+        if explicit_dl_artifact:
+            dl_artifact_path = Path(explicit_dl_artifact)
+            print("[DL] using explicit artifact override from environment")
+        else:
+            dl_artifact_path = resolve_dl_prediction_artifact_path()
+
+        if dl_artifact_path is not None:
+            dl_artifact_path = Path(dl_artifact_path)
+
+    else:
+        dl_artifact_path = None
+
     if dl_runtime_enabled and dl_artifact_path is None:
         print("[WARN] DL enabled but no artifact resolved; DL features will be skipped.")
     dl_mode_tag = "__dl_enabled" if dl_runtime_enabled else "__baseline"

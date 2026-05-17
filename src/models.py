@@ -124,6 +124,7 @@ def build_training_matrix(
         required_cols = [c for c in feature_cols if c in required_set]
 
     rows_before_mask = len(X_source)
+    missingness_stats = {}
     required_mask = y_source.notna()
     if required_cols:
         required_mask &= X_source[required_cols].notna().all(axis=1)
