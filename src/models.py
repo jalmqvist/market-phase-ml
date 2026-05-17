@@ -263,7 +263,7 @@ class PhaseMLPredictor:
         # Gate DL feature columns behind DL_SIGNALS_ENABLED.
         # Keep this prefix-based to avoid stale hardcoded DL whitelists.
         if not DL_SIGNALS_ENABLED:
-            cols = [c for c in cols if (c not in DL_D1_FEATURE_COLS and not c.startswith("dl_"))]
+            cols = [c for c in cols if c not in DL_D1_FEATURE_COLS and not c.startswith("dl_")]
         return cols
 
     def _build_model(self) -> xgb.XGBClassifier:
@@ -293,16 +293,18 @@ class PhaseMLPredictor:
         """
         # Recompute feature columns from the fully attached runtime DataFrame.
         feature_cols = self._get_feature_cols(df)
-        global_dl_cols = [
+        detected_dl_cols = [
             c for c in df.columns
             if c.startswith("dl_") and c not in _DL_LEAKAGE_GUARD_COLS
         ]
         global_dl_numeric_cols = [
-            c for c in global_dl_cols
+            c for c in detected_dl_cols
             if is_numeric_dtype(df[c]) and not is_bool_dtype(df[c])
         ]
-        optional_dl_feature_cols = [c for c in feature_cols if c in set(global_dl_numeric_cols)]
-        required_feature_cols = [c for c in feature_cols if c not in set(optional_dl_feature_cols)]
+        global_dl_numeric_set = set(global_dl_numeric_cols)
+        optional_dl_feature_cols = [c for c in feature_cols if c in global_dl_numeric_set]
+        optional_dl_feature_set = set(optional_dl_feature_cols)
+        required_feature_cols = [c for c in feature_cols if c not in optional_dl_feature_set]
 
         if global_dl_numeric_cols:
             missing_global_dl_in_features = [c for c in global_dl_numeric_cols if c not in feature_cols]
@@ -404,6 +406,10 @@ class PhaseMLPredictor:
                         f"train_dl_coverage_pct={fold_dl_coverage:.2f}"
                     )
 
+                # build_training_matrix diagnostics keys include:
+                # rows_before_mask, rows_after_required_mask,
+                # rows_after_optional_imputation, dl_coverage_pct,
+                # effective_training_samples, missingness_stats.
                 X_train_raw, y_train, train_diag = build_training_matrix(
                     X_train_raw,
                     y_train,
