@@ -2,6 +2,7 @@
 
 import pandas as pd
 import numpy as np
+from pandas.api.types import is_bool_dtype, is_numeric_dtype
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
@@ -256,12 +257,13 @@ class PhaseMLPredictor:
         cols = [
             col for col in df.columns
             if col not in self._exclude_cols
-            and df[col].dtype in ['float64', 'int64', 'float32']
-            and df[col].dtype != bool
+            and is_numeric_dtype(df[col])
+            and not is_bool_dtype(df[col])
         ]
-        # Gate DL D1 daily feature columns behind DL_SIGNALS_ENABLED.
+        # Gate DL feature columns behind DL_SIGNALS_ENABLED.
+        # Keep this prefix-based to avoid stale hardcoded DL whitelists.
         if not DL_SIGNALS_ENABLED:
-            cols = [c for c in cols if c not in DL_D1_FEATURE_COLS]
+            cols = [c for c in cols if (c not in DL_D1_FEATURE_COLS and not c.startswith("dl_"))]
         return cols
 
     def _build_model(self) -> xgb.XGBClassifier:
@@ -289,10 +291,34 @@ class PhaseMLPredictor:
 
         Training/eval semantics otherwise unchanged.
         """
+        # Recompute feature columns from the fully attached runtime DataFrame.
         feature_cols = self._get_feature_cols(df)
-        required_feature_cols = [c for c in feature_cols if c not in OPTIONAL_DL_FEATURE_COLS]
-        optional_dl_feature_cols = [c for c in feature_cols if c in OPTIONAL_DL_FEATURE_COLS]
-        X = df[feature_cols].copy()
+        global_dl_cols = [
+            c for c in df.columns
+            if c.startswith("dl_") and c not in _DL_LEAKAGE_GUARD_COLS
+        ]
+        global_dl_numeric_cols = [
+            c for c in global_dl_cols
+            if c in df.columns and is_numeric_dtype(df[c]) and not is_bool_dtype(df[c])
+        ]
+        optional_dl_feature_cols = [c for c in feature_cols if c in set(global_dl_numeric_cols)]
+        required_feature_cols = [c for c in feature_cols if c not in set(optional_dl_feature_cols)]
+
+        if global_dl_numeric_cols:
+            missing_global_dl_in_features = [c for c in global_dl_numeric_cols if c not in feature_cols]
+            if missing_global_dl_in_features:
+                raise RuntimeError(
+                    "PhaseMLPredictor: feature_cols excludes dl_* unexpectedly. "
+                    f"missing_dl_cols={missing_global_dl_in_features}"
+                )
+
+            if not optional_dl_feature_cols:
+                raise RuntimeError(
+                    "PhaseMLPredictor: dl_* columns exist globally but optional DL "
+                    "feature set is empty."
+                )
+
+        X = df.reindex(columns=feature_cols).copy()
 
         # Get phase target — optionally smoothed
         raw_phase = df["phase"].copy()
@@ -331,6 +357,16 @@ class PhaseMLPredictor:
             f"warmup={self.train_window}, "
             f"retrain_freq={self.retrain_freq}"
         )
+        print(
+            f"  [WALKFORWARD DL] global_dl_cols={sorted(global_dl_numeric_cols)} "
+            f"feature_cols_includes_dl={bool(optional_dl_feature_cols)} "
+            f"feature_cols_count={len(feature_cols)}"
+        )
+        if global_dl_numeric_cols:
+            global_dl_non_null = {
+                c: int(df[c].notna().sum()) for c in global_dl_numeric_cols
+            }
+            print(f"  [WALKFORWARD DL] global_dl_non_null_counts={global_dl_non_null}")
 
         for i in range(self.train_window, n_bars - 1):
             should_train = (
@@ -346,13 +382,39 @@ class PhaseMLPredictor:
                 X_train_raw = X.iloc[train_start:train_end]
                 y_train = y_encoded.iloc[train_start:train_end]
 
-                X_train_raw, y_train, _ = build_training_matrix(
+                if global_dl_numeric_cols:
+                    fold_missing_dl_cols = [c for c in global_dl_numeric_cols if c not in X_train_raw.columns]
+                    if fold_missing_dl_cols:
+                        raise RuntimeError(
+                            "PhaseMLPredictor: DL columns exist globally but disappeared inside walkforward fold. "
+                            f"fold={i} missing_dl_cols={fold_missing_dl_cols}"
+                        )
+
+                    fold_dl_non_null_counts = {
+                        c: int(X_train_raw[c].notna().sum()) for c in global_dl_numeric_cols
+                    }
+                    fold_dl_coverage = float(
+                        X_train_raw[global_dl_numeric_cols].notna().any(axis=1).mean() * 100.0
+                    ) if len(X_train_raw) else 0.0
+                    print(
+                        f"  [WALKFORWARD DL] fold={i} detected_dl_cols={sorted(global_dl_numeric_cols)} "
+                        f"feature_cols_includes_dl={all(c in feature_cols for c in global_dl_numeric_cols)} "
+                        f"train_raw_shape={X_train_raw.shape} "
+                        f"train_dl_non_null_counts={fold_dl_non_null_counts} "
+                        f"train_dl_coverage_pct={fold_dl_coverage:.2f}"
+                    )
+
+                X_train_raw, y_train, train_diag = build_training_matrix(
                     X_train_raw,
                     y_train,
                     feature_cols=feature_cols,
                     required_feature_cols=required_feature_cols,
                     optional_feature_cols=optional_dl_feature_cols,
                     diagnostics_label=f"walkforward fold={i} pair-train-window",
+                )
+                print(
+                    f"  [WALKFORWARD DL] fold={i} train_matrix_shape={X_train_raw.shape} "
+                    f"y_shape={(len(y_train),)} dl_coverage_pct={train_diag.get('dl_coverage_pct', 0.0):.2f}"
                 )
 
                 if len(X_train_raw) < 50:
@@ -394,6 +456,13 @@ class PhaseMLPredictor:
             # Predict current bar's next phase
             if model is not None and scaler is not None:
                 X_pred_raw = X.iloc[i: i + 1]
+                if global_dl_numeric_cols:
+                    fold_pred_missing_dl_cols = [c for c in global_dl_numeric_cols if c not in X_pred_raw.columns]
+                    if fold_pred_missing_dl_cols:
+                        raise RuntimeError(
+                            "PhaseMLPredictor: DL columns exist globally but disappeared in test slice. "
+                            f"fold={i} missing_dl_cols={fold_pred_missing_dl_cols}"
+                        )
 
                 if required_feature_cols and not X_pred_raw[required_feature_cols].notna().all(axis=1).iloc[0]:
                     continue
@@ -404,6 +473,21 @@ class PhaseMLPredictor:
                     fill_value=0.0,
                     add_missing_indicators=True,
                 )
+                if global_dl_numeric_cols:
+                    pred_dl_non_null_counts = {
+                        c: int(X_pred_raw[c].notna().sum()) for c in global_dl_numeric_cols if c in X_pred_raw.columns
+                    }
+                    pred_dl_coverage = float(
+                        X_pred_raw[[c for c in global_dl_numeric_cols if c in X_pred_raw.columns]]
+                        .notna()
+                        .any(axis=1)
+                        .mean() * 100.0
+                    ) if len(X_pred_raw) else 0.0
+                    print(
+                        f"  [WALKFORWARD DL] fold={i} test_matrix_shape={X_pred_raw.shape} "
+                        f"test_dl_non_null_counts={pred_dl_non_null_counts} "
+                        f"test_dl_coverage_pct={pred_dl_coverage:.2f}"
+                    )
 
                 X_pred = pd.DataFrame(
                     scaler.transform(X_pred_raw),
