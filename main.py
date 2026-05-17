@@ -559,15 +559,77 @@ def attach_dl_features(
     # ------------------------------------------------------------------
     rows_before_join = len(base)
 
-    daily_pair = daily_pair.rename(columns={"trading_day": "timestamp"})
-    join_cols = ["pair", "timestamp", *D1_FEATURE_COLS]
+    # ----------------------------------------------------------
+    # Normalize DL timestamps to daily midnight before merge
+    #
+    # This prevents silent merge failures caused by:
+    # - intraday timestamps
+    # - timezone serialization differences
+    # - parquet datetime normalization inconsistencies
+    # ----------------------------------------------------------
 
+    daily_pair = daily_pair.rename(columns={"trading_day": "timestamp"})
+
+    daily_pair["timestamp"] = (
+        pd.to_datetime(daily_pair["timestamp"])
+        .dt.tz_localize(None)
+        .dt.normalize()
+    )
+
+    base["timestamp"] = (
+        pd.to_datetime(base["timestamp"])
+        .dt.tz_localize(None)
+        .dt.normalize()
+    )
+
+    join_cols = ["pair", "timestamp", *D1_FEATURE_COLS]
+    # ----------------------------------------------------------
+    # Pre-merge overlap diagnostics
+    # ----------------------------------------------------------
+
+    base_days = set(base["timestamp"].unique())
+    dl_days = set(daily_pair["timestamp"].unique())
+
+    overlap_days = len(base_days & dl_days)
+
+    print(
+        f"  [DL] {pair_name}: "
+        f"base_days={len(base_days)} "
+        f"dl_days={len(dl_days)} "
+        f"overlap_days={overlap_days}"
+    )
+
+    if overlap_days == 0:
+        raise RuntimeError(
+            f"[DL] {pair_name}: zero timestamp overlap between "
+            f"MPML bars and DL daily features"
+        )
     merged = base.merge(
         daily_pair[join_cols],
         on=["pair", "timestamp"],
         how="left",
         validate="many_to_one",
     )
+    # ----------------------------------------------------------
+    # Hard-fail if ALL DL coverage disappeared
+    # ----------------------------------------------------------
+
+    dl_non_null_rows = int(
+        merged[list(D1_FEATURE_COLS)]
+        .notna()
+        .any(axis=1)
+        .sum()
+    )
+
+    print(
+        f"  [DL] {pair_name}: "
+        f"rows_with_any_dl={dl_non_null_rows}/{len(merged)}"
+    )
+
+    if dl_non_null_rows == 0:
+        raise RuntimeError(
+            f"[DL] {pair_name}: DL merge produced zero non-null rows"
+        )
 
     rows_after_join = len(merged)
     if rows_after_join != rows_before_join:
