@@ -376,7 +376,7 @@ class PhaseMLPredictor:
             }
             print(f"  [WALKFORWARD DL] global_dl_non_null_counts={global_dl_non_null}")
             dl_any_non_null_mask = X[global_dl_numeric_cols].notna().any(axis=1)
-            if bool(dl_any_non_null_mask.any()):
+            if dl_any_non_null_mask.any():
                 first_dl_row_pos = int(np.flatnonzero(dl_any_non_null_mask.to_numpy())[0])
                 walkforward_start = max(
                     self.train_window,
@@ -547,7 +547,7 @@ class PhaseMLPredictor:
         if global_dl_numeric_cols:
             if dl_train_coverage_values:
                 coverage_arr = np.array(dl_train_coverage_values)
-                folds_with_nonzero_dl_coverage = int(np.count_nonzero(coverage_arr > 0.0))
+                folds_with_nonzero_dl_coverage = np.count_nonzero(coverage_arr > 0.0)
                 median_cov = float(np.median(coverage_arr))
                 max_cov = float(np.max(coverage_arr))
                 p25_cov = float(np.percentile(coverage_arr, 25))
