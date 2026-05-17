@@ -546,8 +546,8 @@ class PhaseMLPredictor:
         )
         if global_dl_numeric_cols:
             if dl_train_coverage_values:
-                coverage_arr = np.array(dl_train_coverage_values, dtype=float)
-                folds_with_nonzero_dl_coverage = int(np.sum(coverage_arr > 0.0))
+                coverage_arr = np.array(dl_train_coverage_values)
+                folds_with_nonzero_dl_coverage = int(np.count_nonzero(coverage_arr > 0.0))
                 median_cov = float(np.median(coverage_arr))
                 max_cov = float(np.max(coverage_arr))
                 p25_cov = float(np.percentile(coverage_arr, 25))
