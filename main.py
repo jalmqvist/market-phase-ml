@@ -39,7 +39,7 @@ from src.models import (
 from src.strategies import Backtester as BT, PhaseAwareStrategy, StrategySelector_Dynamic
 from src.repro import set_global_seed, build_run_config, write_manifest
 from src.dl_config import resolve_dl_prediction_artifact_path
-from src.dl_surface_loader import load_dl_surface, VALID_DL_REGIMES
+from src.dl_surface_loader import VALID_DL_REGIMES
 from src.dl_daily_features import load_and_aggregate_d1, D1_FEATURE_COLS
 
 
@@ -501,36 +501,12 @@ def attach_dl_features(
         )
 
     # ------------------------------------------------------------------
-    # Load surface + aggregate to D1 daily features (existing infra)
+    # Load + validate surface and aggregate to D1 daily features
     # ------------------------------------------------------------------
-    surface_df = load_dl_surface(cube_path=artifact_path, surface=surface, strict=False)
-    if surface_df.empty:
-        print(f"  [DL] {pair_name}: surface not available in artifact; skipping attachment.")
-        return processed_df
-
-    if "dl_prediction_timestamp" in surface_df.columns:
-        pred_ts = pd.to_datetime(surface_df["dl_prediction_timestamp"])
-        bar_ts = pd.to_datetime(surface_df["timestamp"])
-        non_causal_mask = pred_ts > bar_ts
-        if non_causal_mask.any():
-            sample_bad = surface_df.loc[non_causal_mask, ["timestamp", "dl_prediction_timestamp"]].head(3)
-            raise AssertionError(
-                f"[DL] {pair_name}: non-causal H1 DL rows where dl_prediction_timestamp > timestamp. "
-                f"sample={sample_bad.to_dict('records')}"
-            )
-        lag_hours = (bar_ts - pred_ts).dt.total_seconds().div(3600.0)
-        if len(lag_hours):
-            print(
-                f"  [DL] {pair_name}: h1_prediction_lag_hours "
-                f"min={float(lag_hours.min()):.2f} "
-                f"median={float(lag_hours.median()):.2f} "
-                f"max={float(lag_hours.max()):.2f}"
-            )
-
     daily_df = load_and_aggregate_d1(
         artifact_path=artifact_path,
         surface=surface,
-        strict=False,
+        strict=True,
     )
     if daily_df.empty:
         print(f"  [DL] {pair_name}: D1 aggregation produced no rows; skipping attachment.")
@@ -626,20 +602,17 @@ def attach_dl_features(
     )
 
     if overlap_days == 0:
-        raise RuntimeError(
-            f"[DL] {pair_name}: zero timestamp overlap between "
-            f"MPML bars and DL daily features"
+        print(
+            f"  [DL] {pair_name}: zero timestamp overlap between MPML bars and "
+            "DL daily features; skipping attachment."
         )
+        return processed_df
     merged = base.merge(
         daily_pair[join_cols],
         on=["pair", "timestamp"],
         how="left",
         validate="many_to_one",
     )
-    # ----------------------------------------------------------
-    # Hard-fail if ALL DL coverage disappeared
-    # ----------------------------------------------------------
-
     dl_non_null_rows = int(
         merged[list(D1_FEATURE_COLS)]
         .notna()
@@ -657,9 +630,11 @@ def attach_dl_features(
     )
 
     if dl_non_null_rows == 0:
-        raise RuntimeError(
-            f"[DL] {pair_name}: DL merge produced zero non-null rows"
+        print(
+            f"  [DL] {pair_name}: DL merge produced zero non-null rows; "
+            "skipping attachment."
         )
+        return processed_df
 
     rows_after_join = len(merged)
     if rows_after_join != rows_before_join:

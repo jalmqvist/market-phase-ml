@@ -1,13 +1,13 @@
 """
 DL surface loader for market-phase-ml.
 
-Loads and validates a single signal surface from the consolidated DL signal
-cube produced by market-sentiment-ml, returning a DataFrame keyed by
+Loads and validates a single signal surface from the DL prediction artifact
+produced by market-sentiment-ml, returning a DataFrame keyed by
 (pair, timestamp) suitable for downstream feature assembly.
 
-Cube uniqueness contract (from market-sentiment-ml)
-----------------------------------------------------
-(pair, entry_time, model, target_horizon, feature_set, dl_regime)
+Artifact uniqueness contract (from market-sentiment-ml)
+--------------------------------------------------------
+(pair, timestamp, model, target_horizon, feature_set, dl_regime)
 
 Regime vocabulary (MSML-DL)
 ----------------------------
@@ -45,16 +45,30 @@ import warnings
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
+from pandas.api.types import is_datetime64_dtype, is_datetime64tz_dtype
+
+from schemas.dl_artifact_schema import (
+    DL_ARTIFACT_CREATED_COL,
+    DL_AVAILABLE_TS_COL,
+    DL_GENERATED_TS_COL,
+    DL_PAIR_COL,
+    DL_SCHEMA_VERSION,
+    DL_TIMESTAMP_COL,
+)
 
 # ---------------------------------------------------------------------------
 # Schema constants
 # ---------------------------------------------------------------------------
 
-#: Columns that must be present in the cube parquet.
+#: Columns that must be present in the DL artifact parquet.
 REQUIRED_CUBE_COLUMNS: frozenset[str] = frozenset(
     {
-        "pair",
-        "entry_time",
+        DL_PAIR_COL,
+        DL_TIMESTAMP_COL,
+        DL_AVAILABLE_TS_COL,
+        DL_GENERATED_TS_COL,
+        DL_ARTIFACT_CREATED_COL,
         "model",
         "target_horizon",
         "feature_set",
@@ -65,7 +79,7 @@ REQUIRED_CUBE_COLUMNS: frozenset[str] = frozenset(
 
 #: Columns that may optionally be present in the cube parquet.
 OPTIONAL_CUBE_COLUMNS: frozenset[str] = frozenset(
-    {"dl_confidence", "pred_prob_up", "prediction_timestamp"}
+    {"dl_confidence", "pred_prob_up", "schema_version"}
 )
 
 #: Keys that must appear in the *surface* selection dict.
@@ -79,7 +93,7 @@ SURFACE_REQUIRED_KEYS: tuple[str, ...] = (
 #: Grouping grain for per-surface monotonicity validation.
 #: Matches the cube uniqueness contract minus ``entry_time``.
 MONOTONICITY_GROUP_COLUMNS: tuple[str, ...] = (
-    "pair",
+    DL_PAIR_COL,
     "model",
     "target_horizon",
     "feature_set",
@@ -100,7 +114,12 @@ MSML_TO_MPML: dict[str, str] = {
 # Columns in the output DF that must never be used as ML features.
 # Kept here as documentation; enforcement is in the caller (assembler).
 _LEAKAGE_GUARD_COLUMNS: frozenset[str] = frozenset(
-    {"dl_prediction_timestamp", "mpml_regime_equiv"}
+    {
+        "dl_prediction_available_timestamp",
+        "dl_prediction_generated_timestamp",
+        "dl_artifact_created_timestamp",
+        "mpml_regime_equiv",
+    }
 )
 
 
@@ -126,9 +145,8 @@ def load_dl_surface(
         Required keys: ``model``, ``target_horizon`` (int, bars), ``feature_set``,
         ``dl_regime``.  Uniquely identifies one surface in the cube.
     strict : bool, default False
-        If ``True``, raise ``ValueError`` on any validation failure.
-        If ``False``, emit a ``UserWarning`` and return
-        :func:`empty_dl_surface_df`.
+        Legacy fallback behavior control for non-contract errors (e.g. missing
+        file path). Contract violations always raise ``ValueError``.
 
     Returns
     -------
@@ -136,14 +154,18 @@ def load_dl_surface(
         Always a DataFrame (never ``None``).
         Columns: ``pair``, ``timestamp``, ``dl_signal_strength``,
         ``mpml_regime_equiv`` plus any of
-        ``dl_confidence``, ``dl_pred_prob_up``, ``dl_prediction_timestamp``
+        ``dl_confidence``, ``dl_pred_prob_up``,
+        ``dl_prediction_available_timestamp``,
+        ``dl_prediction_generated_timestamp``,
+        ``dl_artifact_created_timestamp``
         that are present in the cube.
         Keyed (sorted) by ``(pair, timestamp)``.
 
     Raises
     ------
     ValueError
-        If ``strict=True`` and any validation step fails.
+        If contract validation fails (always), or if ``strict=True`` and a
+        non-contract load error occurs.
     """
     # ------------------------------------------------------------------
     # 1. Validate surface dict
@@ -164,28 +186,19 @@ def load_dl_surface(
 
     try:
         cube = pd.read_parquet(cube_path)
+        metadata = _read_parquet_metadata(cube_path)
     except (OSError, ValueError, RuntimeError) as exc:
         return _handle_error(
             f"Failed to read DL signal cube {cube_path}: {exc}", strict
         )
 
     # ------------------------------------------------------------------
-    # 3. Validate schema
+    # 3. Validate DL artifact contract (fail-fast)
     # ------------------------------------------------------------------
-    missing_cols = REQUIRED_CUBE_COLUMNS - set(cube.columns)
-    if missing_cols:
-        return _handle_error(
-            f"DL signal cube missing required columns: {sorted(missing_cols)}",
-            strict,
-        )
+    cube = validate_dl_artifact(cube, metadata)
 
     # ------------------------------------------------------------------
-    # 4. Coerce dtypes
-    # ------------------------------------------------------------------
-    cube = _coerce_dtypes(cube)
-
-    # ------------------------------------------------------------------
-    # 5. Select exact surface
+    # 4. Select exact surface
     # ------------------------------------------------------------------
     mask = pd.Series(True, index=cube.index)
     for key in SURFACE_REQUIRED_KEYS:
@@ -199,57 +212,24 @@ def load_dl_surface(
     surface_df = cube[mask].copy()
 
     if surface_df.empty:
-        return _handle_error(
-            f"No rows found in cube for surface: {surface}. "
+        warnings.warn(
+            f"dl_surface_loader: No rows found in cube for surface: {surface}. "
             f"Available surfaces: {_available_surfaces(cube)}",
-            strict,
+            stacklevel=2,
         )
+        return empty_dl_surface_df()
 
     # ------------------------------------------------------------------
-    # 6. Validate hourly alignment of entry_time
-    # ------------------------------------------------------------------
-    bad_ts = _find_non_hourly_timestamps(surface_df["entry_time"])
-    if bad_ts:
-        return _handle_error(
-            f"Non-hourly entry_time values detected "
-            f"(expected minute=0, second=0): {bad_ts[:5]}",
-            strict,
-        )
-
-    # ------------------------------------------------------------------
-    # 7. Validate uniqueness — no duplicate (pair, entry_time) within surface
-    # ------------------------------------------------------------------
-    dup_mask = surface_df.duplicated(subset=["pair", "entry_time"], keep=False)
-    if dup_mask.any():
-        n_dups = int(dup_mask.sum())
-        return _handle_error(
-            f"Duplicate (pair, entry_time) rows within surface: {n_dups} rows. "
-            "Cube uniqueness contract violated.",
-            strict,
-        )
-
-    # ------------------------------------------------------------------
-    # 8. Validate per-surface monotonicity
-    # ------------------------------------------------------------------
-    non_monotone = _find_non_monotone_groups(surface_df)
-    if non_monotone:
-        return _handle_error(
-            f"Non-monotone entry_time detected for surface groups: "
-            f"{non_monotone[:3]}",
-            strict,
-        )
-
-    # ------------------------------------------------------------------
-    # 9. Validate value ranges
+    # 5. Validate value ranges on selected surface
     # ------------------------------------------------------------------
     range_errors = _validate_value_ranges(surface_df)
     if range_errors:
-        return _handle_error("; ".join(range_errors), strict)
+        raise ValueError("; ".join(range_errors))
 
     # ------------------------------------------------------------------
-    # 10. Build output DataFrame
+    # 6. Build output DataFrame
     # ------------------------------------------------------------------
-    out = surface_df[["pair", "entry_time"]].copy()
+    out = surface_df[[DL_PAIR_COL, DL_TIMESTAMP_COL]].copy()
 
     # signal_strength -> dl_signal_strength (avoids name collisions downstream)
     out["dl_signal_strength"] = surface_df["signal_strength"].astype("float64")
@@ -260,17 +240,18 @@ def load_dl_surface(
     if "pred_prob_up" in surface_df.columns:
         # Rename to dl_pred_prob_up to avoid name collisions and clarify provenance
         out["dl_pred_prob_up"] = surface_df["pred_prob_up"].astype("float64")
-    if "prediction_timestamp" in surface_df.columns:
-        out["dl_prediction_timestamp"] = surface_df["prediction_timestamp"]
+    if DL_AVAILABLE_TS_COL in surface_df.columns:
+        out["dl_prediction_available_timestamp"] = surface_df[DL_AVAILABLE_TS_COL]
+    if DL_GENERATED_TS_COL in surface_df.columns:
+        out["dl_prediction_generated_timestamp"] = surface_df[DL_GENERATED_TS_COL]
+    if DL_ARTIFACT_CREATED_COL in surface_df.columns:
+        out["dl_artifact_created_timestamp"] = surface_df[DL_ARTIFACT_CREATED_COL]
 
     # Add MPML regime equivalence (informational; must not be used as a feature)
     out["mpml_regime_equiv"] = surface_df["dl_regime"].map(MSML_TO_MPML)
 
-    # Rename entry_time -> timestamp for internal consistency
-    out = out.rename(columns={"entry_time": "timestamp"})
-
     # Sort by (pair, timestamp)
-    out = out.sort_values(["pair", "timestamp"]).reset_index(drop=True)
+    out = out.sort_values([DL_PAIR_COL, DL_TIMESTAMP_COL]).reset_index(drop=True)
 
     return out
 
@@ -289,6 +270,9 @@ def empty_dl_surface_df() -> pd.DataFrame:
             "dl_signal_strength": pd.Series(dtype="float64"),
             "dl_confidence": pd.Series(dtype="float64"),
             "dl_pred_prob_up": pd.Series(dtype="float64"),
+            "dl_prediction_available_timestamp": pd.Series(dtype="datetime64[ns]"),
+            "dl_prediction_generated_timestamp": pd.Series(dtype="datetime64[ns]"),
+            "dl_artifact_created_timestamp": pd.Series(dtype="datetime64[ns]"),
             "mpml_regime_equiv": pd.Series(dtype="object"),
         }
     )
@@ -315,14 +299,100 @@ def _validate_surface_dict(surface: dict) -> None:
         )
 
 
+def validate_dl_artifact(
+    df: pd.DataFrame,
+    metadata: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """
+    Validate and normalize the DL artifact contract (schema v2).
+
+    Raises
+    ------
+    ValueError
+        If contract validation fails.
+    """
+    metadata = metadata or {}
+    schema_version = _extract_schema_version(df, metadata)
+    if schema_version is None:
+        raise ValueError("missing required schema_version in metadata or rows")
+    if not _is_compatible_schema_version(schema_version):
+        raise ValueError(
+            f"incompatible schema_version {schema_version!r}; "
+            f"expected compatibility with {DL_SCHEMA_VERSION!r}"
+        )
+
+    missing_cols = REQUIRED_CUBE_COLUMNS - set(df.columns)
+    if missing_cols:
+        raise ValueError(
+            f"DL signal cube missing required columns: {sorted(missing_cols)}"
+        )
+
+    tz_errors = _validate_timezone_consistency(df)
+    if tz_errors:
+        raise ValueError("; ".join(tz_errors))
+
+    df = _coerce_dtypes(df)
+
+    null_mask = df[list(REQUIRED_CUBE_COLUMNS)].isna().any(axis=1)
+    if null_mask.any():
+        raise ValueError(
+            f"null values in required contract columns: {int(null_mask.sum())} rows"
+        )
+
+    normalized_pairs = df[DL_PAIR_COL].astype(str).map(_normalize_pair)
+    bad_pair_mask = normalized_pairs.isna()
+    if bad_pair_mask.any():
+        bad_values = (
+            df.loc[bad_pair_mask, DL_PAIR_COL]
+            .astype(str)
+            .drop_duplicates()
+            .head(5)
+            .tolist()
+        )
+        raise ValueError(f"invalid pair values for normalization: {bad_values}")
+    df[DL_PAIR_COL] = normalized_pairs
+
+    dup_mask = df.duplicated(subset=[DL_PAIR_COL, DL_TIMESTAMP_COL], keep=False)
+    if dup_mask.any():
+        raise ValueError(
+            f"duplicate ({DL_PAIR_COL}, {DL_TIMESTAMP_COL}) rows: {int(dup_mask.sum())}"
+        )
+
+    non_monotone = _find_non_monotone_groups(df)
+    if non_monotone:
+        raise ValueError(
+            f"non-monotone {DL_TIMESTAMP_COL} detected for surface groups: "
+            f"{non_monotone[:3]}"
+        )
+
+    causal_violation = df[DL_AVAILABLE_TS_COL] > df[DL_TIMESTAMP_COL]
+    if causal_violation.any():
+        sample = (
+            df.loc[causal_violation, [DL_PAIR_COL, DL_TIMESTAMP_COL, DL_AVAILABLE_TS_COL]]
+            .head(3)
+            .to_dict("records")
+        )
+        raise ValueError(
+            f"causal contract violated: {DL_AVAILABLE_TS_COL} must be <= {DL_TIMESTAMP_COL}; "
+            f"sample={sample}"
+        )
+
+    return df
+
+
 def _coerce_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     """Coerce critical columns to expected dtypes."""
     df = df.copy()
 
-    # entry_time: tz-naive UTC datetime
-    df["entry_time"] = pd.to_datetime(df["entry_time"], errors="coerce", utc=False)
-    if df["entry_time"].dt.tz is not None:
-        df["entry_time"] = df["entry_time"].dt.tz_localize(None)
+    for ts_col in (
+        DL_TIMESTAMP_COL,
+        DL_AVAILABLE_TS_COL,
+        DL_GENERATED_TS_COL,
+        DL_ARTIFACT_CREATED_COL,
+    ):
+        if ts_col in df.columns:
+            ts = pd.to_datetime(df[ts_col], errors="coerce", utc=True)
+            df[ts_col] = ts.dt.tz_convert(None)
 
     # target_horizon: nullable Int64 (number of bars)
     df["target_horizon"] = pd.to_numeric(
@@ -343,13 +413,13 @@ def _find_non_hourly_timestamps(ts: pd.Series) -> list:
 
 def _find_non_monotone_groups(df: pd.DataFrame) -> list[str]:
     """
-    Return group identifiers where ``entry_time`` is not monotone increasing.
+    Return group identifiers where ``timestamp`` is not monotone increasing.
 
     Grain: ``(pair, model, target_horizon, feature_set, dl_regime)``.
     """
     non_monotone: list[str] = []
     for keys, grp in df.groupby(list(MONOTONICITY_GROUP_COLUMNS)):
-        if not grp["entry_time"].is_monotonic_increasing:
+        if not grp[DL_TIMESTAMP_COL].is_monotonic_increasing:
             non_monotone.append(str(keys))
     return non_monotone
 
@@ -389,6 +459,100 @@ def _available_surfaces(cube: pd.DataFrame) -> list[dict]:
     if not cols:
         return []
     return cube[cols].drop_duplicates().to_dict("records")
+
+
+def _read_parquet_metadata(cube_path: Path) -> dict[str, str]:
+    """Read file-level parquet metadata as decoded strings."""
+    try:
+        raw_metadata = pq.read_metadata(cube_path).metadata
+    except (OSError, ValueError, RuntimeError):
+        return {}
+    if not raw_metadata:
+        return {}
+    decoded: dict[str, str] = {}
+    for key, value in raw_metadata.items():
+        try:
+            decoded[key.decode("utf-8")] = value.decode("utf-8")
+        except Exception:  # noqa: BLE001
+            continue
+    return decoded
+
+
+def _extract_schema_version(df: pd.DataFrame, metadata: dict[str, str]) -> str | None:
+    """Get schema version from parquet metadata or row column."""
+    version = metadata.get("schema_version")
+    if version:
+        return str(version)
+    if "schema_version" not in df.columns:
+        return None
+    versions = df["schema_version"].dropna().astype(str).unique().tolist()
+    if len(versions) != 1:
+        raise ValueError(
+            f"expected exactly one schema_version value in rows, got {versions}"
+        )
+    return versions[0]
+
+
+def _is_compatible_schema_version(version: str) -> bool:
+    """Compatibility policy: strict major-version compatibility with v2."""
+    expected_major = DL_SCHEMA_VERSION.split(".")[0]
+    major = str(version).split(".")[0]
+    return major == expected_major
+
+
+def _normalize_pair(pair: str) -> str | None:
+    p = str(pair).strip().lower().replace("/", "-").replace("_", "-")
+    p = p.replace("--", "-")
+    if "-" not in p and len(p) == 6 and p.isalpha():
+        p = f"{p[:3]}-{p[3:]}"
+    if len(p) == 7 and p[3] == "-" and p[:3].isalpha() and p[4:].isalpha():
+        return p
+    return None
+
+
+def _validate_timezone_consistency(df: pd.DataFrame) -> list[str]:
+    errors: list[str] = []
+    modes: dict[str, str] = {}
+    for col in (
+        DL_TIMESTAMP_COL,
+        DL_AVAILABLE_TS_COL,
+        DL_GENERATED_TS_COL,
+        DL_ARTIFACT_CREATED_COL,
+    ):
+        if col not in df.columns:
+            continue
+        mode = _timezone_mode(df[col])
+        if mode == "mixed":
+            errors.append(f"{col} has mixed timezone-awareness values")
+        else:
+            modes[col] = mode
+    if not modes:
+        return errors
+    base_mode = modes[DL_TIMESTAMP_COL]
+    for col, mode in modes.items():
+        if mode != base_mode:
+            errors.append(
+                f"timezone consistency violation: {DL_TIMESTAMP_COL} is {base_mode} "
+                f"but {col} is {mode}"
+            )
+    return errors
+
+
+def _timezone_mode(series: pd.Series) -> str:
+    """Return naive/aware/mixed timezone mode for a datetime-like series."""
+    if is_datetime64tz_dtype(series.dtype):
+        return "aware"
+    try:
+        converted = pd.to_datetime(series, errors="coerce", utc=False)
+    except (TypeError, ValueError):
+        return "mixed"
+    if converted.isna().all():
+        return "naive"
+    if is_datetime64tz_dtype(converted.dtype):
+        return "aware"
+    if is_datetime64_dtype(converted.dtype):
+        return "naive"
+    return "mixed"
 
 
 def _handle_error(msg: str, strict: bool) -> pd.DataFrame:

@@ -44,6 +44,13 @@ from src.dl_surface_loader import (  # noqa: E402
 )
 from src.dl_config import resolve_dl_prediction_artifact_path  # noqa: E402
 from src.dl_daily_features import _count_sign_flips  # noqa: E402
+from schemas.dl_artifact_schema import (  # noqa: E402
+    DL_ARTIFACT_CREATED_COL,
+    DL_AVAILABLE_TS_COL,
+    DL_GENERATED_TS_COL,
+    DL_SCHEMA_VERSION,
+    DL_TIMESTAMP_COL,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -79,20 +86,27 @@ def _make_cube(
     dl_regime: str = "HVTF",
     start: datetime | None = None,
 ) -> pd.DataFrame:
-    """Build a minimal valid cube DataFrame for a single surface."""
+    """Build a minimal valid v2 DL artifact DataFrame for a single surface."""
     if start is None:
         start = datetime(2024, 1, 1, 0, 0, 0)
     times = [start + timedelta(hours=i) for i in range(n_rows)]
+    generated_times = [t - timedelta(minutes=20) for t in times]
+    available_times = [t - timedelta(minutes=5) for t in times]
+    artifact_created_times = [t - timedelta(minutes=1) for t in times]
     return pd.DataFrame(
         {
             "pair": [pair] * n_rows,
-            "entry_time": pd.to_datetime(times),
+            DL_TIMESTAMP_COL: pd.to_datetime(times),
+            DL_AVAILABLE_TS_COL: pd.to_datetime(available_times),
+            DL_GENERATED_TS_COL: pd.to_datetime(generated_times),
+            DL_ARTIFACT_CREATED_COL: pd.to_datetime(artifact_created_times),
             "model": [model] * n_rows,
             "target_horizon": pd.array([target_horizon] * n_rows, dtype="Int64"),
             "feature_set": [feature_set] * n_rows,
             "dl_regime": [dl_regime] * n_rows,
             "signal_strength": [float(i) / n_rows * 2 - 1 for i in range(n_rows)],
             "pred_prob_up": [0.5 + float(i) / n_rows * 0.5 for i in range(n_rows)],
+            "schema_version": [DL_SCHEMA_VERSION] * n_rows,
         }
     )
 
@@ -107,6 +121,15 @@ _SURFACE = {
 # ---------------------------------------------------------------------------
 # Synthetic checks
 # ---------------------------------------------------------------------------
+
+
+def _assert_raises_value_error(fn) -> None:
+    raised = False
+    try:
+        fn()
+    except ValueError:
+        raised = True
+    assert raised, "Expected ValueError"
 
 
 def check_empty_df_schema():
@@ -167,79 +190,85 @@ def check_valid_cube_roundtrip(tmp_path: Path):
     assert "dl_signal_strength" in df.columns
     assert "mpml_regime_equiv" in df.columns
     assert "signal_strength" not in df.columns, "signal_strength should be renamed"
-    assert "entry_time" not in df.columns, "entry_time should be renamed to timestamp"
+    assert DL_TIMESTAMP_COL in df.columns
     # pred_prob_up is optional in the cube; _make_cube() always includes it, so
     # after loading it must have been renamed to dl_pred_prob_up.
     assert "pred_prob_up" not in df.columns, "pred_prob_up should be renamed to dl_pred_prob_up"
     assert "dl_pred_prob_up" in df.columns, "dl_pred_prob_up should be present (cube includes pred_prob_up)"
+    assert "dl_prediction_available_timestamp" in df.columns
 
     # Check MPML mapping
     assert set(df["mpml_regime_equiv"].unique()) == {"HVTF"}
 
 
 def check_signal_strength_range_violation(tmp_path: Path):
-    """Out-of-range signal_strength returns empty DF (strict=False)."""
+    """Out-of-range signal_strength fails fast."""
     cube = _make_cube()
     cube.loc[0, "signal_strength"] = 1.5  # out of range
     cube_file = tmp_path / "bad_range.parquet"
     cube.to_parquet(cube_file, index=False)
 
-    df = load_dl_surface(cube_file, _SURFACE, strict=False)
-    assert df.empty, "Expected empty DF for out-of-range signal_strength"
+    _assert_raises_value_error(
+        lambda: load_dl_surface(cube_file, _SURFACE, strict=False)
+    )
 
 
 def check_pred_prob_up_range_violation(tmp_path: Path):
-    """Out-of-range pred_prob_up returns empty DF."""
+    """Out-of-range pred_prob_up fails fast."""
     cube = _make_cube()
     cube.loc[0, "pred_prob_up"] = -0.1  # out of range
     cube_file = tmp_path / "bad_prob.parquet"
     cube.to_parquet(cube_file, index=False)
 
-    df = load_dl_surface(cube_file, _SURFACE, strict=False)
-    assert df.empty, "Expected empty DF for out-of-range pred_prob_up"
+    _assert_raises_value_error(
+        lambda: load_dl_surface(cube_file, _SURFACE, strict=False)
+    )
 
 
-def check_non_hourly_timestamp(tmp_path: Path):
-    """Non-hourly entry_time values are rejected."""
+def check_causal_ordering_violation(tmp_path: Path):
+    """Rows where available timestamp is after bar timestamp are rejected."""
     cube = _make_cube()
-    cube.loc[0, "entry_time"] = cube.loc[0, "entry_time"] + timedelta(minutes=15)
-    cube_file = tmp_path / "non_hourly.parquet"
+    cube.loc[0, DL_AVAILABLE_TS_COL] = cube.loc[0, DL_TIMESTAMP_COL] + timedelta(minutes=1)
+    cube_file = tmp_path / "causal_violation.parquet"
     cube.to_parquet(cube_file, index=False)
 
-    df = load_dl_surface(cube_file, _SURFACE, strict=False)
-    assert df.empty, "Expected empty DF for non-hourly timestamps"
+    _assert_raises_value_error(
+        lambda: load_dl_surface(cube_file, _SURFACE, strict=False)
+    )
 
 
-def check_duplicate_entry_time(tmp_path: Path):
-    """Duplicate (pair, entry_time) within a surface is rejected."""
+def check_duplicate_timestamp(tmp_path: Path):
+    """Duplicate (pair, timestamp) within a surface is rejected."""
     cube = _make_cube()
-    cube.loc[1, "entry_time"] = cube.loc[0, "entry_time"]  # introduce duplicate
+    cube.loc[1, DL_TIMESTAMP_COL] = cube.loc[0, DL_TIMESTAMP_COL]  # introduce duplicate
     cube_file = tmp_path / "dup.parquet"
     cube.to_parquet(cube_file, index=False)
 
-    df = load_dl_surface(cube_file, _SURFACE, strict=False)
-    assert df.empty, "Expected empty DF for duplicate entry_time"
+    _assert_raises_value_error(
+        lambda: load_dl_surface(cube_file, _SURFACE, strict=False)
+    )
 
 
 def check_non_monotone_timestamps(tmp_path: Path):
-    """Non-monotone entry_time within a surface is rejected."""
+    """Non-monotone timestamp within a surface is rejected."""
     cube = _make_cube()
     # Swap first two rows to break monotonicity
-    cube.loc[0, "entry_time"], cube.loc[1, "entry_time"] = (
-        cube.loc[1, "entry_time"],
-        cube.loc[0, "entry_time"],
+    cube.loc[0, DL_TIMESTAMP_COL], cube.loc[1, DL_TIMESTAMP_COL] = (
+        cube.loc[1, DL_TIMESTAMP_COL],
+        cube.loc[0, DL_TIMESTAMP_COL],
     )
     cube_file = tmp_path / "non_monotone.parquet"
     cube.to_parquet(cube_file, index=False)
 
-    df = load_dl_surface(cube_file, _SURFACE, strict=False)
-    assert df.empty, "Expected empty DF for non-monotone entry_time"
+    _assert_raises_value_error(
+        lambda: load_dl_surface(cube_file, _SURFACE, strict=False)
+    )
 
 
 def check_surface_selection_filters_correctly(tmp_path: Path):
     """Only rows matching the exact surface dict are returned."""
     cube_a = _make_cube(dl_regime="HVTF", n_rows=5)
-    cube_b = _make_cube(dl_regime="LVTF", n_rows=8)
+    cube_b = _make_cube(dl_regime="LVTF", pair="gbp-usd", n_rows=8)
     cube = pd.concat([cube_a, cube_b], ignore_index=True)
     cube_file = tmp_path / "multi_surface.parquet"
     cube.to_parquet(cube_file, index=False)
@@ -249,14 +278,36 @@ def check_surface_selection_filters_correctly(tmp_path: Path):
 
 
 def check_missing_required_column(tmp_path: Path):
-    """Cube missing a required column returns empty DF."""
+    """Artifact missing a required column fails fast."""
     cube = _make_cube()
-    cube = cube.drop(columns=["signal_strength"])
+    cube = cube.drop(columns=[DL_AVAILABLE_TS_COL])
     cube_file = tmp_path / "missing_col.parquet"
     cube.to_parquet(cube_file, index=False)
 
-    df = load_dl_surface(cube_file, _SURFACE, strict=False)
-    assert df.empty, "Expected empty DF for missing required column"
+    _assert_raises_value_error(
+        lambda: load_dl_surface(cube_file, _SURFACE, strict=False)
+    )
+
+
+def check_missing_schema_version_fails(tmp_path: Path):
+    """Artifact without schema_version metadata/column fails fast."""
+    cube = _make_cube().drop(columns=["schema_version"])
+    cube_file = tmp_path / "missing_schema_version.parquet"
+    cube.to_parquet(cube_file, index=False)
+    _assert_raises_value_error(
+        lambda: load_dl_surface(cube_file, _SURFACE, strict=False)
+    )
+
+
+def check_incompatible_schema_version_fails(tmp_path: Path):
+    """Artifact with incompatible schema version fails fast."""
+    cube = _make_cube()
+    cube["schema_version"] = "1.0.0"
+    cube_file = tmp_path / "incompatible_schema_version.parquet"
+    cube.to_parquet(cube_file, index=False)
+    _assert_raises_value_error(
+        lambda: load_dl_surface(cube_file, _SURFACE, strict=False)
+    )
 
 
 def check_mpml_regime_mapping(tmp_path: Path):
@@ -419,10 +470,12 @@ def run_checks(cube_path: Path | None, surface: dict) -> int:
         ("invalid_surface_missing_key", check_invalid_surface_dict_missing_key, []),
         ("invalid_surface_regime", check_invalid_surface_regime, []),
         ("valid_roundtrip", check_valid_cube_roundtrip, [tmp]),
+        ("missing_schema_version", check_missing_schema_version_fails, [tmp]),
+        ("incompatible_schema_version", check_incompatible_schema_version_fails, [tmp]),
         ("signal_strength_range", check_signal_strength_range_violation, [tmp]),
         ("pred_prob_up_range", check_pred_prob_up_range_violation, [tmp]),
-        ("non_hourly_timestamp", check_non_hourly_timestamp, [tmp]),
-        ("duplicate_entry_time", check_duplicate_entry_time, [tmp]),
+        ("causal_ordering_violation", check_causal_ordering_violation, [tmp]),
+        ("duplicate_timestamp", check_duplicate_timestamp, [tmp]),
         ("non_monotone_timestamps", check_non_monotone_timestamps, [tmp]),
         ("surface_selection", check_surface_selection_filters_correctly, [tmp]),
         ("missing_required_column", check_missing_required_column, [tmp]),
