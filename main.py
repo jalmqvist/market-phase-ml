@@ -515,7 +515,7 @@ def attach_dl_features(
         if non_causal_mask.any():
             sample_bad = surface_df.loc[non_causal_mask, ["timestamp", "dl_prediction_timestamp"]].head(3)
             raise AssertionError(
-                f"[DL] {pair_name}: non-causal H1 DL rows where prediction_timestamp > timestamp. "
+                f"[DL] {pair_name}: non-causal H1 DL rows where dl_prediction_timestamp > timestamp. "
                 f"sample={sample_bad.to_dict('records')}"
             )
         lag_hours = (bar_ts - pred_ts).dt.total_seconds().div(3600.0)
@@ -682,7 +682,7 @@ def attach_dl_features(
                 ["_timestamp_original", "timestamp", "dl_feature_source_day"],
             ].head(3)
             raise AssertionError(
-                f"[DL] {pair_name}: non-causal DL merge lag detected (<1 day). "
+                f"[DL] {pair_name}: non-causal DL merge lag detected (must be >= 1 day). "
                 f"sample={bad_lag.to_dict('records')}"
             )
         print(
@@ -1049,9 +1049,18 @@ def _window_diagnostics(
     test_start_ts = pd.Timestamp(test_start_ts)
     test_end_ts = pd.Timestamp(test_end_ts)
 
-    assert train_start_ts <= train_end_ts, "train_start_ts must be <= train_end_ts"
-    assert test_start_ts <= test_end_ts, "test_start_ts must be <= test_end_ts"
-    assert train_end_ts < test_start_ts, "train_end_ts must be < test_start_ts"
+    assert train_start_ts <= train_end_ts, (
+        "train_start_ts must be <= train_end_ts "
+        f"({train_start_ts} !<= {train_end_ts})"
+    )
+    assert test_start_ts <= test_end_ts, (
+        "test_start_ts must be <= test_end_ts "
+        f"({test_start_ts} !<= {test_end_ts})"
+    )
+    assert train_end_ts < test_start_ts, (
+        "train_end_ts must be < test_start_ts "
+        f"({train_end_ts} !< {test_start_ts})"
+    )
 
     # Normalize to calendar days because fold diagnostics are reported in day
     # units and some callers may provide non-midnight timestamps.
