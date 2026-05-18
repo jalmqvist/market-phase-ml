@@ -276,6 +276,7 @@ def check_surface_selection_filters_correctly(tmp_path: Path):
 
     df = load_dl_surface(cube_file, _SURFACE, strict=True)
     assert len(df) == 5, f"Expected 5 rows; got {len(df)}"
+    assert set(df["pair"].unique()) == {"eur-usd"}
 
 
 def check_missing_required_column(tmp_path: Path):

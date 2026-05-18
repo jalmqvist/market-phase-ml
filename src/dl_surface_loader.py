@@ -81,6 +81,7 @@ REQUIRED_ARTIFACT_COLUMNS: frozenset[str] = frozenset(
 OPTIONAL_ARTIFACT_COLUMNS: frozenset[str] = frozenset(
     {"dl_confidence", "pred_prob_up", "schema_version"}
 )
+# Backward-compatible aliases kept for existing imports in validation tooling.
 REQUIRED_CUBE_COLUMNS = REQUIRED_ARTIFACT_COLUMNS
 OPTIONAL_CUBE_COLUMNS = OPTIONAL_ARTIFACT_COLUMNS
 
@@ -396,7 +397,7 @@ def _coerce_dtypes(df: pd.DataFrame) -> pd.DataFrame:
             # Normalize all timestamps to UTC first, then drop timezone so MPML
             # downstream joins operate on a consistent tz-naive UTC convention.
             ts = pd.to_datetime(df[ts_col], errors="coerce", utc=True)
-            df[ts_col] = ts.dt.tz_convert(None)
+            df[ts_col] = ts.dt.tz_localize(None)
 
     # target_horizon: nullable Int64 (number of bars)
     df["target_horizon"] = pd.to_numeric(
