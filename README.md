@@ -64,9 +64,9 @@ The notebook (`notebooks/01_regime_gating_walkforward.ipynb`) reads these artifa
 
 ------
 
-## DL integration quickstart (v1)
+## DL integration quickstart (contract v2)
 
-`market-sentiment-ml` exports per-run H1 DL prediction artifacts, and `market-phase-ml` consumes one selected surface, aggregates it to D1, and feeds those numeric features into the existing pipeline.
+`market-sentiment-ml` exports per-run H1 DL prediction artifacts, and `market-phase-ml` consumes one selected surface, validates the artifact contract, aggregates it to D1, and feeds those numeric features into the existing pipeline.
 
 ```bash
 # 1) In market-sentiment-ml/: export one surface artifact
@@ -88,11 +88,13 @@ export DL_SIGNALS_ENABLED=true
 python main.py
 ```
 
-v1 limitations:
+Contract + behavior notes:
 
 - single-surface only per run (no ensembles / multi-surface aggregation)
 - explicit `dl_regime` required (`HVTF|LVTF|HVR|LVR`), no `"all"` support
-- DL integration is optional and degrades gracefully when unavailable
+- strict schema contract: MPML requires a compatible `schema_version` (v2 major), required columns, duplicate-free `(pair, timestamp)`, monotonic timestamps, and causal ordering
+- timestamp semantics: causality is enforced only with `prediction_available_timestamp <= timestamp` (not `prediction_generated_timestamp` or `artifact_created_timestamp`)
+- invalid artifacts fail fast; valid artifacts with no matching join coverage still fall back gracefully
 - no guarantee of performance improvement; treat as an experimental feature layer
 
 ---

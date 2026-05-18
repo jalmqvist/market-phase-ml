@@ -209,7 +209,7 @@ def _maybe_attach_dl_signals(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     print(f"Loading DL signals from: {artifact_path}")
-    surface_df = load_dl_surface(artifact_path, DL_SIGNAL_SURFACE, strict=False)
+    surface_df = load_dl_surface(artifact_path, DL_SIGNAL_SURFACE, strict=True)
 
     if surface_df.empty:
         print("  [warn] DL surface is empty; continuing without DL signals.")
