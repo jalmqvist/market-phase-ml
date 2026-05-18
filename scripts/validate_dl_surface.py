@@ -129,7 +129,8 @@ def _assert_raises_value_error(fn) -> None:
         fn()
     except ValueError:
         raised = True
-    assert raised, "Expected ValueError"
+    fn_name = getattr(fn, "__name__", repr(fn))
+    assert raised, f"Expected ValueError from {fn_name}"
 
 
 def check_empty_df_schema():

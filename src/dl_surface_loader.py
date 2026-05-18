@@ -62,7 +62,7 @@ from schemas.dl_artifact_schema import (
 # ---------------------------------------------------------------------------
 
 #: Columns that must be present in the DL artifact parquet.
-REQUIRED_CUBE_COLUMNS: frozenset[str] = frozenset(
+REQUIRED_ARTIFACT_COLUMNS: frozenset[str] = frozenset(
     {
         DL_PAIR_COL,
         DL_TIMESTAMP_COL,
@@ -78,9 +78,11 @@ REQUIRED_CUBE_COLUMNS: frozenset[str] = frozenset(
 )
 
 #: Columns that may optionally be present in the cube parquet.
-OPTIONAL_CUBE_COLUMNS: frozenset[str] = frozenset(
+OPTIONAL_ARTIFACT_COLUMNS: frozenset[str] = frozenset(
     {"dl_confidence", "pred_prob_up", "schema_version"}
 )
+REQUIRED_CUBE_COLUMNS = REQUIRED_ARTIFACT_COLUMNS
+OPTIONAL_CUBE_COLUMNS = OPTIONAL_ARTIFACT_COLUMNS
 
 #: Keys that must appear in the *surface* selection dict.
 SURFACE_REQUIRED_KEYS: tuple[str, ...] = (
@@ -321,10 +323,10 @@ def validate_dl_artifact(
             f"expected compatibility with {DL_SCHEMA_VERSION!r}"
         )
 
-    missing_cols = REQUIRED_CUBE_COLUMNS - set(df.columns)
+    missing_cols = REQUIRED_ARTIFACT_COLUMNS - set(df.columns)
     if missing_cols:
         raise ValueError(
-            f"DL signal cube missing required columns: {sorted(missing_cols)}"
+            f"DL artifact missing required columns: {sorted(missing_cols)}"
         )
 
     tz_errors = _validate_timezone_consistency(df)
@@ -333,7 +335,7 @@ def validate_dl_artifact(
 
     df = _coerce_dtypes(df)
 
-    null_mask = df[list(REQUIRED_CUBE_COLUMNS)].isna().any(axis=1)
+    null_mask = df[list(REQUIRED_ARTIFACT_COLUMNS)].isna().any(axis=1)
     if null_mask.any():
         raise ValueError(
             f"null values in required contract columns: {int(null_mask.sum())} rows"
@@ -391,6 +393,8 @@ def _coerce_dtypes(df: pd.DataFrame) -> pd.DataFrame:
         DL_ARTIFACT_CREATED_COL,
     ):
         if ts_col in df.columns:
+            # Normalize all timestamps to UTC first, then drop timezone so MPML
+            # downstream joins operate on a consistent tz-naive UTC convention.
             ts = pd.to_datetime(df[ts_col], errors="coerce", utc=True)
             df[ts_col] = ts.dt.tz_convert(None)
 
@@ -495,8 +499,14 @@ def _extract_schema_version(df: pd.DataFrame, metadata: dict[str, str]) -> str |
 
 def _is_compatible_schema_version(version: str) -> bool:
     """Compatibility policy: strict major-version compatibility with v2."""
-    expected_major = DL_SCHEMA_VERSION.split(".")[0]
-    major = str(version).split(".")[0]
+    version_parts = str(version).split(".")
+    expected_parts = DL_SCHEMA_VERSION.split(".")
+    if len(version_parts) < 1 or len(expected_parts) < 1:
+        return False
+    if not version_parts[0].isdigit() or not expected_parts[0].isdigit():
+        return False
+    expected_major = expected_parts[0]
+    major = version_parts[0]
     return major == expected_major
 
 
@@ -504,6 +514,7 @@ def _normalize_pair(pair: str) -> str | None:
     p = str(pair).strip().lower().replace("/", "-").replace("_", "-")
     while "--" in p:
         p = p.replace("--", "-")
+    # Support compact FX format "XXXYYY" by converting to "xxx-yyy".
     if "-" not in p and len(p) == 6 and p.isalpha():
         p = f"{p[:3]}-{p[3:]}"
     if len(p) == 7 and p[3] == "-" and p[:3].isalpha() and p[4:].isalpha():
