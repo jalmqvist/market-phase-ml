@@ -408,6 +408,23 @@ class PhaseMLPredictor:
 
                 X_train_raw = X.iloc[train_start:train_end]
                 y_train = y_encoded.iloc[train_start:train_end]
+                train_start_ts = df.index[train_start]
+                train_end_ts = df.index[train_end - 1]
+                inference_ts = df.index[i]
+                target_ts = df.index[i + 1]
+                assert train_end_ts < inference_ts, (
+                    "PhaseMLPredictor: train_end_ts must be < inference_ts "
+                    f"({train_end_ts} !< {inference_ts})"
+                )
+                assert inference_ts <= target_ts, (
+                    "PhaseMLPredictor: inference_ts must be <= target_ts "
+                    f"({inference_ts} !<= {target_ts})"
+                )
+                print(
+                    f"  [PHASE WF WINDOW] fold={i} "
+                    f"train={train_start_ts} -> {train_end_ts} "
+                    f"inference_ts={inference_ts} target_ts={target_ts}"
+                )
 
                 if global_dl_numeric_cols:
                     fold_missing_dl_cols = [c for c in global_dl_numeric_cols if c not in X_train_raw.columns]
@@ -1245,8 +1262,18 @@ class StrategyPerformanceTracker:
         eq_df = pd.concat(equity_curves, axis=1)
         eq_df.columns = list(equity_curves.keys())
 
-        # Force equity curves to have exactly the same index as df (one value per bar)
-        eq_df = eq_df.reindex(df.index).ffill().bfill()
+        # CONTRACT:
+        # Equity alignment for selector labels must remain causal. Forward-fill is
+        # allowed because it only carries past equity forward; backward-fill would
+        # leak future strategy performance into earlier rows and is forbidden.
+        eq_df = eq_df.reindex(df.index).ffill()
+        if eq_df.isna().any().any():
+            nan_rows = eq_df.isna().any(axis=1)
+            first_nan_idx = eq_df.index[nan_rows][0]
+            raise AssertionError(
+                "StrategyPerformanceTracker: leading NaNs remain after causal equity "
+                f"alignment at {first_nan_idx}; refusing non-causal backward fill."
+            )
 
         # Use the aligned length (should match len(df) after reindex, but keep it explicit)
         n_bars = len(eq_df)
@@ -1357,6 +1384,15 @@ class StrategySelector:
         from sklearn.preprocessing import LabelEncoder
         from sklearn.model_selection import StratifiedKFold, cross_val_score
         from sklearn.pipeline import Pipeline
+
+        if "date" in training_data.columns and len(training_data):
+            train_dates = pd.to_datetime(training_data["date"])
+            if not train_dates.is_monotonic_increasing:
+                raise AssertionError("StrategySelector.train: training_data['date'] must be monotonic increasing")
+            print(
+                f"  [SELECTOR TRAIN WINDOW] {diagnostics_label or 'selector training'}: "
+                f"start={train_dates.min()} end={train_dates.max()} rows={len(train_dates)}"
+            )
 
         # Build feature column list: base features + any DL columns present in training_data.
         # DL columns are absent in baseline runs (DL_SIGNALS_ENABLED=False) so this is a no-op
