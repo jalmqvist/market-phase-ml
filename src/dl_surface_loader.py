@@ -342,7 +342,7 @@ def validate_dl_artifact(
             f"null values in required contract columns: {int(null_mask.sum())} rows"
         )
 
-    normalized_pairs = df[DL_PAIR_COL].astype(str).map(_normalize_pair)
+    normalized_pairs = df[DL_PAIR_COL].map(_normalize_pair)
     bad_pair_mask = normalized_pairs.isna()
     if bad_pair_mask.any():
         bad_values = (
@@ -512,7 +512,9 @@ def _is_compatible_schema_version(version: str) -> bool:
 
 
 def _normalize_pair(pair: str) -> str | None:
-    p = str(pair).strip().lower().replace("/", "-").replace("_", "-")
+    if not isinstance(pair, str):
+        return None
+    p = pair.strip().lower().replace("/", "-").replace("_", "-")
     while "--" in p:
         p = p.replace("--", "-")
     # Support compact FX format "XXXYYY" by converting to "xxx-yyy".
