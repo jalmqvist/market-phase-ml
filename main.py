@@ -687,9 +687,9 @@ def attach_dl_features(
             )
         print(
             f"  [DL] {pair_name}: dl_merge_lag_days "
-            f"min={int(merge_lag_days.min())} "
+            f"min={float(merge_lag_days.min()):.2f} "
             f"median={float(merge_lag_days.median()):.2f} "
-            f"max={int(merge_lag_days.max())}"
+            f"max={float(merge_lag_days.max()):.2f}"
         )
 
     # ------------------------------------------------------------------
@@ -1264,6 +1264,9 @@ def _build_causal_selector_training_data(
         f"selector_train_end_ts={selector_train_end_ts} must be < test_start_ts={test_start_ts}"
     )
 
+    # +1 is intentional: iloc end is exclusive, and we need the train_end_pos
+    # bar included so the latest admissible selector label can be computed from
+    # train-fold-contained history only.
     df_for_labels = df_full.iloc[train_start_pos:train_end_pos + 1].copy()
 
     strat_results_for_labels = {}
