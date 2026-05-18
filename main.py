@@ -588,6 +588,9 @@ def attach_dl_features(
     # - parquet datetime normalization inconsistencies
     # ----------------------------------------------------------
 
+    # CONTRACT:
+    # D1 features attached on trading day D must come from H1 observations on
+    # D-1, never from D itself or from any future day.
     daily_pair["dl_feature_source_day"] = (
         pd.to_datetime(daily_pair["trading_day"]).dt.normalize() - pd.Timedelta(days=1)
     )
@@ -1235,7 +1238,8 @@ def _build_causal_selector_training_data(
         )
     if test_start_pos >= len(df_full):
         raise AssertionError(
-            f"[SELECTOR WINDOW] {pair_name} fold={fold_id}: invalid test_start_pos={test_start_pos}"
+            f"[SELECTOR WINDOW] {pair_name} fold={fold_id}: invalid test_start_pos={test_start_pos} "
+            f"len(df_full)={len(df_full)}"
         )
 
     selector_train_end_pos = train_end_pos - label_horizon_bars
@@ -2526,15 +2530,16 @@ def main():
                 )
                 vol_diag_rows.append(vol_diag)
 
+                selector_train_end_ts = selector_window_diag.get("selector_train_end_ts")
                 walkforward_rows.append({
                     "Pair": pair_name,
                     "Fold": fold_id,
                     "Train Start": f["train_start_dt"],
                     "Train End": f["train_end_dt"],
                     "Selector Train End": (
-                        selector_window_diag.get("selector_train_end_ts").date().isoformat()
-                        if selector_window_diag.get("selector_train_end_ts") is not None
-                        and not pd.isna(selector_window_diag.get("selector_train_end_ts"))
+                        selector_train_end_ts.date().isoformat()
+                        if selector_train_end_ts is not None
+                        and not pd.isna(selector_train_end_ts)
                         else None
                     ),
                     "Test Start": f["test_start_dt"],

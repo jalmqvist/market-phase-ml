@@ -408,6 +408,10 @@ class PhaseMLPredictor:
 
                 X_train_raw = X.iloc[train_start:train_end]
                 y_train = y_encoded.iloc[train_start:train_end]
+                assert (i + 1) < len(df.index), (
+                    "PhaseMLPredictor: target timestamp is out of bounds "
+                    f"for fold={i} len(df)={len(df.index)}"
+                )
                 train_start_ts = df.index[train_start]
                 train_end_ts = df.index[train_end - 1]
                 inference_ts = df.index[i]
