@@ -668,12 +668,16 @@ def attach_dl_features(
 
     matched_dl_mask = merged[list(D1_FEATURE_COLS)].notna().any(axis=1)
     if matched_dl_mask.any():
+        matched_rows = merged.loc[matched_dl_mask]
         merge_lag_days = (
-            pd.to_datetime(merged.loc[matched_dl_mask, "timestamp"]).dt.normalize()
-            - pd.to_datetime(merged.loc[matched_dl_mask, "dl_feature_source_day"]).dt.normalize()
+            pd.to_datetime(matched_rows["timestamp"]).dt.normalize()
+            - pd.to_datetime(matched_rows["dl_feature_source_day"]).dt.normalize()
         ).dt.days
         if (merge_lag_days < 1).any():
-            bad_lag = merged.loc[matched_dl_mask].loc[merge_lag_days < 1, ["_timestamp_original", "timestamp", "dl_feature_source_day"]].head(3)
+            bad_lag = matched_rows.loc[
+                merge_lag_days < 1,
+                ["_timestamp_original", "timestamp", "dl_feature_source_day"],
+            ].head(3)
             raise AssertionError(
                 f"[DL] {pair_name}: non-causal DL merge lag detected (<1 day). "
                 f"sample={bad_lag.to_dict('records')}"
@@ -1046,14 +1050,21 @@ def _window_diagnostics(
     assert test_start_ts <= test_end_ts, "test_start_ts must be <= test_end_ts"
     assert train_end_ts < test_start_ts, "train_end_ts must be < test_start_ts"
 
-    overlap_start = max(train_start_ts, test_start_ts)
-    overlap_end = min(train_end_ts, test_end_ts)
+    # Normalize to calendar days because fold diagnostics are reported in day
+    # units and some callers may provide non-midnight timestamps.
+    train_start_day = train_start_ts.normalize()
+    train_end_day = train_end_ts.normalize()
+    test_start_day = test_start_ts.normalize()
+    test_end_day = test_end_ts.normalize()
+
+    overlap_start = max(train_start_day, test_start_day)
+    overlap_end = min(train_end_day, test_end_day)
     overlap_days = (
         int((overlap_end - overlap_start).days + 1)
         if overlap_start <= overlap_end
         else 0
     )
-    gap_days = int((test_start_ts.normalize() - train_end_ts.normalize()).days)
+    gap_days = int((test_start_day - train_end_day).days)
     return {
         "train_start_ts": train_start_ts,
         "train_end_ts": train_end_ts,
