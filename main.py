@@ -508,6 +508,25 @@ def attach_dl_features(
         print(f"  [DL] {pair_name}: surface not available in artifact; skipping attachment.")
         return processed_df
 
+    if "dl_prediction_timestamp" in surface_df.columns:
+        pred_ts = pd.to_datetime(surface_df["dl_prediction_timestamp"])
+        bar_ts = pd.to_datetime(surface_df["timestamp"])
+        non_causal_mask = pred_ts > bar_ts
+        if non_causal_mask.any():
+            sample_bad = surface_df.loc[non_causal_mask, ["timestamp", "dl_prediction_timestamp"]].head(3)
+            raise AssertionError(
+                f"[DL] {pair_name}: non-causal H1 DL rows where dl_prediction_timestamp > timestamp. "
+                f"sample={sample_bad.to_dict('records')}"
+            )
+        lag_hours = (bar_ts - pred_ts).dt.total_seconds().div(3600.0)
+        if len(lag_hours):
+            print(
+                f"  [DL] {pair_name}: h1_prediction_lag_hours "
+                f"min={float(lag_hours.min()):.2f} "
+                f"median={float(lag_hours.median()):.2f} "
+                f"max={float(lag_hours.max()):.2f}"
+            )
+
     daily_df = load_and_aggregate_d1(
         artifact_path=artifact_path,
         surface=surface,
@@ -569,6 +588,12 @@ def attach_dl_features(
     # - parquet datetime normalization inconsistencies
     # ----------------------------------------------------------
 
+    # CONTRACT:
+    # D1 features attached on trading day D must come from H1 observations on
+    # D-1, never from D itself or from any future day.
+    daily_pair["dl_feature_source_day"] = (
+        pd.to_datetime(daily_pair["trading_day"]).dt.normalize() - pd.Timedelta(days=1)
+    )
     daily_pair = daily_pair.rename(columns={"trading_day": "timestamp"})
 
     daily_pair["timestamp"] = (
@@ -583,7 +608,7 @@ def attach_dl_features(
         .dt.normalize()
     )
 
-    join_cols = ["pair", "timestamp", *D1_FEATURE_COLS]
+    join_cols = ["pair", "timestamp", "dl_feature_source_day", *D1_FEATURE_COLS]
     # ----------------------------------------------------------
     # Pre-merge overlap diagnostics
     # ----------------------------------------------------------
@@ -626,6 +651,10 @@ def attach_dl_features(
         f"  [DL] {pair_name}: "
         f"rows_with_any_dl={dl_non_null_rows}/{len(merged)}"
     )
+    print(
+        f"  [DL] {pair_name}: dl_merge_hit_rate_pct="
+        f"{(float(dl_non_null_rows) / float(len(merged)) * 100.0) if len(merged) else 0.0:.2f}"
+    )
 
     if dl_non_null_rows == 0:
         raise RuntimeError(
@@ -639,6 +668,29 @@ def attach_dl_features(
         )
     if merged.duplicated(subset=["pair", "_timestamp_original"]).any():
         raise AssertionError(f"[DL] {pair_name}: duplicate (pair, timestamp) rows after DL join")
+
+    matched_dl_mask = merged[list(D1_FEATURE_COLS)].notna().any(axis=1)
+    if matched_dl_mask.any():
+        matched_rows = merged.loc[matched_dl_mask]
+        merge_lag_days = (
+            pd.to_datetime(matched_rows["timestamp"]).dt.normalize()
+            - pd.to_datetime(matched_rows["dl_feature_source_day"]).dt.normalize()
+        ).dt.days
+        if (merge_lag_days < 1).any():
+            bad_lag = matched_rows.loc[
+                merge_lag_days < 1,
+                ["_timestamp_original", "timestamp", "dl_feature_source_day"],
+            ].head(3)
+            raise AssertionError(
+                f"[DL] {pair_name}: non-causal DL merge lag detected (must be >= 1 day). "
+                f"sample={bad_lag.to_dict('records')}"
+            )
+        print(
+            f"  [DL] {pair_name}: dl_merge_lag_days "
+            f"min={float(merge_lag_days.min()):.2f} "
+            f"median={float(merge_lag_days.median()):.2f} "
+            f"max={float(merge_lag_days.max()):.2f}"
+        )
 
     # ------------------------------------------------------------------
     # Coverage detection + optional verbose diagnostics
@@ -718,7 +770,7 @@ def attach_dl_features(
     # ------------------------------------------------------------------
     # Rebuild output with original index
     # ------------------------------------------------------------------
-    out = merged.drop(columns=["pair", "timestamp"]).set_index("_timestamp_original")
+    out = merged.drop(columns=["pair", "timestamp", "dl_feature_source_day"]).set_index("_timestamp_original")
     out.index.name = processed_df.index.name
     return out
 
@@ -984,6 +1036,66 @@ def _find_index_pos(dt_index: pd.DatetimeIndex, dt: pd.Timestamp) -> int:
     return int(pos)
 
 
+def _window_diagnostics(
+    *,
+    train_start_ts: pd.Timestamp,
+    train_end_ts: pd.Timestamp,
+    test_start_ts: pd.Timestamp,
+    test_end_ts: pd.Timestamp,
+) -> dict:
+    """Return causal diagnostics for one train/test window."""
+    train_start_ts = pd.Timestamp(train_start_ts)
+    train_end_ts = pd.Timestamp(train_end_ts)
+    test_start_ts = pd.Timestamp(test_start_ts)
+    test_end_ts = pd.Timestamp(test_end_ts)
+
+    assert train_start_ts <= train_end_ts, (
+        "train_start_ts must be <= train_end_ts "
+        f"({train_start_ts} !<= {train_end_ts})"
+    )
+    assert test_start_ts <= test_end_ts, (
+        "test_start_ts must be <= test_end_ts "
+        f"({test_start_ts} !<= {test_end_ts})"
+    )
+    assert train_end_ts < test_start_ts, (
+        "train_end_ts must be < test_start_ts "
+        f"({train_end_ts} !< {test_start_ts})"
+    )
+
+    # Normalize to calendar days because fold diagnostics are reported in day
+    # units and some callers may provide non-midnight timestamps.
+    train_start_day = train_start_ts.normalize()
+    train_end_day = train_end_ts.normalize()
+    test_start_day = test_start_ts.normalize()
+    test_end_day = test_end_ts.normalize()
+
+    overlap_start = max(train_start_day, test_start_day)
+    overlap_end = min(train_end_day, test_end_day)
+    overlap_days = (
+        int((overlap_end - overlap_start).days + 1)
+        if overlap_start <= overlap_end
+        else 0
+    )
+    gap_days = int((test_start_day - train_end_day).days)
+    return {
+        "train_start_ts": train_start_ts,
+        "train_end_ts": train_end_ts,
+        "test_start_ts": test_start_ts,
+        "test_end_ts": test_end_ts,
+        "gap_days": gap_days,
+        "overlap_days": overlap_days,
+    }
+
+
+def _print_window_diagnostics(prefix: str, **diag) -> None:
+    print(
+        f"{prefix} "
+        f"train={diag['train_start_ts']} -> {diag['train_end_ts']} "
+        f"test={diag['test_start_ts']} -> {diag['test_end_ts']} "
+        f"gap_days={diag['gap_days']} overlap_days={diag['overlap_days']}"
+    )
+
+
 def generate_walkforward_folds_by_pos(
     dates: pd.DatetimeIndex,
     train_years: int = 7,
@@ -1027,16 +1139,29 @@ def generate_walkforward_folds_by_pos(
         if test_end_pos <= test_start_pos or train_end_pos <= train_start_pos:
             break
 
+        train_start_ts = dates[train_start_pos]
+        train_end_ts = dates[train_end_pos]
+        test_start_ts = dates[test_start_pos]
+        test_end_ts = dates[test_end_pos]
+        window_diag = _window_diagnostics(
+            train_start_ts=train_start_ts,
+            train_end_ts=train_end_ts,
+            test_start_ts=test_start_ts,
+            test_end_ts=test_end_ts,
+        )
+
         folds.append({
             "fold": fold_id,
             "train_start_pos": train_start_pos,
             "train_end_pos": train_end_pos,
             "test_start_pos": test_start_pos,
             "test_end_pos": test_end_pos,
-            "train_start_dt": str(dates[train_start_pos].date()),
-            "train_end_dt": str(dates[train_end_pos].date()),
-            "test_start_dt": str(dates[test_start_pos].date()),
-            "test_end_dt": str(dates[test_end_pos].date()),
+            "train_start_dt": str(train_start_ts.date()),
+            "train_end_dt": str(train_end_ts.date()),
+            "test_start_dt": str(test_start_ts.date()),
+            "test_end_dt": str(test_end_ts.date()),
+            "gap_days": window_diag["gap_days"],
+            "overlap_days": window_diag["overlap_days"],
         })
         fold_id += 1
 
@@ -1092,6 +1217,118 @@ def _run_baseline_bt(df_test: pd.DataFrame, pip_value: float) -> dict:
     pa = PhaseAwareStrategy("TF4", "MR42")
     pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
     return backtester.run(df_test, pa_signals, "PhaseAware_TF4_MR42_WF", pa_sl, pa_tp)
+
+
+def _build_causal_selector_training_data(
+    *,
+    pair_name: str,
+    fold_id: int,
+    df_full: pd.DataFrame,
+    pair_results_full: dict,
+    train_start_pos: int,
+    train_end_pos: int,
+    test_start_pos: int,
+    test_end_pos: int,
+    label_horizon_bars: int,
+    context_label: str,
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Build selector training data using only bars fully contained in the train fold.
+
+    CONTRACT:
+    Selector labels must be computed from future strategy performance that is
+    still fully contained inside the train fold. No label horizon may cross the
+    fold boundary into the test window.
+    """
+    if train_end_pos <= train_start_pos:
+        raise AssertionError(
+            f"[SELECTOR WINDOW] {pair_name} fold={fold_id}: invalid train positions "
+            f"{train_start_pos}->{train_end_pos}"
+        )
+    if test_start_pos >= len(df_full):
+        raise AssertionError(
+            f"[SELECTOR WINDOW] {pair_name} fold={fold_id}: invalid test_start_pos={test_start_pos} "
+            f"len(df_full)={len(df_full)}"
+        )
+
+    selector_train_end_pos = train_end_pos - label_horizon_bars
+    if selector_train_end_pos < train_start_pos:
+        return pd.DataFrame(), {}
+
+    train_start_ts = df_full.index[train_start_pos]
+    train_end_ts = df_full.index[train_end_pos]
+    selector_train_end_ts = df_full.index[selector_train_end_pos]
+    test_start_ts = df_full.index[test_start_pos]
+    test_end_ts = df_full.index[test_end_pos]
+
+    window_diag = _window_diagnostics(
+        train_start_ts=train_start_ts,
+        train_end_ts=train_end_ts,
+        test_start_ts=test_start_ts,
+        test_end_ts=test_end_ts,
+    )
+
+    assert selector_train_end_ts < test_start_ts, (
+        f"[SELECTOR WINDOW] {pair_name} fold={fold_id}: "
+        f"selector_train_end_ts={selector_train_end_ts} must be < test_start_ts={test_start_ts}"
+    )
+
+    # +1 is intentional: iloc end is exclusive, and we need the train_end_pos
+    # bar included so the latest admissible selector label can be computed from
+    # train-fold-contained history only.
+    df_for_labels = df_full.iloc[train_start_pos:train_end_pos + 1].copy()
+
+    strat_results_for_labels = {}
+    for sname, res in pair_results_full.items():
+        eq = res.get("equity_curve", None)
+        if eq is None:
+            continue
+        strat_results_for_labels[sname] = dict(res)
+        strat_results_for_labels[sname]["equity_curve"] = eq.reindex(df_for_labels.index).ffill()
+
+    tracker = StrategyPerformanceTracker(window_days=label_horizon_bars)
+    training_data_all = tracker.compute_strategy_returns(
+        df_for_labels,
+        strat_results_for_labels,
+    )
+    if training_data_all.empty:
+        return training_data_all, {}
+
+    training_data = training_data_all.loc[
+        (training_data_all["date"] >= train_start_ts)
+        & (training_data_all["date"] <= selector_train_end_ts)
+    ].copy()
+
+    if not training_data.empty:
+        ranking_start_ts = pd.Timestamp(training_data["date"].min())
+        ranking_end_ts = pd.Timestamp(training_data["date"].max())
+        assert ranking_end_ts <= selector_train_end_ts, (
+            f"[SELECTOR WINDOW] {pair_name} fold={fold_id}: "
+            f"ranking_end_ts={ranking_end_ts} exceeded selector_train_end_ts={selector_train_end_ts}"
+        )
+    else:
+        ranking_start_ts = pd.NaT
+        ranking_end_ts = pd.NaT
+
+    print(
+        f"    [SELECTOR WINDOW] {context_label} pair={pair_name} fold={fold_id} "
+        f"train={train_start_ts} -> {train_end_ts} "
+        f"selector_train={train_start_ts} -> {selector_train_end_ts} "
+        f"eval={test_start_ts} -> {test_end_ts} "
+        f"label_horizon_bars={label_horizon_bars} "
+        f"fold_gap_days={window_diag['gap_days']} "
+        f"ranking_ts_range={ranking_start_ts} -> {ranking_end_ts}"
+    )
+
+    return training_data, {
+        "train_start_ts": train_start_ts,
+        "train_end_ts": train_end_ts,
+        "selector_train_end_ts": selector_train_end_ts,
+        "test_start_ts": test_start_ts,
+        "test_end_ts": test_end_ts,
+        "ranking_start_ts": ranking_start_ts,
+        "ranking_end_ts": ranking_end_ts,
+    }
 
 
 def _assert_backtest_index_matches(pair_name: str, df_ref, results: dict, tag: str) -> None:
@@ -2089,43 +2326,28 @@ def main():
                 train_end_pos = f["train_end_pos"]
                 test_start_pos = f["test_start_pos"]
                 test_end_pos = f["test_end_pos"]
-
-                # Need enough room to label training rows with lookahead horizon
-                label_end_pos = train_end_pos + LABEL_HORIZON_BARS
-                if label_end_pos >= len(df_full):
-                    continue
-
-                # --- Build label DF (up to label_end_pos so labels don't touch test) ---
-                df_for_labels = df_full.iloc[train_start_pos:label_end_pos + 1].copy()
-
-                # Slice strategy equity curves to match df_for_labels.index
-                strat_results_for_labels = {}
-                for sname, res in pair_results_full.items():
-                    eq = res.get("equity_curve", None)
-                    if eq is None:
-                        continue
-                    common_idx = df_for_labels.index.intersection(eq.index)
-                    if len(common_idx) < len(df_for_labels.index):
-                        # shrink df_for_labels to what the equity curve can actually support
-                        df_for_labels = df_for_labels.loc[common_idx]
-                    sliced_eq = eq.reindex(common_idx).ffill()
-                    strat_results_for_labels[sname] = dict(res)
-                    strat_results_for_labels[sname]["equity_curve"] = sliced_eq
-
-                tracker = StrategyPerformanceTracker(window_days=LABEL_HORIZON_BARS)
-                training_data_all = tracker.compute_strategy_returns(
-                    df_for_labels,
-                    strat_results_for_labels
+                fold_window_diag = _window_diagnostics(
+                    train_start_ts=df_full.index[train_start_pos],
+                    train_end_ts=df_full.index[train_end_pos],
+                    test_start_ts=df_full.index[test_start_pos],
+                    test_end_ts=df_full.index[test_end_pos],
                 )
-
-                # Train rows must be within the training end (avoid using labels whose "date" is beyond train_end_pos)
-                train_end_dt = df_full.index[train_end_pos]
-                train_start_dt = df_full.index[train_start_pos]
-                train_mask = (
-                        (training_data_all["date"] >= train_start_dt) &
-                        (training_data_all["date"] <= train_end_dt)
+                _print_window_diagnostics(
+                    f"    [WF FOLD] pair={pair_name} fold={fold_id}",
+                    **fold_window_diag,
                 )
-                training_data = training_data_all.loc[train_mask].copy()
+                training_data, selector_window_diag = _build_causal_selector_training_data(
+                    pair_name=pair_name,
+                    fold_id=fold_id,
+                    df_full=df_full,
+                    pair_results_full=pair_results_full,
+                    train_start_pos=train_start_pos,
+                    train_end_pos=train_end_pos,
+                    test_start_pos=test_start_pos,
+                    test_end_pos=test_end_pos,
+                    label_horizon_bars=LABEL_HORIZON_BARS,
+                    context_label="walkforward",
+                )
 
                 if len(training_data) < 200:
                     print(f"    fold {fold_id}: ✗ too few training rows ({len(training_data)}); skipping")
@@ -2320,13 +2542,23 @@ def main():
                 )
                 vol_diag_rows.append(vol_diag)
 
+                selector_train_end_ts = selector_window_diag.get("selector_train_end_ts")
                 walkforward_rows.append({
                     "Pair": pair_name,
                     "Fold": fold_id,
                     "Train Start": f["train_start_dt"],
                     "Train End": f["train_end_dt"],
+                    "Selector Train End": (
+                        selector_train_end_ts.date().isoformat()
+                        if selector_train_end_ts is not None
+                        and not pd.isna(selector_train_end_ts)
+                        else None
+                    ),
                     "Test Start": f["test_start_dt"],
                     "Test End": f["test_end_dt"],
+                    "Fold Gap (days)": f.get("gap_days", np.nan),
+                    "Fold Overlap (days)": f.get("overlap_days", np.nan),
+                    "Label Horizon Bars": LABEL_HORIZON_BARS,
                     "Train Rows": int(len(training_data)),
                     "Test Bars": int(len(df_test)),
 
@@ -2471,32 +2703,27 @@ def main():
                 train_end_pos = f["train_end_pos"]
                 test_start_pos = f["test_start_pos"]
                 test_end_pos = f["test_end_pos"]
-
-                label_end_pos = train_end_pos + LABEL_HORIZON_BARS
-                if label_end_pos >= len(df_full):
-                    continue
-
-                # Label slice
-                df_for_labels = df_full.iloc[train_start_pos:label_end_pos + 1].copy()
-
-                strat_results_for_labels = {}
-                for sname, res in pair_results_full.items():
-                    eq = res.get("equity_curve", None)
-                    if eq is None:
-                        continue
-                    strat_results_for_labels[sname] = dict(res)
-                    strat_results_for_labels[sname]["equity_curve"] = eq.reindex(df_for_labels.index).ffill()
-
-                tracker = StrategyPerformanceTracker(window_days=LABEL_HORIZON_BARS)
-                training_data_all = tracker.compute_strategy_returns(df_for_labels, strat_results_for_labels)
-
-                train_end_dt = df_full.index[train_end_pos]
-                train_start_dt = df_full.index[train_start_pos]
-                train_mask = (
-                        (training_data_all["date"] >= train_start_dt) &
-                        (training_data_all["date"] <= train_end_dt)
+                _print_window_diagnostics(
+                    f"    [TAU FOLD] pair={pair_name} fold={fold_id}",
+                    **_window_diagnostics(
+                        train_start_ts=df_full.index[train_start_pos],
+                        train_end_ts=df_full.index[train_end_pos],
+                        test_start_ts=df_full.index[test_start_pos],
+                        test_end_ts=df_full.index[test_end_pos],
+                    ),
                 )
-                training_data = training_data_all.loc[train_mask].copy()
+                training_data, _ = _build_causal_selector_training_data(
+                    pair_name=pair_name,
+                    fold_id=fold_id,
+                    df_full=df_full,
+                    pair_results_full=pair_results_full,
+                    train_start_pos=train_start_pos,
+                    train_end_pos=train_end_pos,
+                    test_start_pos=test_start_pos,
+                    test_end_pos=test_end_pos,
+                    label_horizon_bars=LABEL_HORIZON_BARS,
+                    context_label="tau_sweep",
+                )
                 if len(training_data) < 200:
                     continue
 
@@ -2701,32 +2928,27 @@ def main():
                 train_end_pos = f["train_end_pos"]
                 test_start_pos = f["test_start_pos"]
                 test_end_pos = f["test_end_pos"]
-
-                label_end_pos = train_end_pos + LABEL_HORIZON_BARS
-                if label_end_pos >= len(df_full):
-                    continue
-
-                # ---- training data ----
-                df_for_labels = df_full.iloc[train_start_pos:label_end_pos + 1].copy()
-
-                strat_results_for_labels = {}
-                for sname, res in pair_results_full.items():
-                    eq = res.get("equity_curve", None)
-                    if eq is None:
-                        continue
-                    strat_results_for_labels[sname] = dict(res)
-                    strat_results_for_labels[sname]["equity_curve"] = eq.reindex(df_for_labels.index).ffill()
-
-                tracker = StrategyPerformanceTracker(window_days=LABEL_HORIZON_BARS)
-                training_data_all = tracker.compute_strategy_returns(df_for_labels, strat_results_for_labels)
-
-                train_end_dt = df_full.index[train_end_pos]
-                train_start_dt = df_full.index[train_start_pos]
-                train_mask = (
-                        (training_data_all["date"] >= train_start_dt) &
-                        (training_data_all["date"] <= train_end_dt)
+                _print_window_diagnostics(
+                    f"    [POLICY FOLD] pair={pair_name} fold={fold_id}",
+                    **_window_diagnostics(
+                        train_start_ts=df_full.index[train_start_pos],
+                        train_end_ts=df_full.index[train_end_pos],
+                        test_start_ts=df_full.index[test_start_pos],
+                        test_end_ts=df_full.index[test_end_pos],
+                    ),
                 )
-                training_data = training_data_all.loc[train_mask].copy()
+                training_data, _ = _build_causal_selector_training_data(
+                    pair_name=pair_name,
+                    fold_id=fold_id,
+                    df_full=df_full,
+                    pair_results_full=pair_results_full,
+                    train_start_pos=train_start_pos,
+                    train_end_pos=train_end_pos,
+                    test_start_pos=test_start_pos,
+                    test_end_pos=test_end_pos,
+                    label_horizon_bars=LABEL_HORIZON_BARS,
+                    context_label="policy_sweep",
+                )
                 if len(training_data) < 200:
                     continue
 
