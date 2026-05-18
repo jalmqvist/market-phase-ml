@@ -473,7 +473,7 @@ def _read_parquet_metadata(cube_path: Path) -> dict[str, str]:
     for key, value in raw_metadata.items():
         try:
             decoded[key.decode("utf-8")] = value.decode("utf-8")
-        except Exception:  # noqa: BLE001
+        except (AttributeError, UnicodeDecodeError):
             continue
     return decoded
 
@@ -502,7 +502,8 @@ def _is_compatible_schema_version(version: str) -> bool:
 
 def _normalize_pair(pair: str) -> str | None:
     p = str(pair).strip().lower().replace("/", "-").replace("_", "-")
-    p = p.replace("--", "-")
+    while "--" in p:
+        p = p.replace("--", "-")
     if "-" not in p and len(p) == 6 and p.isalpha():
         p = f"{p[:3]}-{p[3:]}"
     if len(p) == 7 and p[3] == "-" and p[:3].isalpha() and p[4:].isalpha():
