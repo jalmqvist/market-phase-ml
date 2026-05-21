@@ -1,4 +1,26 @@
 #!/usr/bin/env python3
+"""
+analysis/summarize_run.py — DEPRECATED (v1 log-driven summariser)
+==================================================================
+
+.. deprecated::
+   This script is superseded by ``analysis/pipeline.py`` (framework v2).
+   It operated on log files and is unaware of walkforward, ablation, and
+   vol-guard CSV outputs.
+
+   **Use instead:**
+
+   .. code-block:: bash
+
+       python analysis/pipeline.py results_archive/
+
+   The new pipeline discovers runs automatically, parses all CSV outputs,
+   and renders a unified markdown report.  Log-file parsing is still
+   available as a fallback via ``analysis/parsers/log_parser.py``.
+
+This script is retained for backwards compatibility but will not be
+updated further.
+"""
 
 import json
 import re

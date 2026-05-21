@@ -1,3 +1,22 @@
+# analysis/compare_runs.py — DEPRECATED (v1 JSON-summary comparison)
+# =====================================================================
+#
+# .. deprecated::
+#    This script is superseded by ``analysis/pipeline.py`` (framework v2).
+#    It operated on pre-generated .summary.json files from the v1
+#    summarize_run.py workflow and is unaware of walkforward / ablation
+#    / selector comparison CSV outputs.
+#
+#    **Use instead:**
+#
+#        python analysis/pipeline.py results_archive/
+#
+#    The new pipeline generates comparisons.json and report.md
+#    automatically without a separate step.
+#
+# This script is retained for backwards compatibility but will not be
+# updated further.
+
 # analysis/compare_runs.py
 
 #!/usr/bin/env python3
