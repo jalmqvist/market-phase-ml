@@ -62,7 +62,25 @@ def compare_gen1_gen2(
     if not gen2_runs:
         warnings.append("No Gen2 runs found; Gen1 vs Gen2 delta table will be empty.")
 
-    delta_table = _build_gen_delta_table(gen1_runs, gen2_runs)
+    g1_on = [s for s in gen1_runs if (s.get("meta") or {}).get("dl_enabled")]
+    g1_off = [s for s in gen1_runs if not (s.get("meta") or {}).get("dl_enabled")]
+    g2_on = [s for s in gen2_runs if (s.get("meta") or {}).get("dl_enabled")]
+    g2_off = [s for s in gen2_runs if not (s.get("meta") or {}).get("dl_enabled")]
+
+    if g1_on and not g2_on:
+        warnings.append("Missing Gen2 sentiment-ON runs for A↔C comparison.")
+    if g2_on and not g1_on:
+        warnings.append("Missing Gen1 sentiment-ON runs for A↔C comparison.")
+    if g1_off and not g2_off:
+        warnings.append("Missing Gen2 sentiment-OFF runs for B↔D comparison.")
+    if g2_off and not g1_off:
+        warnings.append("Missing Gen1 sentiment-OFF runs for B↔D comparison.")
+
+    delta_table: list[dict[str, Any]] = []
+    if g1_on and g2_on:
+        delta_table.extend(_build_gen_delta_table(g1_on, g2_on, cohort="sentiment_on"))
+    if g1_off and g2_off:
+        delta_table.extend(_build_gen_delta_table(g1_off, g2_off, cohort="sentiment_off"))
     coverage_comparison = _build_coverage_comparison(gen1_runs, gen2_runs)
 
     return {
@@ -71,6 +89,10 @@ def compare_gen1_gen2(
         "delta_table": delta_table,
         "coverage_comparison": coverage_comparison,
         "warnings": warnings,
+        "cohorts": {
+            "sentiment_on": {"gen1": [s["run_id"] for s in g1_on], "gen2": [s["run_id"] for s in g2_on]},
+            "sentiment_off": {"gen1": [s["run_id"] for s in g1_off], "gen2": [s["run_id"] for s in g2_off]},
+        },
     }
 
 
@@ -112,6 +134,8 @@ def _extract_pair_metrics(
 def _build_gen_delta_table(
     gen1_runs: list[dict[str, Any]],
     gen2_runs: list[dict[str, Any]],
+    *,
+    cohort: str,
 ) -> list[dict[str, Any]]:
     g1 = _extract_pair_metrics(gen1_runs)
     g2 = _extract_pair_metrics(gen2_runs)
@@ -126,6 +150,7 @@ def _build_gen_delta_table(
             g2_val = g2_pair.get(metric)
             delta = (g2_val - g1_val) if (g1_val is not None and g2_val is not None) else None
             rows.append({
+                "cohort": cohort,
                 "pair": pair,
                 "metric": metric,
                 "gen1": g1_val,

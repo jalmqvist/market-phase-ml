@@ -90,9 +90,18 @@ def discover_runs(
     if not root.exists():
         raise FileNotFoundError(f"Archive root does not exist: {root}")
 
+    yielded: set[Path] = set()
+
+    def _yield_once(path: Path) -> Generator[tuple[Path, str], None, None]:
+        resolved = path.resolve()
+        if resolved in yielded:
+            return
+        yielded.add(resolved)
+        yield resolved, _infer_gen(resolved)
+
     # If root itself is a run directory, yield it directly.
     if _has_run_files(root):
-        yield root, _infer_gen(root)
+        yield from _yield_once(root)
         # Also descend in case sub-directories are individual run flavours.
 
     if not recursive:
@@ -101,4 +110,4 @@ def discover_runs(
     # Walk depth-first; yield any child directory that looks like a run.
     for child in sorted(root.rglob("*")):
         if child.is_dir() and child != root and _has_run_files(child):
-            yield child, _infer_gen(child)
+            yield from _yield_once(child)

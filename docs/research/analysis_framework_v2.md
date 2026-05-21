@@ -32,9 +32,9 @@ python analysis/pipeline.py results_archive/ --output-dir reports/ --verbose
 
 | File | Description |
 |------|-------------|
-| `<output_dir>/summaries/<run_id>.summary.json` | Per-run normalised summary |
+| `<output_dir>/summaries/<canonical_run_id>.summary.json` | Per-run normalised summary with canonical identity |
 | `<output_dir>/comparisons.json` | Cross-run sentiment / gen / selector comparisons |
-| `<output_dir>/report.md` | Human-readable markdown report |
+| `<output_dir>/report.md` | Human-readable report with validation, warnings, and diagnostics |
 
 ---
 
@@ -129,13 +129,18 @@ The log parser extracts:
 
 ## Normalised Summary JSON
 
-Each run produces a `<run_id>.summary.json` with this structure:
+Each run produces a `<canonical_run_id>.summary.json` with this structure:
 
 ```json
 {
-  "run_id": "run_20260512T074801Z",
+  "run_id": "gen1_A__20260512T074801Z__fp_gen1_A",
   "meta": {
     "experiment_gen": "gen1",
+    "run_variant": "A",
+    "semantic_run_name": "gen1_A",
+    "semantic_run_id": "gen1_A__20260512T074801Z",
+    "run_meaning": "sentiment ON + missing indicator OFF (Gen1)",
+    "archive_relpath": "fp_gen1_A",
     "dl_enabled": true,
     "dl_surface": { "model": "mlp", "dl_regime": "LVTF", ... },
     "dl_surface_string": "mlp/LVTF/h24/price_trend",
@@ -176,8 +181,9 @@ Each run produces a `<run_id>.summary.json` with this structure:
 }
 ```
 
-`null` values indicate absent CSV files — the pipeline continues without
-crashing.  The `warnings` list captures all non-fatal issues.
+`null` values indicate absent CSV files. Structural corruption (e.g.
+duplicate canonical identities or malformed archives) fails validation
+loudly before final output.
 
 ---
 
@@ -196,10 +202,14 @@ prediction surface provides no data:
 Gen2 allows the XGBoost gating model to learn a distinct policy for
 "DL data unavailable" bars, rather than silently falling back.
 
-**Inference:** The generation is inferred from the run directory name
-and manifest filename using a regex (`gen2|g2|missing.ind|missing_ind`).
-Explicitly naming your archive directories (e.g. `fp_gen1_A/`,
-`fp_gen2_C/`) ensures correct labelling.
+**Inference:** Generation and variant semantics are inferred from:
+
+- manifest (`dl_enabled`, `run.timestamp_utc`, `run_id`)
+- archive directory names (`fp_gen1_A`, `fp_gen2_D`, etc.)
+- manifest/log fallback timestamps
+
+If directory naming and manifest semantics disagree, the run is retained
+but explicitly warned in report diagnostics.
 
 ### Sentiment ON vs OFF
 
@@ -224,9 +234,11 @@ Comparative studies use a 2×2 design:
 | **C** | ON | Gen2 |
 | **D** | OFF | Gen2 (baseline for C) |
 
-To compare A vs B: run the pipeline on an archive containing both
-variant A and variant B directories.  The sentiment comparison table
-will show per-pair deltas (ON − OFF).
+Comparison assumptions:
+
+- Sentiment comparison is generation-scoped (A vs B, C vs D only).
+- Gen comparison is sentiment-scoped (A vs C, B vs D only).
+- Incomplete cohorts are not silently mixed; they are warned and skipped.
 
 ---
 
@@ -287,6 +299,17 @@ Running `python analysis/pipeline.py results_archive/` will discover
 all four directories, build summaries, and generate A vs B and C vs D
 sentiment comparisons automatically.
 
+Canonical identity rule:
+
+`<gen>_<variant>__<timestamp>__<archive_relpath_slug>`
+
+Example:
+
+- `gen1_A__20260521T131739Z__fp_gen1_A`
+- `gen2_C__20260521T141210Z__fp_gen2_C`
+
+This avoids run-id collisions when manifest timestamps are reused.
+
 ---
 
 ## Partial Run Handling
@@ -296,9 +319,11 @@ The pipeline handles partial and failed runs gracefully:
 | Scenario | Behaviour |
 |---|---|
 | Missing CSV files | Corresponding section in summary is `null`; warning emitted |
-| No manifest | `run_id` defaults to directory name; warning emitted |
+| No manifest | canonical id uses directory identity + fallback timestamp; warning emitted |
 | Corrupt/invalid CSV | Error captured in `_errors`; other files continue |
-| No CSVs and no log | Warning emitted; summary still written |
+| Malformed manifest JSON | Explicit validation error/warning surfaced in report |
+| Duplicate canonical identities | Validation error (pipeline fails) |
+| No CSVs and no log | Validation error (malformed archive) |
 | Empty archive | Message printed; no crash |
 
 Report sections for missing data show `⚠ Data not available` rather
@@ -319,9 +344,14 @@ than crashing or omitting the section header.
 | Vol guard suppression rate | `vol_guard_diagnostics_summary__*.csv` | `csvs.vol_guard_summary` |
 
 **Overlap-window evaluation** (DL data ~2019+) is not yet implemented but
-is designed to be added cleanly: the per-fold data (`walkforward_per_fold`)
-includes fold indices and timestamps that can be filtered to the modern era
-without restructuring the pipeline.
+is now scaffolded in summary coverage metadata:
+
+- overlap fold coverage %
+- per-year fold counts
+- DL-active year inference (>=2019)
+- attachment persistence extension point
+
+This prepares overlap-window research without locking in final metrics yet.
 
 ---
 
@@ -359,8 +389,11 @@ Tests cover:
 - Manifest parser (multi-manifest, corrupt, missing)
 - Log parser (coverage, ML results, backtest extraction)
 - Run discovery (nested archives, gen1/gen2 inference)
+- Canonical identity uniqueness and semantic label inference
+- Deterministic summary ordering and duplicate detection
+- Structural validation (malformed archives and manifest parse diagnostics)
 - Partial-run handling (manifest-only, log-only, mixed)
-- Comparison generators (sentiment, selector, gen1 vs gen2)
+- Comparison generators (sentiment, selector, gen1 vs gen2 cohort correctness)
 - End-to-end pipeline integration (report + summaries + comparisons)
 
 ---

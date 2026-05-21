@@ -84,11 +84,13 @@ if str(_PROJECT_ROOT) not in sys.path:
 from analysis.parsers.run_discovery import discover_runs
 from analysis.parsers.csv_parsers import parse_run_csvs
 from analysis.parsers.manifest_parser import parse_manifest
+from analysis.parsers.run_identity import infer_run_identity
 from analysis.parsers.log_parser import parse_log
 from analysis.comparisons.sentiment import compare_sentiment_variants
 from analysis.comparisons.selector import compare_selector_uplift
 from analysis.comparisons.gen_comparison import compare_gen1_gen2
 from analysis.reports.markdown_report import render_markdown_report
+from analysis.validation import validate_summaries, sort_summaries_deterministically
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +100,7 @@ from analysis.reports.markdown_report import render_markdown_report
 
 def build_run_summary(
     run_dir: Path,
+    archive_root: Path,
     experiment_gen: str = "gen1",
 ) -> dict[str, Any]:
     """
@@ -137,7 +140,13 @@ def build_run_summary(
     if not manifest:
         warnings.append(f"No run_manifest_*.json found in {run_dir.name}.")
 
-    run_id = (manifest or {}).get("run_id") or run_dir.name
+    identity = infer_run_identity(
+        archive_root=archive_root,
+        run_dir=run_dir,
+        experiment_gen=experiment_gen,
+        manifest=manifest,
+    )
+    run_id = identity["run_id"]
 
     # --- CSVs -------------------------------------------------------------
     csvs = parse_run_csvs(run_dir)
@@ -165,6 +174,10 @@ def build_run_summary(
             "No CSV files and no log file found — directory may be empty or corrupt."
         )
 
+    warnings.extend(identity.get("identity_warnings", []))
+    for pe in (manifest or {}).get("parse_errors") or []:
+        warnings.append(f"Manifest parse error: {pe}")
+
     # --- coverage summary -------------------------------------------------
     coverage = _build_coverage_summary(csvs, log, manifest)
 
@@ -178,10 +191,25 @@ def build_run_summary(
         "walkforward_params": (manifest or {}).get("walkforward"),
         "flags": (manifest or {}).get("flags"),
         "git_sha": (manifest or {}).get("git_sha"),
-        "timestamp_utc": (manifest or {}).get("timestamp_utc"),
+        "timestamp_utc": identity.get("timestamp_utc"),
         "python_version": (manifest or {}).get("python_version"),
         "run_dir": str(run_dir),
         "files_found": csvs.pop("_files_found", []),
+        "manifest_present": bool(manifest),
+        "manifest_diagnostics": {
+            "parse_errors": (manifest or {}).get("parse_errors", []),
+            "timestamps": (manifest or {}).get("timestamps", []),
+            "run_ids": (manifest or {}).get("run_ids", []),
+            "dl_mode_tags": (manifest or {}).get("dl_mode_tags", []),
+        },
+        "semantic_run_name": identity.get("semantic_run_name"),
+        "semantic_run_id": identity.get("semantic_run_id"),
+        "run_variant": identity.get("run_variant"),
+        "run_meaning": identity.get("run_meaning"),
+        "archive_relpath": identity.get("archive_relpath"),
+        "archive_slug": identity.get("archive_slug"),
+        "manifest_run_id": identity.get("manifest_run_id"),
+        "identity_warnings": identity.get("identity_warnings"),
     }
 
     return {
@@ -206,9 +234,14 @@ def _build_coverage_summary(
     """
     # Try CSV-based vol guard (newer runs)
     vg_rows = csvs.get("vol_guard_summary") or []
+    overlap_diag = _build_overlap_window_diagnostics(csvs, log)
     if vg_rows:
         pairs = [r.get("Pair") or r.get("pair") for r in vg_rows if r.get("Pair") or r.get("pair")]
-        return {"source": "vol_guard_summary_csv", "pairs_with_data": pairs}
+        return {
+            "source": "vol_guard_summary_csv",
+            "pairs_with_data": pairs,
+            "overlap_window": overlap_diag,
+        }
 
     # Fall back to log-parsed coverage
     if log and log.get("dl_coverage"):
@@ -219,13 +252,47 @@ def _build_coverage_summary(
             "per_pair": dl_cov,
             "avg_coverage_pct": round(avg, 2),
             "n_pairs": len(dl_cov),
+            "overlap_window": overlap_diag,
         }
 
     # Try manifest
     if manifest and manifest.get("dl_enabled"):
-        return {"source": "manifest", "dl_enabled": True, "per_pair": {}}
+        return {"source": "manifest", "dl_enabled": True, "per_pair": {}, "overlap_window": overlap_diag}
 
-    return {"source": "none", "dl_enabled": False}
+    return {"source": "none", "dl_enabled": False, "overlap_window": overlap_diag}
+
+
+def _build_overlap_window_diagnostics(
+    csvs: dict[str, Any],
+    log: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Foundational overlap-window diagnostics (non-invasive extension points).
+    """
+    fold_rows = csvs.get("walkforward_per_fold") or []
+    dl_cov = (log or {}).get("dl_coverage") or {}
+    diagnostics: dict[str, Any] = {
+        "fold_rows_present": len(fold_rows),
+        "dl_pairs_with_coverage": sorted(dl_cov.keys()),
+        "dl_active_years": [],
+        "per_year_fold_counts": {},
+        "attachment_persistence_note": "Scaffold only; add true per-fold attachment persistence from future exports.",
+    }
+    years: dict[int, int] = {}
+    for row in fold_rows:
+        for k, v in row.items():
+            if not isinstance(v, str):
+                continue
+            if "year" in k.lower() or "date" in k.lower() or "time" in k.lower():
+                if len(v) >= 4 and v[:4].isdigit():
+                    y = int(v[:4])
+                    years[y] = years.get(y, 0) + 1
+    diagnostics["per_year_fold_counts"] = {str(y): years[y] for y in sorted(years)}
+    diagnostics["dl_active_years"] = [str(y) for y in sorted(years) if y >= 2019]
+    total = sum(years.values())
+    overlap = sum(c for y, c in years.items() if y >= 2019)
+    diagnostics["overlap_fold_coverage_pct"] = round((100.0 * overlap / total), 2) if total else None
+    return diagnostics
 
 
 # ---------------------------------------------------------------------------
@@ -272,12 +339,18 @@ def run_pipeline(
         return
 
     _log(f"   Found {len(discovered)} run(s).")
+    seen_run_dirs: set[Path] = set()
+    dedupe_warnings: list[str] = []
 
     # 2. Parse + build summaries
     summaries: list[dict[str, Any]] = []
     for run_dir, experiment_gen in discovered:
+        if run_dir in seen_run_dirs:
+            dedupe_warnings.append(f"Duplicate discovered run directory skipped: {run_dir}")
+            continue
+        seen_run_dirs.add(run_dir)
         _log(f"   Parsing: {run_dir.name}  [gen={experiment_gen}]")
-        summary = build_run_summary(run_dir, experiment_gen)
+        summary = build_run_summary(run_dir, archive_root, experiment_gen)
 
         if summary["warnings"]:
             for w in summary["warnings"]:
@@ -285,7 +358,19 @@ def run_pipeline(
 
         summaries.append(summary)
 
-        # Write per-run summary JSON
+    if dedupe_warnings:
+        for s in summaries:
+            s.setdefault("warnings", []).extend(dedupe_warnings)
+            s.setdefault("meta", {}).setdefault("pipeline_diagnostics", {})["dedupe_warnings"] = dedupe_warnings
+
+    summaries = sort_summaries_deterministically(summaries)
+    validation = validate_summaries(summaries)
+    if validation["errors"]:
+        error_text = "\n".join(f"- {e}" for e in validation["errors"])
+        raise RuntimeError(f"Structural validation failed:\n{error_text}")
+
+    # Write per-run summary JSON (after successful validation and deterministic ordering)
+    for summary in summaries:
         run_id = summary["run_id"]
         summary_path = summaries_dir / f"{run_id}.summary.json"
         with open(summary_path, "w") as f:
@@ -304,6 +389,7 @@ def run_pipeline(
 
     comparisons["gen"] = compare_gen1_gen2(summaries)
     _log(f"   gen1vs2: {len(comparisons['gen'].get('delta_table', []))} delta rows")
+    comparisons["validation"] = validation
 
     comparisons_path = output_dir / "comparisons.json"
     with open(comparisons_path, "w") as f:
@@ -312,7 +398,7 @@ def run_pipeline(
 
     # 4. Render markdown report
     _log("\n📝 Rendering report …")
-    report_md = render_markdown_report(summaries, comparisons)
+    report_md = render_markdown_report(summaries, comparisons, validation=validation)
     report_path = output_dir / "report.md"
     report_path.write_text(report_md)
     _log(f"   ✓ wrote {report_path.relative_to(output_dir.parent)}")

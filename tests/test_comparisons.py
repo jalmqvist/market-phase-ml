@@ -144,6 +144,15 @@ class TestCompareSentimentVariants(unittest.TestCase):
         for row in result["delta_table"]:
             self.assertIsNone(row["delta_on_minus_off"])
 
+    def test_no_cross_generation_mixing(self):
+        summaries = [
+            _make_summary("gen1_on", dl_enabled=True, experiment_gen="gen1", sharpe_delta=0.10),
+            _make_summary("gen2_off", dl_enabled=False, experiment_gen="gen2", sharpe_delta=0.05),
+        ]
+        result = compare_sentiment_variants(summaries)
+        self.assertEqual(result["delta_table"], [])
+        self.assertTrue(any("missing sentiment" in w for w in result["warnings"]))
+
 
 # ---------------------------------------------------------------------------
 # Selector uplift tests
@@ -237,6 +246,15 @@ class TestCompareGen1Gen2(unittest.TestCase):
         self.assertIsNotNone(eurusd)
         self.assertAlmostEqual(eurusd["dl_coverage_gen1"], 80.0)
         self.assertAlmostEqual(eurusd["dl_coverage_gen2"], 85.0)
+
+    def test_gen_comparison_respects_sentiment_cohorts(self):
+        summaries = [
+            _make_summary("run_g1_on", experiment_gen="gen1", dl_enabled=True, sharpe_delta=0.10),
+            _make_summary("run_g2_off", experiment_gen="gen2", dl_enabled=False, sharpe_delta=0.30),
+        ]
+        result = compare_gen1_gen2(summaries)
+        self.assertEqual(result["delta_table"], [])
+        self.assertTrue(any("A↔C" in w or "B↔D" in w for w in result["warnings"]))
 
 
 if __name__ == "__main__":
