@@ -1,0 +1,376 @@
+#!/usr/bin/env python3
+"""
+analysis/pipeline.py
+=====================
+Single-command MPML analysis orchestrator (framework v2).
+
+Usage
+-----
+::
+
+    # Analyse all runs in an archive directory:
+    python analysis/pipeline.py results_archive/
+
+    # Analyse a specific run directory:
+    python analysis/pipeline.py results_archive/fp_gen1_A/
+
+    # Write outputs to a custom directory:
+    python analysis/pipeline.py results_archive/ --output-dir my_reports/
+
+What it does
+-------------
+1. **Discover** all run directories under the archive root.
+2. **Parse** CSV outputs, run manifests, and (as fallback) log files.
+3. **Build** a normalised summary JSON per run.
+4. **Generate** comparisons: sentiment ON/OFF, Gen1 vs Gen2, selector uplift.
+5. **Render** a unified markdown report.
+6. **Write** outputs to the ``--output-dir`` directory.
+
+Output files
+------------
+- ``<output_dir>/summaries/<run_id>.summary.json``  — per-run summary
+- ``<output_dir>/comparisons.json``                  — cross-run comparison
+- ``<output_dir>/report.md``                         — human-readable report
+
+Architecture
+-------------
+::
+
+    pipeline.py
+        ↓ discover_runs()        (parsers/run_discovery.py)
+        ↓ parse_run_csvs()       (parsers/csv_parsers.py)
+        ↓ parse_manifest()       (parsers/manifest_parser.py)
+        ↓ parse_log()            (parsers/log_parser.py  ← fallback)
+        ↓ build_run_summary()    (this file)
+        ↓ compare_*()            (comparisons/*.py)
+        ↓ render_markdown_report() (reports/markdown_report.py)
+
+Experiment semantics
+---------------------
+Gen1 vs Gen2:
+    Refers to missing-indicator semantics for DL features.
+    Gen1 = no indicator; Gen2 = explicit ``dl_missing_indicator`` column.
+
+Sentiment ON/OFF:
+    Refers to whether ``DL_SIGNALS_ENABLED=true`` was set for the run.
+    Sentiment ON = DL prediction surface attached to each bar.
+    OFF = pure regime/feature baseline.
+
+Experiment variants (comparative studies):
+    A — Sentiment ON,  Gen1
+    B — Sentiment OFF, Gen1  (baseline for A)
+    C — Sentiment ON,  Gen2
+    D — Sentiment OFF, Gen2  (baseline for C)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+# ---------------------------------------------------------------------------
+# Internal imports — all relative to the project root.
+# Add the project root to sys.path so this script works when run directly
+# from any working directory.
+# ---------------------------------------------------------------------------
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from analysis.parsers.run_discovery import discover_runs
+from analysis.parsers.csv_parsers import parse_run_csvs
+from analysis.parsers.manifest_parser import parse_manifest
+from analysis.parsers.log_parser import parse_log
+from analysis.comparisons.sentiment import compare_sentiment_variants
+from analysis.comparisons.selector import compare_selector_uplift
+from analysis.comparisons.gen_comparison import compare_gen1_gen2
+from analysis.reports.markdown_report import render_markdown_report
+
+
+# ---------------------------------------------------------------------------
+# Summary builder
+# ---------------------------------------------------------------------------
+
+
+def build_run_summary(
+    run_dir: Path,
+    experiment_gen: str = "gen1",
+) -> dict[str, Any]:
+    """
+    Build a normalised summary dict for a single run directory.
+
+    This is the central data structure consumed by all comparison and
+    report modules.  It is also serialised as JSON for archival.
+
+    Parameters
+    ----------
+    run_dir:
+        Path to a single run directory.
+    experiment_gen:
+        ``"gen1"`` or ``"gen2"`` — inferred by ``discover_runs``.
+
+    Returns
+    -------
+    dict with the following top-level keys:
+
+    ``run_id``
+        Canonical run identifier (from manifest or directory name).
+    ``meta``
+        Run metadata: dl_enabled, experiment_gen, git_sha, etc.
+    ``csvs``
+        Parsed CSV sections (may contain None values for absent files).
+    ``log``
+        Legacy log-parsed data (None if no log file found).
+    ``coverage``
+        DL coverage summary extracted from available data.
+    ``warnings``
+        List of non-fatal issues encountered during parsing.
+    """
+    warnings: list[str] = []
+
+    # --- manifests --------------------------------------------------------
+    manifest = parse_manifest(run_dir)
+    if not manifest:
+        warnings.append(f"No run_manifest_*.json found in {run_dir.name}.")
+
+    run_id = (manifest or {}).get("run_id") or run_dir.name
+
+    # --- CSVs -------------------------------------------------------------
+    csvs = parse_run_csvs(run_dir)
+    for err in csvs.pop("_errors", []):
+        warnings.append(f"CSV parse error [{err['file']}]: {err['error']}")
+
+    # Report which expected sections are missing
+    expected_sections = [
+        "ml_accuracy", "backtest", "walkforward_summary", "walkforward_per_pair",
+        "walkforward_per_fold", "selector_comparison", "ablation_aggregate",
+        "ablation_per_pair", "vol_guard_summary", "vol_guard_per_fold",
+        "results_summary", "results_per_pair",
+    ]
+    missing_sections = [s for s in expected_sections if not csvs.get(s)]
+    if missing_sections:
+        warnings.append(
+            f"Missing CSV sections (partial run or older format): "
+            + ", ".join(missing_sections)
+        )
+
+    # --- log (fallback) ---------------------------------------------------
+    log = parse_log(run_dir)
+    if not log and not csvs.get("_files_found"):
+        warnings.append(
+            "No CSV files and no log file found — directory may be empty or corrupt."
+        )
+
+    # --- coverage summary -------------------------------------------------
+    coverage = _build_coverage_summary(csvs, log, manifest)
+
+    # --- meta -------------------------------------------------------------
+    meta = {
+        "experiment_gen": experiment_gen,
+        "dl_enabled": bool((manifest or {}).get("dl_enabled")),
+        "dl_surface": (manifest or {}).get("dl_surface"),
+        "dl_surface_string": (manifest or {}).get("dl_surface_string"),
+        "dl_artifact_path": (manifest or {}).get("dl_artifact_path"),
+        "walkforward_params": (manifest or {}).get("walkforward"),
+        "flags": (manifest or {}).get("flags"),
+        "git_sha": (manifest or {}).get("git_sha"),
+        "timestamp_utc": (manifest or {}).get("timestamp_utc"),
+        "python_version": (manifest or {}).get("python_version"),
+        "run_dir": str(run_dir),
+        "files_found": csvs.pop("_files_found", []),
+    }
+
+    return {
+        "run_id": run_id,
+        "meta": meta,
+        "csvs": csvs,
+        "log": log,
+        "coverage": coverage,
+        "warnings": warnings,
+    }
+
+
+def _build_coverage_summary(
+    csvs: dict[str, Any],
+    log: dict[str, Any] | None,
+    manifest: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Derive a DL coverage summary from available data sources.
+
+    Priority: vol_guard_summary CSV → log dl_coverage → manifest flags.
+    """
+    # Try CSV-based vol guard (newer runs)
+    vg_rows = csvs.get("vol_guard_summary") or []
+    if vg_rows:
+        pairs = [r.get("Pair") or r.get("pair") for r in vg_rows if r.get("Pair") or r.get("pair")]
+        return {"source": "vol_guard_summary_csv", "pairs_with_data": pairs}
+
+    # Fall back to log-parsed coverage
+    if log and log.get("dl_coverage"):
+        dl_cov = log["dl_coverage"]
+        avg = sum(dl_cov.values()) / len(dl_cov) if dl_cov else 0.0
+        return {
+            "source": "log",
+            "per_pair": dl_cov,
+            "avg_coverage_pct": round(avg, 2),
+            "n_pairs": len(dl_cov),
+        }
+
+    # Try manifest
+    if manifest and manifest.get("dl_enabled"):
+        return {"source": "manifest", "dl_enabled": True, "per_pair": {}}
+
+    return {"source": "none", "dl_enabled": False}
+
+
+# ---------------------------------------------------------------------------
+# Pipeline entry point
+# ---------------------------------------------------------------------------
+
+
+def run_pipeline(
+    archive_root: Path,
+    output_dir: Path,
+    *,
+    verbose: bool = False,
+) -> None:
+    """
+    Full analysis pipeline.
+
+    Parameters
+    ----------
+    archive_root:
+        Root directory containing one or more run directories.
+    output_dir:
+        Directory where outputs are written.
+    verbose:
+        Print progress messages.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summaries_dir = output_dir / "summaries"
+    summaries_dir.mkdir(exist_ok=True)
+
+    def _log(msg: str) -> None:
+        if verbose:
+            print(msg)
+
+    # 1. Discover runs
+    _log(f"🔍 Discovering runs under: {archive_root}")
+    discovered = list(discover_runs(archive_root))
+
+    if not discovered:
+        print(
+            f"⚠  No run directories found under '{archive_root}'.\n"
+            "   Ensure the directory contains run_manifest_*.json or "
+            "results_ml*.csv files."
+        )
+        return
+
+    _log(f"   Found {len(discovered)} run(s).")
+
+    # 2. Parse + build summaries
+    summaries: list[dict[str, Any]] = []
+    for run_dir, experiment_gen in discovered:
+        _log(f"   Parsing: {run_dir.name}  [gen={experiment_gen}]")
+        summary = build_run_summary(run_dir, experiment_gen)
+
+        if summary["warnings"]:
+            for w in summary["warnings"]:
+                _log(f"   ⚠  {w}")
+
+        summaries.append(summary)
+
+        # Write per-run summary JSON
+        run_id = summary["run_id"]
+        summary_path = summaries_dir / f"{run_id}.summary.json"
+        with open(summary_path, "w") as f:
+            json.dump(summary, f, indent=2, default=str)
+        _log(f"   ✓ wrote {summary_path.relative_to(output_dir.parent)}")
+
+    # 3. Generate comparisons
+    _log("\n📊 Generating comparisons …")
+    comparisons: dict[str, Any] = {}
+
+    comparisons["sentiment"] = compare_sentiment_variants(summaries)
+    _log(f"   sentiment: {len(comparisons['sentiment'].get('delta_table', []))} delta rows")
+
+    comparisons["selector"] = compare_selector_uplift(summaries)
+    _log(f"   selector: {len(comparisons['selector'].get('aggregate', {}))} pairs")
+
+    comparisons["gen"] = compare_gen1_gen2(summaries)
+    _log(f"   gen1vs2: {len(comparisons['gen'].get('delta_table', []))} delta rows")
+
+    comparisons_path = output_dir / "comparisons.json"
+    with open(comparisons_path, "w") as f:
+        json.dump(comparisons, f, indent=2, default=str)
+    _log(f"   ✓ wrote {comparisons_path.relative_to(output_dir.parent)}")
+
+    # 4. Render markdown report
+    _log("\n📝 Rendering report …")
+    report_md = render_markdown_report(summaries, comparisons)
+    report_path = output_dir / "report.md"
+    report_path.write_text(report_md)
+    _log(f"   ✓ wrote {report_path.relative_to(output_dir.parent)}")
+
+    # 5. Summary
+    print(
+        f"\n✅ Analysis complete.\n"
+        f"   Runs processed : {len(summaries)}\n"
+        f"   Output dir     : {output_dir}\n"
+        f"   Report         : {report_path}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="MPML analysis pipeline v2 — single-command experiment analysis.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python analysis/pipeline.py results_archive/
+  python analysis/pipeline.py results_archive/fp_gen1_A/ --output-dir reports/gen1_A/
+  python analysis/pipeline.py results/ --output-dir analysis/output/ --verbose
+""",
+    )
+    parser.add_argument(
+        "archive",
+        type=Path,
+        help="Archive root directory (or specific run directory).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("analysis/output"),
+        help="Output directory for reports and summaries (default: analysis/output/).",
+    )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Print progress messages.",
+    )
+
+    args = parser.parse_args()
+
+    try:
+        run_pipeline(
+            archive_root=args.archive,
+            output_dir=args.output_dir,
+            verbose=args.verbose,
+        )
+    except FileNotFoundError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

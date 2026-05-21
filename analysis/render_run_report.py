@@ -1,3 +1,21 @@
+# analysis/render_run_report.py — DEPRECATED (v1 JSON-summary report renderer)
+# ==============================================================================
+#
+# .. deprecated::
+#    This script is superseded by ``analysis/pipeline.py`` (framework v2).
+#    It operated on pre-generated .summary.json files and rendered only
+#    backtest / ML-accuracy sections.
+#
+#    **Use instead:**
+#
+#        python analysis/pipeline.py results_archive/
+#
+#    The new pipeline renders a unified report covering walkforward,
+#    ablation, selector uplift, vol guard, and coverage diagnostics.
+#
+# This script is retained for backwards compatibility but will not be
+# updated further.
+
 # analysis/render_run_report.py
 
 #!/usr/bin/env python3

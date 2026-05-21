@@ -62,7 +62,42 @@ The notebook (`notebooks/01_regime_gating_walkforward.ipynb`) reads these artifa
 
 > Note: expensive sweeps (τ/policy sweeps) are gated behind flags in `main.py`.
 
-------
+---
+
+## Analysis framework (single-command, v2)
+
+After archiving your run outputs, analyse them with one command:
+
+```bash
+python analysis/pipeline.py results/evidence/    # analyse archived run(s)
+python analysis/pipeline.py results_archive/     # multi-run archive
+```
+
+This automatically:
+
+- Discovers all run directories
+- Parses CSV outputs, run manifests, and (as fallback) log files
+- Generates normalised summary JSON per run
+- Generates sentiment ON/OFF, Gen1 vs Gen2, and selector-uplift comparisons
+- Renders a unified markdown report
+
+Outputs are written to `analysis/output/` by default:
+
+| File | Description |
+|---|---|
+| `summaries/<run_id>.summary.json` | Per-run normalised summary |
+| `comparisons.json` | Cross-run comparison tables |
+| `report.md` | Human-readable report |
+
+For full documentation see [`docs/research/analysis_framework_v2.md`](docs/research/analysis_framework_v2.md).
+
+Run the analysis test suite with:
+
+```bash
+python -m unittest tests/test_parsers.py tests/test_comparisons.py -v
+```
+
+---
 
 ## DL integration quickstart (contract v2)
 

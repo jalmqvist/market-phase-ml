@@ -51,3 +51,20 @@ In `main.py::attach_dl_features`:
 - D1 features continue to join on MPML bar timestamp.
 - If an artifact is valid but yields no timestamp overlap or no per-pair
   matches, MPML keeps baseline behavior (graceful no-coverage fallback).
+
+## Analysing DL-enabled runs
+
+Use the analysis framework v2 to inspect DL coverage and performance
+across runs:
+
+```bash
+python analysis/pipeline.py results_archive/
+```
+
+The generated `report.md` includes:
+
+- DL coverage per pair (from `vol_guard_diagnostics` or log fallback)
+- Sentiment ON vs OFF walkforward deltas (DL-enabled vs baseline)
+- Selector uplift: does DL-gated routing improve OOS Sharpe?
+
+See [`docs/research/analysis_framework_v2.md`](../research/analysis_framework_v2.md) for full documentation.
