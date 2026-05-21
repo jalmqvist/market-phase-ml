@@ -2,33 +2,6 @@
 analysis/comparisons/sentiment.py
 ===================================
 Sentiment ON/OFF comparison logic.
-
-Sentiment ON/OFF experiment design
-------------------------------------
-The MPML pipeline can be run in two modes per experiment generation:
-
-* **Sentiment ON** (variants A, C) — ``DL_SIGNALS_ENABLED=true``.
-  DL prediction features from the market-sentiment-ml surface are
-  attached to each bar.  The XGBoost selector uses them as additional
-  input dimensions.
-* **Sentiment OFF** (variants B, D) — ``DL_SIGNALS_ENABLED=false``
-  (baseline).  Equivalent to a pure regime/feature-based selector with
-  no external signal.
-
-Experiment variants:
-
-========= =========== ============================
-Variant   Sentiment   Missing-indicator semantics
-========= =========== ============================
-A         ON          Gen1 (indicator OFF)
-B         OFF         Gen1 (indicator OFF)
-C         ON          Gen2 (indicator ON)
-D         OFF         Gen2 (indicator ON)
-========= =========== ============================
-
-This module compares A vs B (Gen1 sentiment effect) and C vs D (Gen2
-sentiment effect) on any walkforward / backtest metric present in the
-summaries.
 """
 
 from __future__ import annotations
@@ -40,93 +13,91 @@ def compare_sentiment_variants(
     summaries: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """
-    Compare Sentiment-ON vs Sentiment-OFF runs across summaries.
-
-    A summary is labelled "sentiment_on" if its manifest reports
-    ``dl_enabled = True``; otherwise "sentiment_off".
-
-    Parameters
-    ----------
-    summaries:
-        List of normalised summary dicts (as produced by
-        ``analysis.pipeline.build_run_summary``).
-
-    Returns
-    -------
-    dict with keys:
-        ``sentiment_on``  — subset with DL enabled
-        ``sentiment_off`` — subset without DL
-        ``delta_table``   — list of {pair, metric, on_val, off_val, delta}
-                           for each pair × metric combination found in
-                           both subsets
-        ``warnings``      — list of warning strings
+    Compare sentiment cohorts using canonical A/B/C/D variant semantics.
     """
-    on_runs = [s for s in summaries if s.get("meta", {}).get("dl_enabled")]
-    off_runs = [s for s in summaries if not s.get("meta", {}).get("dl_enabled")]
-
     warnings: list[str] = []
-    if not on_runs:
-        warnings.append("No sentiment-ON runs found; delta table will be empty.")
-    if not off_runs:
-        warnings.append("No sentiment-OFF runs found; delta table will be empty.")
+    variants: dict[str, list[dict[str, Any]]] = {v: [] for v in ("A", "B", "C", "D")}
+    unknown: list[str] = []
+
+    for summary in summaries:
+        variant = ((summary.get("meta") or {}).get("run_variant") or "U").upper()
+        if variant in variants:
+            variants[variant].append(summary)
+        else:
+            unknown.append(summary.get("run_id", "unknown"))
+
+    if unknown:
+        warnings.append(
+            "Skipped runs with unresolved semantics (variant U): " + ", ".join(sorted(unknown))
+        )
+
+    matrix = {
+        "expected_variants": ["A", "B", "C", "D"],
+        "present_variants": [v for v in ("A", "B", "C", "D") if variants[v]],
+    }
 
     delta_table: list[dict[str, Any]] = []
-    grouped: dict[str, dict[str, list[dict[str, Any]]]] = {"gen1": {"on": [], "off": []}, "gen2": {"on": [], "off": []}}
-    for s in summaries:
-        gen = (s.get("meta") or {}).get("experiment_gen")
-        if gen not in grouped:
-            continue
-        if (s.get("meta") or {}).get("dl_enabled"):
-            grouped[gen]["on"].append(s)
-        else:
-            grouped[gen]["off"].append(s)
+    valid_comparisons: list[str] = []
+    incomplete_comparisons: list[str] = []
+    invalid_comparisons: list[str] = []
 
-    for gen in ("gen1", "gen2"):
-        gen_on = grouped[gen]["on"]
-        gen_off = grouped[gen]["off"]
-        if gen_on and not gen_off:
-            warnings.append(f"{gen}: missing sentiment-OFF counterpart(s) for comparison.")
-        if gen_off and not gen_on:
-            warnings.append(f"{gen}: missing sentiment-ON counterpart(s) for comparison.")
-        if not gen_on or not gen_off:
-            continue
-        delta_table.extend(_build_delta_table(gen_on, gen_off, generation=gen))
+    if variants["A"] and variants["B"]:
+        delta_table.extend(_build_delta_table(variants["A"], variants["B"], generation="gen1"))
+        valid_comparisons.append("gen1:A_vs_B")
+    else:
+        incomplete_comparisons.append("gen1:A_vs_B")
+        missing = [v for v in ("A", "B") if not variants[v]]
+        warnings.append(
+            "Gen1 sentiment comparison invalid: missing variant(s) "
+            + ", ".join(missing)
+            + " (A=ON, B=OFF baseline)."
+        )
+
+    if variants["C"] and variants["D"]:
+        delta_table.extend(_build_delta_table(variants["C"], variants["D"], generation="gen2"))
+        valid_comparisons.append("gen2:C_vs_D")
+    else:
+        incomplete_comparisons.append("gen2:C_vs_D")
+        missing = [v for v in ("C", "D") if not variants[v]]
+        warnings.append(
+            "Gen2 sentiment comparison invalid: missing variant(s) "
+            + ", ".join(missing)
+            + " (C=ON, D=OFF baseline)."
+        )
+
+    if not valid_comparisons:
+        invalid_comparisons.append("sentiment_matrix")
+
+    sentiment_on = [s["run_id"] for s in variants["A"] + variants["C"]]
+    sentiment_off = [s["run_id"] for s in variants["B"] + variants["D"]]
 
     return {
-        "sentiment_on": [s["run_id"] for s in on_runs],
-        "sentiment_off": [s["run_id"] for s in off_runs],
+        "sentiment_on": sentiment_on,
+        "sentiment_off": sentiment_off,
         "delta_table": delta_table,
         "warnings": warnings,
         "grouped": {
-            gen: {
-                "on": [r["run_id"] for r in grouped[gen]["on"]],
-                "off": [r["run_id"] for r in grouped[gen]["off"]],
-            }
-            for gen in grouped
+            "gen1": {"on": [s["run_id"] for s in variants["A"]], "off": [s["run_id"] for s in variants["B"]]},
+            "gen2": {"on": [s["run_id"] for s in variants["C"]], "off": [s["run_id"] for s in variants["D"]]},
         },
+        "matrix": matrix,
+        "valid_comparisons": valid_comparisons,
+        "incomplete_comparisons": incomplete_comparisons,
+        "invalid_comparisons": invalid_comparisons,
     }
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 _WF_METRICS = [
     ("walkforward_summary", "Sharpe_Dynamic", "sharpe_dynamic"),
-    ("walkforward_summary", "Sharpe_Delta",   "sharpe_delta"),
-    ("walkforward_summary", "Return_Delta",   "return_delta"),
-    ("walkforward_summary", "MaxDD_Delta",    "maxdd_delta"),
+    ("walkforward_summary", "Sharpe_Delta", "sharpe_delta"),
+    ("walkforward_summary", "Return_Delta", "return_delta"),
+    ("walkforward_summary", "MaxDD_Delta", "maxdd_delta"),
 ]
 
 
 def _extract_pair_metrics(
     summaries: list[dict[str, Any]],
 ) -> dict[str, dict[str, float]]:
-    """
-    Return ``{pair → {metric → avg_value}}`` across all summaries.
-
-    Values are averaged over runs when multiple runs share a pair.
-    """
     accum: dict[str, dict[str, list[float]]] = {}
 
     for summary in summaries:
@@ -156,7 +127,6 @@ def _build_delta_table(
     *,
     generation: str,
 ) -> list[dict[str, Any]]:
-    """Build per-pair, per-metric delta rows (ON − OFF)."""
     on_metrics = _extract_pair_metrics(on_runs)
     off_metrics = _extract_pair_metrics(off_runs)
 

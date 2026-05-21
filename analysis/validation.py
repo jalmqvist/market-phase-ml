@@ -6,7 +6,7 @@ Integrity validation for analysis framework v2.
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import Counter
 from typing import Any
 
 
@@ -24,107 +24,107 @@ def sort_summaries_deterministically(summaries: list[dict[str, Any]]) -> list[di
 
 
 def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
-    errors: list[str] = []
-    warnings: list[str] = []
-    diagnostics: list[str] = []
+    provenance_errors: list[str] = []
+    provenance_warnings: list[str] = []
+    semantic_errors: list[str] = []
+    semantic_warnings: list[str] = []
+    manifest_errors: list[str] = []
+    manifest_warnings: list[str] = []
 
     run_ids = [s.get("run_id") for s in summaries if s.get("run_id")]
-    semantic_ids = [(s.get("meta") or {}).get("semantic_run_id") for s in summaries if (s.get("meta") or {}).get("semantic_run_id")]
-    timestamp_ids = [
-        (
-            (s.get("meta") or {}).get("timestamp_utc"),
-            (s.get("meta") or {}).get("archive_relpath"),
-            s.get("run_id"),
-        )
-        for s in summaries
-    ]
-
     for rid, count in Counter(run_ids).items():
         if count > 1:
-            errors.append(f"Duplicate canonical run_id detected: {rid} (count={count})")
+            provenance_errors.append(f"Duplicate canonical run_id detected: {rid} (count={count})")
 
+    semantic_ids = [
+        (s.get("meta") or {}).get("semantic_run_id")
+        for s in summaries
+        if (s.get("meta") or {}).get("semantic_run_id")
+    ]
     for sid, count in Counter(semantic_ids).items():
         if count > 1:
-            warnings.append(
-                f"Duplicate semantic_run_id detected across archive directories: {sid} (count={count}). "
-                "Canonical IDs remain unique via archive path suffix."
+            provenance_errors.append(
+                f"Duplicate semantic_run_id detected: {sid} (count={count}) "
+                "(semantic identity must be unique per archive run root)."
             )
 
-    by_ts: dict[str, list[tuple[str | None, str | None]]] = defaultdict(list)
-    for ts, relpath, rid in timestamp_ids:
-        if ts:
-            by_ts[ts].append((relpath, rid))
-    for ts, entries in by_ts.items():
-        if len(entries) > 1:
-            unique_dirs = sorted({e[0] for e in entries if e[0]})
-            if len(unique_dirs) > 1:
-                warnings.append(
-                    f"Timestamp reused across multiple run directories ({ts}): "
-                    + ", ".join(unique_dirs)
-                )
+    for summary in summaries:
+        run_id = summary.get("run_id", "unknown")
+        meta = summary.get("meta") or {}
+        csvs = summary.get("csvs") or {}
+        manifest_diag = meta.get("manifest_diagnostics") or {}
 
-    # Per-run structural checks
-    gen_variant_map: dict[str, set[str]] = defaultdict(set)
-    gen_dl_map: dict[str, set[bool]] = defaultdict(set)
-    for s in summaries:
-        meta = s.get("meta") or {}
-        run_id = s.get("run_id", "unknown")
+        manifest_count = int(manifest_diag.get("manifest_count") or 0)
+        if manifest_count > 1:
+            manifest_errors.append(
+                f"{run_id}: multiple manifests discovered in one run directory (count={manifest_count})."
+            )
+        if manifest_count == 0:
+            manifest_warnings.append(
+                f"{run_id}: missing manifest (legacy mode); semantics may be incomplete."
+            )
+
+        manifest_timestamp = manifest_diag.get("manifest_timestamp")
+        identity_timestamp = meta.get("timestamp_utc")
+        if manifest_timestamp and identity_timestamp and manifest_timestamp != identity_timestamp:
+            manifest_errors.append(
+                f"{run_id}: conflicting manifest timestamp ({manifest_timestamp}) vs identity timestamp ({identity_timestamp})."
+            )
+
+        if not meta.get("manifest_present") and not meta.get("files_found") and not summary.get("log"):
+            provenance_errors.append(f"{run_id}: malformed archive (no manifest, no CSV, no log).")
+
         variant = meta.get("run_variant") or "U"
         gen = meta.get("experiment_gen") or "unknown"
-        gen_variant_map[gen].add(variant)
-        if meta.get("dl_enabled") is not None:
-            gen_dl_map[gen].add(bool(meta.get("dl_enabled")))
+        if gen == "gen1" and variant in {"C", "D"}:
+            semantic_errors.append(f"{run_id}: semantic conflict (gen1 run cannot use variant {variant}).")
+        if gen == "gen2" and variant in {"A", "B"}:
+            semantic_errors.append(f"{run_id}: semantic conflict (gen2 run cannot use variant {variant}).")
+        if variant == "U":
+            semantic_warnings.append(f"{run_id}: variant unresolved (U); semantic comparisons may be skipped.")
 
-        for w in meta.get("identity_warnings") or []:
-            warnings.append(f"{run_id}: {w}")
+        for warning in meta.get("identity_warnings") or []:
+            if "conflict" in warning.lower():
+                semantic_errors.append(f"{run_id}: {warning}")
+            else:
+                provenance_warnings.append(f"{run_id}: {warning}")
 
-        manifest_diag = meta.get("manifest_diagnostics") or {}
-        for pe in manifest_diag.get("parse_errors") or []:
-            errors.append(f"{run_id}: malformed manifest ({pe})")
-
-        manifest_timestamps = manifest_diag.get("timestamps") or []
-        if len(set(manifest_timestamps)) > 1:
-            warnings.append(
-                f"{run_id}: conflicting manifest timestamps detected: "
-                + ", ".join(sorted(set(manifest_timestamps)))
-            )
-
-        files_found = set(meta.get("files_found") or [])
-        if not files_found:
-            warnings.append(f"{run_id}: no recognised CSV files discovered.")
-
-        expected_markers = {
-            "walkforward_summary",
-            "walkforward_per_fold",
-        }
-        csvs = s.get("csvs") or {}
-        missing = sorted(k for k in expected_markers if not csvs.get(k))
+        expected_markers = {"walkforward_summary", "walkforward_per_fold"}
+        missing = sorted(marker for marker in expected_markers if not csvs.get(marker))
         if missing:
-            warnings.append(f"{run_id}: missing key CSV sections: {', '.join(missing)}")
-
-        if not meta.get("manifest_present") and not files_found and not s.get("log"):
-            errors.append(f"{run_id}: malformed archive (no manifest, no CSV, no log).")
-
-    # Cross-run structure checks for A/B/C/D assumptions
-    if "gen1" in gen_variant_map:
-        if "A" not in gen_variant_map["gen1"] or "B" not in gen_variant_map["gen1"]:
-            warnings.append("Gen1 comparison incomplete: expected both A and B variants.")
-    if "gen2" in gen_variant_map:
-        if "C" not in gen_variant_map["gen2"] or "D" not in gen_variant_map["gen2"]:
-            warnings.append("Gen2 comparison incomplete: expected both C and D variants.")
-
-    # Gen label consistency sanity checks
-    for gen, variants in gen_variant_map.items():
-        if gen == "gen1" and any(v in {"C", "D"} for v in variants):
-            warnings.append("Inconsistent gen labelling: gen1 group contains C/D variants.")
-        if gen == "gen2" and any(v in {"A", "B"} for v in variants):
-            warnings.append("Inconsistent gen labelling: gen2 group contains A/B variants.")
+            provenance_warnings.append(
+                f"{run_id}: missing optional CSV sections: {', '.join(missing)}."
+            )
+        if not summary.get("log"):
+            provenance_warnings.append(f"{run_id}: log file absent.")
 
     if not summaries:
-        errors.append("No summaries available after discovery/parsing.")
+        provenance_errors.append("No summaries available after discovery/parsing.")
 
-    diagnostics.append(f"runs_total={len(summaries)}")
-    diagnostics.append(f"errors={len(errors)}")
-    diagnostics.append(f"warnings={len(warnings)}")
-    return {"errors": errors, "warnings": warnings, "diagnostics": diagnostics}
+    errors = provenance_errors + semantic_errors + manifest_errors
+    warnings = provenance_warnings + semantic_warnings + manifest_warnings
+    diagnostics = [
+        f"runs_total={len(summaries)}",
+        f"errors={len(errors)}",
+        f"warnings={len(warnings)}",
+    ]
 
+    return {
+        "errors": errors,
+        "warnings": warnings,
+        "diagnostics": diagnostics,
+        "sections": {
+            "provenance_integrity": {
+                "errors": provenance_errors,
+                "warnings": provenance_warnings,
+            },
+            "semantic_integrity": {
+                "errors": semantic_errors,
+                "warnings": semantic_warnings,
+            },
+            "manifest_integrity": {
+                "errors": manifest_errors,
+                "warnings": manifest_warnings,
+            },
+        },
+    }

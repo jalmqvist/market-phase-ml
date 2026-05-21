@@ -175,16 +175,14 @@ def build_run_summary(
         )
 
     warnings.extend(identity.get("identity_warnings", []))
-    for pe in (manifest or {}).get("parse_errors") or []:
-        warnings.append(f"Manifest parse error: {pe}")
 
     # --- coverage summary -------------------------------------------------
     coverage = _build_coverage_summary(csvs, log, manifest)
 
     # --- meta -------------------------------------------------------------
     meta = {
-        "experiment_gen": experiment_gen,
-        "dl_enabled": bool((manifest or {}).get("dl_enabled", False)),
+        "experiment_gen": identity.get("experiment_gen") or experiment_gen,
+        "dl_enabled": (manifest or {}).get("dl_enabled"),
         "dl_surface": (manifest or {}).get("dl_surface"),
         "dl_surface_string": (manifest or {}).get("dl_surface_string"),
         "dl_artifact_path": (manifest or {}).get("dl_artifact_path"),
@@ -196,11 +194,13 @@ def build_run_summary(
         "run_dir": str(run_dir),
         "files_found": csvs.pop("_files_found", []),
         "manifest_present": bool(manifest),
+        "legacy_mode": not bool(manifest),
         "manifest_diagnostics": {
-            "parse_errors": (manifest or {}).get("parse_errors", []),
-            "timestamps": (manifest or {}).get("timestamps", []),
-            "run_ids": (manifest or {}).get("run_ids", []),
-            "dl_mode_tags": (manifest or {}).get("dl_mode_tags", []),
+            "manifest_count": (manifest or {}).get("manifest_count", 0),
+            "manifest_path": (manifest or {}).get("manifest_path"),
+            "manifest_timestamp": (manifest or {}).get("timestamp_utc"),
+            "manifest_run_id": (manifest or {}).get("run_id"),
+            "dl_mode_tag": (manifest or {}).get("dl_mode_tag"),
         },
         "semantic_run_name": identity.get("semantic_run_name"),
         "semantic_run_id": identity.get("semantic_run_id"),
@@ -333,8 +333,8 @@ def run_pipeline(
     if not discovered:
         print(
             f"⚠  No run directories found under '{archive_root}'.\n"
-            "   Ensure the directory contains run_manifest_*.json or "
-            "results_ml*.csv files."
+            "   Ensure run directories contain exactly one run_manifest_*.json "
+            "or explicit legacy marker (.mpml_legacy_run_root)."
         )
         return
 

@@ -241,7 +241,7 @@ class TestParseManifest(unittest.TestCase):
             _rmtree(empty_dir)
 
     def test_prefers_dl_enabled_manifest(self):
-        """When both __baseline and __dl_enabled manifests exist, prefer DL."""
+        """Multiple manifests in one run root must fail loudly."""
         base_manifest = self._make_manifest()
         base_manifest["dl"]["dl_enabled"] = False
         base_manifest["dl"]["dl_mode_tag"] = "__baseline"
@@ -253,22 +253,18 @@ class TestParseManifest(unittest.TestCase):
             "run_manifest_run_2__dl_enabled.json": json.dumps(dl_manifest),
         })
         try:
-            result = parse_manifest(run_dir)
-            self.assertTrue(result["dl_enabled"])
+            with self.assertRaises(ValueError):
+                parse_manifest(run_dir)
         finally:
             _rmtree(run_dir)
 
-    def test_corrupt_manifest_does_not_raise(self):
+    def test_corrupt_manifest_raises(self):
         run_dir = _make_run_dir({
             "run_manifest_bad__dl_enabled.json": "NOT JSON {{{",
         })
         try:
-            result = parse_manifest(run_dir)
-            # Should return something; the corrupt file is logged as an error.
-            self.assertIsNotNone(result)
-            primary = result["primary"]
-            self.assertIn("_parse_error", primary)
-            self.assertGreaterEqual(len(result["parse_errors"]), 1)
+            with self.assertRaises(ValueError):
+                parse_manifest(run_dir)
         finally:
             _rmtree(run_dir)
 
@@ -296,22 +292,23 @@ class TestRunIdentity(unittest.TestCase):
         finally:
             _rmtree(archive)
 
-    def test_identity_mismatch_warns(self):
+    def test_identity_unknown_variant_warns(self):
         archive = _make_run_dir({})
-        run_dir = archive / "fp_gen1_B"
+        run_dir = archive / "rerun_copy"
         run_dir.mkdir()
         identity = infer_run_identity(
             archive_root=archive,
             run_dir=run_dir,
-            experiment_gen="gen1",
+            experiment_gen="unknown",
             manifest={
                 "run_id": "run_20260521T131739Z",
                 "timestamp_utc": "20260521T131739Z",
-                "dl_enabled": True,  # implies A
-                "primary": {"run": {"run_id": "run_20260521T131739Z"}},
+                "dl_enabled": True,
+                "run": {"run_id": "run_20260521T131739Z"},
             },
         )
         try:
+            self.assertEqual(identity["run_variant"], "U")
             self.assertGreaterEqual(len(identity["identity_warnings"]), 1)
         finally:
             _rmtree(archive)
@@ -390,7 +387,6 @@ class TestDiscoverRuns(unittest.TestCase):
             _rmtree(run_dir)
 
     def test_archive_with_nested_runs(self):
-        import os
         tmp = tempfile.mkdtemp()
         archive = Path(tmp)
         # Create two nested run directories
@@ -399,6 +395,7 @@ class TestDiscoverRuns(unittest.TestCase):
         run_a.mkdir()
         run_b.mkdir()
         (run_a / "results_ml__baseline.csv").write_text("Model,Accuracy\n")
+        (run_a / ".mpml_legacy_run_root").write_text("legacy")
         (run_b / "run_manifest_x__dl_enabled.json").write_text("{}")
         try:
             found = list(discover_runs(archive))
@@ -412,9 +409,9 @@ class TestDiscoverRuns(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             list(discover_runs(Path("/nonexistent/path/xyz")))
 
-    def test_gen2_inferred_from_name(self):
+    def test_gen_extracted_from_manifest_explicit_field(self):
         run_dir = _make_run_dir({
-            "run_manifest_gen2__dl_enabled.json": "{}",
+            "run_manifest_gen2__dl_enabled.json": json.dumps({"experiment_gen": "gen2"}),
         })
         try:
             found = list(discover_runs(run_dir))
@@ -423,17 +420,31 @@ class TestDiscoverRuns(unittest.TestCase):
         finally:
             _rmtree(run_dir)
 
-    def test_gen1_default(self):
+    def test_gen_defaults_to_unknown_without_explicit_manifest_gen(self):
         run_dir = _make_run_dir({
             "run_manifest_run_abc__baseline.json": "{}",
         })
         try:
             found = list(discover_runs(run_dir))
-            # The root is yielded; should be gen1
             gens = {f[1] for f in found}
-            self.assertIn("gen1", gens)
+            self.assertIn("unknown", gens)
         finally:
             _rmtree(run_dir)
+
+    def test_nested_manifest_contamination_prevented(self):
+        tmp = tempfile.mkdtemp()
+        archive = Path(tmp)
+        run_root = archive / "fp_gen1_A"
+        nested = run_root / "analysis"
+        nested.mkdir(parents=True)
+        (run_root / "run_manifest_x.json").write_text(json.dumps({"experiment_gen": "gen1"}))
+        (nested / "copied_results.csv").write_text("Pair,Sharpe_Delta\nEURUSD,0.1\n")
+        try:
+            found = list(discover_runs(archive))
+            dirs = [p for p, _ in found]
+            self.assertEqual(dirs, [run_root.resolve()])
+        finally:
+            _rmtree(archive)
 
 
 # ---------------------------------------------------------------------------
@@ -512,12 +523,16 @@ class TestPipelineIntegration(unittest.TestCase):
         self.archive = Path(tempfile.mkdtemp())
         self.output_dir = Path(tempfile.mkdtemp())
 
-        # Two synthetic run directories
-        for run_name, dl_enabled in [("run_baseline", False), ("run_dl", True)]:
+        # Two synthetic run directories (A/B cohort)
+        for run_name, dl_enabled, run_variant in [
+            ("run_baseline", False, "B"),
+            ("run_dl", True, "A"),
+        ]:
             run_dir = self.archive / run_name
             run_dir.mkdir()
             manifest = {
-                "run": {"run_id": run_name, "git_sha": "abc123", "timestamp_utc": "T"},
+                "run": {"run_id": run_name, "git_sha": "abc123", "timestamp_utc": "T", "run_variant": run_variant},
+                "experiment_gen": "gen1",
                 "dl": {
                     "dl_enabled": dl_enabled,
                     "dl_mode_tag": "__dl_enabled" if dl_enabled else "__baseline",
@@ -593,7 +608,13 @@ class TestValidationAndOrdering(unittest.TestCase):
                 "timestamp_utc": ts,
                 "archive_relpath": relpath,
                 "manifest_present": True,
-                "manifest_diagnostics": {"parse_errors": [], "timestamps": [ts], "run_ids": [run_id], "dl_mode_tags": []},
+                "manifest_diagnostics": {
+                    "manifest_count": 1,
+                    "manifest_path": f"/tmp/{run_id}.json",
+                    "manifest_timestamp": ts,
+                    "manifest_run_id": run_id,
+                    "dl_mode_tag": "__baseline",
+                },
                 "files_found": ["walkforward_results_summary__baseline.csv"],
                 "dl_enabled": variant in {"A", "C"},
                 "identity_warnings": [],
@@ -625,7 +646,13 @@ class TestValidationAndOrdering(unittest.TestCase):
                 "timestamp_utc": "unknown_ts",
                 "archive_relpath": "bad_run",
                 "manifest_present": False,
-                "manifest_diagnostics": {"parse_errors": [], "timestamps": [], "run_ids": [], "dl_mode_tags": []},
+                "manifest_diagnostics": {
+                    "manifest_count": 0,
+                    "manifest_path": None,
+                    "manifest_timestamp": None,
+                    "manifest_run_id": None,
+                    "dl_mode_tag": None,
+                },
                 "files_found": [],
                 "dl_enabled": False,
                 "identity_warnings": [],
