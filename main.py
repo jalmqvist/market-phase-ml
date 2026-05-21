@@ -1108,10 +1108,25 @@ def generate_walkforward_folds_by_pos(
         # Convert to positions (snap to nearest available bar <= boundary)
         train_start_pos = 0
         train_end_pos = _find_index_pos(dates, train_end_dt)
-        test_start_pos = _find_index_pos(dates, test_start_dt)
+
+        # ----------------------------------------------------------
+        # Causal fold boundary:
+        # test must begin strictly AFTER the final train bar.
+        #
+        # Using calendar-based lookup for both train_end_dt and
+        # test_start_dt can collapse onto the same trading bar when
+        # the index is sparse/non-uniform.
+        #
+        # Therefore test_start_pos is defined positionally.
+        # ----------------------------------------------------------
+        test_start_pos = train_end_pos + 1
+
+        if test_start_pos >= len(dates):
+            break
+
         test_end_pos = _find_index_pos(dates, test_end_dt)
 
-        if test_end_pos <= test_start_pos or train_end_pos <= train_start_pos:
+        if test_end_pos <= test_start_pos:
             break
 
         train_start_ts = dates[train_start_pos]
