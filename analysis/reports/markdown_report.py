@@ -63,10 +63,15 @@ def render_markdown_report(
         errors = validation.get("errors") or []
         warnings = validation.get("warnings") or []
         diagnostics = validation.get("diagnostics") or []
+        sections = validation.get("sections") or {}
         lines.append(f"- **Errors:** {len(errors)}")
         lines.append(f"- **Warnings:** {len(warnings)}")
         if diagnostics:
             lines.append(f"- **Diagnostics:** {', '.join(diagnostics)}")
+        lines.append("")
+        _render_integrity_section(lines, "Provenance Integrity", sections.get("provenance_integrity"))
+        _render_integrity_section(lines, "Semantic Integrity", sections.get("semantic_integrity"))
+        _render_integrity_section(lines, "Manifest Integrity", sections.get("manifest_integrity"))
         if errors:
             lines.append("\n### ❌ Structural Errors\n")
             for err in errors:
@@ -309,6 +314,9 @@ def _render_sentiment_comparison(
     off_ids = ", ".join(sentiment.get("sentiment_off") or []) or "—"
     lines.append(f"- **Sentiment ON runs:** {on_ids}")
     lines.append(f"- **Sentiment OFF runs:** {off_ids}")
+    lines.append(f"- **Valid comparisons:** {', '.join(sentiment.get('valid_comparisons') or []) or '—'}")
+    lines.append(f"- **Incomplete comparisons:** {', '.join(sentiment.get('incomplete_comparisons') or []) or '—'}")
+    lines.append(f"- **Invalid comparisons:** {', '.join(sentiment.get('invalid_comparisons') or []) or '—'}")
     lines.append("")
     delta_rows = sentiment.get("delta_table") or []
     if delta_rows:
@@ -333,6 +341,9 @@ def _render_gen_comparison(
     g2_ids = ", ".join(gen.get("gen2") or []) or "—"
     lines.append(f"- **Gen1 runs:** {g1_ids}")
     lines.append(f"- **Gen2 runs:** {g2_ids}")
+    lines.append(f"- **Valid comparisons:** {', '.join(gen.get('valid_comparisons') or []) or '—'}")
+    lines.append(f"- **Incomplete comparisons:** {', '.join(gen.get('incomplete_comparisons') or []) or '—'}")
+    lines.append(f"- **Invalid comparisons:** {', '.join(gen.get('invalid_comparisons') or []) or '—'}")
     lines.append("")
     delta_rows = gen.get("delta_table") or []
     if delta_rows:
@@ -373,13 +384,12 @@ def _render_manifest_metadata(lines: list[str], summary: dict[str, Any]) -> None
     meta = summary.get("meta") or {}
     md = meta.get("manifest_diagnostics") or {}
     lines.append(f"- Manifest present: {'yes' if meta.get('manifest_present') else 'no'}")
-    lines.append(f"- Manifest run_id(s): {', '.join(md.get('run_ids') or []) or '—'}")
-    lines.append(f"- Manifest timestamp(s): {', '.join(md.get('timestamps') or []) or '—'}")
-    lines.append(f"- Manifest mode tag(s): {', '.join(md.get('dl_mode_tags') or []) or '—'}")
-    if md.get("parse_errors"):
-        lines.append("- Parse errors:")
-        for e in md.get("parse_errors") or []:
-            lines.append(f"  - {e}")
+    lines.append(f"- Legacy mode: {'yes' if meta.get('legacy_mode') else 'no'}")
+    lines.append(f"- Canonical manifest path: {md.get('manifest_path') or '—'}")
+    lines.append(f"- Canonical manifest run_id: {md.get('manifest_run_id') or '—'}")
+    lines.append(f"- Canonical manifest timestamp: {md.get('manifest_timestamp') or '—'}")
+    lines.append(f"- Canonical manifest mode tag: {md.get('dl_mode_tag') or '—'}")
+    lines.append(f"- Manifest count in run root: {md.get('manifest_count', 0)}")
     lines.append("")
 
 
@@ -393,6 +403,27 @@ def _render_parser_diagnostics(lines: list[str], summary: dict[str, Any]) -> Non
     else:
         lines.append("- Files: —")
     lines.append(f"- Log parsed: {'yes' if summary.get('log') else 'no'}")
+    lines.append("")
+
+
+def _render_integrity_section(
+    lines: list[str],
+    title: str,
+    section: dict[str, Any] | None,
+) -> None:
+    lines.append(f"### {title}\n")
+    if not section:
+        lines.append("- No diagnostics.")
+        lines.append("")
+        return
+    errors = section.get("errors") or []
+    warnings = section.get("warnings") or []
+    lines.append(f"- Errors: {len(errors)}")
+    lines.append(f"- Warnings: {len(warnings)}")
+    for err in errors:
+        lines.append(f"  - ❌ {err}")
+    for warning in warnings:
+        lines.append(f"  - ⚠ {warning}")
     lines.append("")
 
 

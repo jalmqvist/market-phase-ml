@@ -112,8 +112,8 @@ annotated with a `_mode_tag` field before merging.
 - `flags.*` — pipeline feature flags
 - `run.run_id`, `run.git_sha`, `run.timestamp_utc`
 
-When both `__baseline` and `__dl_enabled` manifests exist, the
-`__dl_enabled` manifest is used as primary.
+Each run directory must contain **exactly one** `run_manifest_*.json`.
+Multiple manifests in one run root are treated as an integrity failure.
 
 ### Log files (legacy fallback)
 
@@ -202,14 +202,12 @@ prediction surface provides no data:
 Gen2 allows the XGBoost gating model to learn a distinct policy for
 "DL data unavailable" bars, rather than silently falling back.
 
-**Inference:** Generation and variant semantics are inferred from:
+**Inference policy (integrity mode):**
 
-- manifest (`dl_enabled`, `run.timestamp_utc`, `run_id`)
-- archive directory names (`fp_gen1_A`, `fp_gen2_D`, etc.)
-- manifest/log fallback timestamps
-
-If directory naming and manifest semantics disagree, the run is retained
-but explicitly warned in report diagnostics.
+- trust explicit manifest/config metadata only
+- derive variant from explicit generation + `dl_enabled` when safe
+- if semantics cannot be inferred safely, assign variant `U` and warn
+- do **not** infer semantics from folder/file naming heuristics
 
 ### Sentiment ON vs OFF
 
@@ -299,6 +297,12 @@ Running `python analysis/pipeline.py results_archive/` will discover
 all four directories, build summaries, and generate A vs B and C vs D
 sentiment comparisons automatically.
 
+Discovery hardening:
+
+- run roots are manifest-centric (exactly one `run_manifest_*.json`)
+- nested subdirectories under a discovered run root are not re-scanned
+- CSV-only fallback is legacy-only and requires `.mpml_legacy_run_root`
+
 Canonical identity rule:
 
 `<gen>_<variant>__<timestamp>__<archive_relpath_slug>`
@@ -319,9 +323,10 @@ The pipeline handles partial and failed runs gracefully:
 | Scenario | Behaviour |
 |---|---|
 | Missing CSV files | Corresponding section in summary is `null`; warning emitted |
-| No manifest | canonical id uses directory identity + fallback timestamp; warning emitted |
+| No manifest | legacy mode only; allowed when explicit legacy marker is present |
 | Corrupt/invalid CSV | Error captured in `_errors`; other files continue |
-| Malformed manifest JSON | Explicit validation error/warning surfaced in report |
+| Malformed manifest JSON | Hard error (pipeline fails) |
+| Multiple manifests in one run root | Hard error (pipeline fails) |
 | Duplicate canonical identities | Validation error (pipeline fails) |
 | No CSVs and no log | Validation error (malformed archive) |
 | Empty archive | Message printed; no crash |
@@ -335,8 +340,8 @@ than crashing or omitting the section header.
 
 | Question | Data source | Pipeline section |
 |---|---|---|
-| Sentiment ON/OFF (A vs B, C vs D) | `walkforward_summary` + `manifest.dl_enabled` | `comparisons.sentiment` |
-| Gen1 vs Gen2 missing-indicator semantics | `walkforward_summary` + dir name | `comparisons.gen` |
+| Sentiment ON/OFF (A vs B, C vs D) | `walkforward_summary` + canonical variant semantics | `comparisons.sentiment` |
+| Gen1 vs Gen2 missing-indicator semantics | `walkforward_summary` + canonical variant semantics | `comparisons.gen` |
 | Walkforward OOS Sharpe / return / DD | `walkforward_results_summary__*.csv` | `csvs.walkforward_summary` |
 | Fold stability | `walkforward_results_per_fold__*.csv` | `csvs.walkforward_per_fold` |
 | Selector uplift (aggregate + per-pair) | `baseline_vs_dynamic_comparison__*.csv` | `comparisons.selector` |

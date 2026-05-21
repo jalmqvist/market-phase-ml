@@ -29,6 +29,7 @@ def _make_summary(
     run_id: str,
     dl_enabled: bool = True,
     experiment_gen: str = "gen1",
+    run_variant: str | None = None,
     sharpe_delta: float | None = None,
     return_delta: float | None = None,
     maxdd_delta: float | None = None,
@@ -36,6 +37,14 @@ def _make_summary(
     dl_coverage: dict | None = None,
 ) -> dict:
     """Build a minimal summary dict for testing comparisons."""
+    if run_variant is None:
+        if experiment_gen == "gen1":
+            run_variant = "A" if dl_enabled else "B"
+        elif experiment_gen == "gen2":
+            run_variant = "C" if dl_enabled else "D"
+        else:
+            run_variant = "U"
+
     wf_row = {"Pair": pair}
     if sharpe_delta is not None:
         wf_row["Sharpe_Delta"] = sharpe_delta
@@ -49,6 +58,7 @@ def _make_summary(
         "meta": {
             "dl_enabled": dl_enabled,
             "experiment_gen": experiment_gen,
+            "run_variant": run_variant,
         },
         "csvs": {
             "walkforward_summary": [wf_row],
@@ -109,13 +119,13 @@ class TestCompareSentimentVariants(unittest.TestCase):
         summaries = [_make_summary("run_off", dl_enabled=False)]
         result = compare_sentiment_variants(summaries)
         warnings = result["warnings"]
-        self.assertTrue(any("sentiment-ON" in w for w in warnings))
+        self.assertTrue(any("missing variant" in w for w in warnings))
 
     def test_no_off_runs_warning(self):
         summaries = [_make_summary("run_on", dl_enabled=True)]
         result = compare_sentiment_variants(summaries)
         warnings = result["warnings"]
-        self.assertTrue(any("sentiment-OFF" in w for w in warnings))
+        self.assertTrue(any("missing variant" in w for w in warnings))
 
     def test_multiple_pairs(self):
         summaries = [
@@ -151,7 +161,7 @@ class TestCompareSentimentVariants(unittest.TestCase):
         ]
         result = compare_sentiment_variants(summaries)
         self.assertEqual(result["delta_table"], [])
-        self.assertTrue(any("missing sentiment" in w for w in result["warnings"]))
+        self.assertTrue(any("invalid" in w.lower() for w in result["warnings"]))
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +242,7 @@ class TestCompareGen1Gen2(unittest.TestCase):
     def test_no_gen1_warning(self):
         summaries = [_make_summary("run_g2", experiment_gen="gen2")]
         result = compare_gen1_gen2(summaries)
-        self.assertTrue(any("Gen1" in w for w in result["warnings"]))
+        self.assertTrue(any("invalid" in w.lower() for w in result["warnings"]))
 
     def test_coverage_comparison(self):
         summaries = [
@@ -254,7 +264,7 @@ class TestCompareGen1Gen2(unittest.TestCase):
         ]
         result = compare_gen1_gen2(summaries)
         self.assertEqual(result["delta_table"], [])
-        self.assertTrue(any("A↔C" in w or "B↔D" in w for w in result["warnings"]))
+        self.assertTrue(any("invalid" in w.lower() for w in result["warnings"]))
 
 
 if __name__ == "__main__":

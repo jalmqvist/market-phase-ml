@@ -2,32 +2,6 @@
 analysis/parsers/manifest_parser.py
 =====================================
 Parse MPML ``run_manifest_*.json`` files.
-
-Manifest files record the full run configuration: costs, DL surface
-settings, walkforward parameters, flags, and software versions.  They
-are the authoritative source for:
-
-* whether DL signals were enabled (``dl.dl_enabled``)
-* the DL surface specification (model, regime, horizon)
-* whether sentiment features were active (inferred from ``dl_surface``)
-* walkforward / ablation flags
-
-Sentiment ON/OFF semantics
----------------------------
-"Sentiment" in the MPML context means the DL prediction surface provides
-a *sentiment* proxy signal (e.g. price-direction probability from a
-LSTM/MLP trained on market-sentiment-ml outputs).
-
-* Sentiment **ON**  — ``dl.dl_enabled = true`` and a valid
-  ``dl_artifact_path`` is present.
-* Sentiment **OFF** — ``dl.dl_enabled = false`` (baseline mode).
-
-Experiment variants are labelled A–D in comparative studies:
-
-* **A** — Sentiment ON,  Gen1 missing-indicator semantics
-* **B** — Sentiment OFF, Gen1 (baseline comparison for A)
-* **C** — Sentiment ON,  Gen2 missing-indicator semantics
-* **D** — Sentiment OFF, Gen2 (baseline comparison for C)
 """
 
 from __future__ import annotations
@@ -39,70 +13,39 @@ from typing import Any
 
 def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
     """
-    Find and parse all ``run_manifest_*.json`` files in *run_dir*.
+    Parse the canonical manifest in *run_dir*.
 
-    Multiple manifests may exist when a directory holds both a
-    ``__baseline`` and a ``__dl_enabled`` run.  All are merged into a
-    list under ``manifests``; the *primary* manifest is selected by
-    preferring ``__dl_enabled`` > ``__baseline`` > first-found.
-
-    Returns
-    -------
-    dict or None
-        Parsed manifest dict with the following top-level keys:
-        ``manifests``, ``primary``, ``dl_enabled``, ``run_id``,
-        ``dl_surface``, ``walkforward``, ``flags``.
-        Returns None if no manifest files are found.
+    Integrity rules:
+    * 0 manifests  -> return ``None`` (legacy fallback path)
+    * 1 manifest   -> return parsed canonical manifest metadata
+    * >1 manifests -> raise ``ValueError`` (ambiguous provenance)
     """
     manifest_files = sorted(run_dir.glob("run_manifest_*.json"))
     if not manifest_files:
         return None
+    if len(manifest_files) > 1:
+        raise ValueError(
+            f"Manifest integrity failure: expected exactly one manifest in {run_dir}, "
+            f"found {len(manifest_files)}."
+        )
 
-    manifests: list[dict[str, Any]] = []
-    parse_errors: list[str] = []
-    for mf in manifest_files:
-        try:
-            data = json.loads(mf.read_text(errors="ignore"))
-            data["_source_file"] = str(mf.name)
-            manifests.append(data)
-        except Exception as exc:  # noqa: BLE001
-            err = {"_source_file": str(mf.name), "_parse_error": str(exc)}
-            manifests.append(err)
-            parse_errors.append(f"{mf.name}: {exc}")
+    manifest_path = manifest_files[0]
+    try:
+        data = json.loads(manifest_path.read_text(errors="ignore"))
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"Manifest parse failure in {manifest_path}: {exc}") from exc
 
-    # Select the primary manifest: prefer DL-enabled over baseline.
-    primary = manifests[0]
-    for m in manifests:
-        mode_tag = (m.get("dl") or {}).get("dl_mode_tag", "")
-        if "__dl_enabled" in mode_tag:
-            primary = m
-            break
-
-    dl_section = primary.get("dl") or {}
-    run_section = primary.get("run") or {}
-    wf_section = primary.get("walkforward") or {}
-    flags_section = primary.get("flags") or {}
-    timestamps = [
-        (m.get("run") or {}).get("timestamp_utc")
-        for m in manifests
-        if (m.get("run") or {}).get("timestamp_utc")
-    ]
-    run_ids = [
-        (m.get("run") or {}).get("run_id")
-        for m in manifests
-        if (m.get("run") or {}).get("run_id")
-    ]
-    dl_mode_tags = [
-        (m.get("dl") or {}).get("dl_mode_tag")
-        for m in manifests
-        if (m.get("dl") or {}).get("dl_mode_tag")
-    ]
+    dl_section = data.get("dl") or {}
+    run_section = data.get("run") or {}
+    wf_section = data.get("walkforward") or {}
+    flags_section = data.get("flags") or {}
+    dl_enabled = dl_section.get("dl_enabled")
 
     return {
-        "manifests": manifests,
-        "primary": primary,
+        "manifest_count": 1,
+        "manifest_path": str(manifest_path),
         "run_id": run_section.get("run_id"),
-        "dl_enabled": bool(dl_section.get("dl_enabled", False)),
+        "dl_enabled": None if dl_enabled is None else bool(dl_enabled),
         "dl_surface": dl_section.get("dl_surface"),
         "dl_surface_string": dl_section.get("dl_surface_string"),
         "dl_artifact_path": dl_section.get("dl_artifact_path"),
@@ -112,8 +55,7 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
         "git_sha": run_section.get("git_sha"),
         "timestamp_utc": run_section.get("timestamp_utc"),
         "python_version": run_section.get("python_version"),
-        "parse_errors": parse_errors,
-        "timestamps": timestamps,
-        "run_ids": run_ids,
-        "dl_mode_tags": dl_mode_tags,
+        "run": run_section,
+        "experiment": data.get("experiment") or {},
+        "raw": data,
     }

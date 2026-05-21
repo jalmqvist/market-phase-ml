@@ -75,10 +75,10 @@ python analysis/pipeline.py results_archive/     # multi-run archive
 
 This automatically:
 
-- Discovers all run directories
+- Discovers run directories with strict manifest-centric provenance rules
 - Builds canonical run identities that include generation, variant, timestamp, and archive path context
-- Parses CSV outputs, run manifests, and (as fallback) log files
-- Validates archive structure and experiment consistency (duplicates, malformed manifests, incomplete cohorts)
+- Parses CSV outputs, one canonical run manifest, and (as fallback) log files
+- Validates provenance/semantic/manifest integrity (duplicates, malformed manifests, incomplete cohorts)
 - Generates normalised summary JSON per run
 - Generates sentiment ON/OFF, Gen1 vs Gen2, and selector-uplift comparisons
 - Renders a unified markdown report
@@ -102,8 +102,14 @@ Where:
 
 - `gen1/gen2` = missing-indicator generation
 - `A/B/C/D` = experiment variant semantics
-- timestamp = run timestamp (or best available fallback)
+- timestamp = canonical manifest timestamp (fallback: run_id timestamp, else `unknown_ts`)
 - archive suffix = discovered directory identity to prevent collisions
+
+Integrity notes:
+
+- run discovery trusts `run_manifest_*.json` only (or explicit legacy marker `.mpml_legacy_run_root`)
+- each run directory must contain exactly one manifest
+- semantic attribution is manifest/config-driven; filename heuristics are intentionally avoided
 
 Run the analysis test suite with:
 

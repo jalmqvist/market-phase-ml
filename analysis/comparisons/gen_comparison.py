@@ -2,30 +2,6 @@
 analysis/comparisons/gen_comparison.py
 ========================================
 Gen1 vs Gen2 comparison: missing-indicator semantics.
-
-Gen1 vs Gen2 semantics
-------------------------
-The "generation" of an experiment refers to how absent DL features are
-handled when the DL prediction surface does not cover a given bar:
-
-* **Gen1** — missing DL features are simply absent.  The XGBoost
-  StrategySelector receives ``NaN`` values and falls back to the
-  PhaseAware policy via the existing NaN guard.  The model has no
-  explicit signal that DL data is unavailable.
-
-* **Gen2** — a synthetic boolean column ``dl_missing_indicator`` is
-  added.  When DL features are absent, the indicator is 1; otherwise 0.
-  This gives the gating model an explicit "no-DL" regime signal,
-  potentially enabling a third learned policy: "act conservatively when
-  DL data is unavailable."
-
-The DL prediction surface covers roughly the modern era (~2019+), so
-Gen1 and Gen2 may diverge most on pairs or folds where DL coverage is
-partial.
-
-Research question: does the missing-indicator improve OOS Sharpe on
-pairs where DL coverage is low?  This is the primary Gen1 vs Gen2
-investigation.
 """
 
 from __future__ import annotations
@@ -37,73 +13,88 @@ def compare_gen1_gen2(
     summaries: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """
-    Compare Gen1 (no missing indicator) vs Gen2 (with missing indicator).
-
-    Parameters
-    ----------
-    summaries:
-        List of normalised summary dicts.
-
-    Returns
-    -------
-    dict with keys:
-        ``gen1`` — list of run_ids labelled gen1
-        ``gen2`` — list of run_ids labelled gen2
-        ``delta_table`` — per-pair delta table (gen2 − gen1)
-        ``coverage_comparison`` — per-pair DL coverage from each gen
-        ``warnings``
+    Compare Gen1 vs Gen2 with strict variant cohorts:
+    * sentiment_on  -> A vs C
+    * sentiment_off -> B vs D
     """
-    gen1_runs = [s for s in summaries if s.get("meta", {}).get("experiment_gen") == "gen1"]
-    gen2_runs = [s for s in summaries if s.get("meta", {}).get("experiment_gen") == "gen2"]
+    variants: dict[str, list[dict[str, Any]]] = {v: [] for v in ("A", "B", "C", "D")}
+    unknown: list[str] = []
+    for summary in summaries:
+        variant = ((summary.get("meta") or {}).get("run_variant") or "U").upper()
+        if variant in variants:
+            variants[variant].append(summary)
+        else:
+            unknown.append(summary.get("run_id", "unknown"))
 
     warnings: list[str] = []
-    if not gen1_runs:
-        warnings.append("No Gen1 runs found; Gen1 vs Gen2 delta table will be empty.")
-    if not gen2_runs:
-        warnings.append("No Gen2 runs found; Gen1 vs Gen2 delta table will be empty.")
-
-    g1_on = [s for s in gen1_runs if (s.get("meta") or {}).get("dl_enabled")]
-    g1_off = [s for s in gen1_runs if not (s.get("meta") or {}).get("dl_enabled")]
-    g2_on = [s for s in gen2_runs if (s.get("meta") or {}).get("dl_enabled")]
-    g2_off = [s for s in gen2_runs if not (s.get("meta") or {}).get("dl_enabled")]
-
-    if g1_on and not g2_on:
-        warnings.append("Missing Gen2 sentiment-ON runs for A↔C comparison.")
-    if g2_on and not g1_on:
-        warnings.append("Missing Gen1 sentiment-ON runs for A↔C comparison.")
-    if g1_off and not g2_off:
-        warnings.append("Missing Gen2 sentiment-OFF runs for B↔D comparison.")
-    if g2_off and not g1_off:
-        warnings.append("Missing Gen1 sentiment-OFF runs for B↔D comparison.")
+    if unknown:
+        warnings.append(
+            "Skipped runs with unresolved semantics (variant U): " + ", ".join(sorted(unknown))
+        )
 
     delta_table: list[dict[str, Any]] = []
-    if g1_on and g2_on:
-        delta_table.extend(_build_gen_delta_table(g1_on, g2_on, cohort="sentiment_on"))
-    if g1_off and g2_off:
-        delta_table.extend(_build_gen_delta_table(g1_off, g2_off, cohort="sentiment_off"))
-    coverage_comparison = _build_coverage_comparison(gen1_runs, gen2_runs)
+    valid_comparisons: list[str] = []
+    incomplete_comparisons: list[str] = []
+    invalid_comparisons: list[str] = []
+
+    if variants["A"] and variants["C"]:
+        delta_table.extend(_build_gen_delta_table(variants["A"], variants["C"], cohort="sentiment_on"))
+        valid_comparisons.append("sentiment_on:A_vs_C")
+    else:
+        incomplete_comparisons.append("sentiment_on:A_vs_C")
+        missing = [v for v in ("A", "C") if not variants[v]]
+        warnings.append(
+            "Gen comparison invalid for sentiment ON: missing variant(s) "
+            + ", ".join(missing)
+            + " (need A and C)."
+        )
+
+    if variants["B"] and variants["D"]:
+        delta_table.extend(_build_gen_delta_table(variants["B"], variants["D"], cohort="sentiment_off"))
+        valid_comparisons.append("sentiment_off:B_vs_D")
+    else:
+        incomplete_comparisons.append("sentiment_off:B_vs_D")
+        missing = [v for v in ("B", "D") if not variants[v]]
+        warnings.append(
+            "Gen comparison invalid for sentiment OFF: missing variant(s) "
+            + ", ".join(missing)
+            + " (need B and D)."
+        )
+
+    if not valid_comparisons:
+        invalid_comparisons.append("gen_matrix")
+
+    gen1_runs = [s["run_id"] for s in variants["A"] + variants["B"]]
+    gen2_runs = [s["run_id"] for s in variants["C"] + variants["D"]]
+    coverage_comparison = _build_coverage_comparison(
+        variants["A"] + variants["B"],
+        variants["C"] + variants["D"],
+    )
 
     return {
-        "gen1": [s["run_id"] for s in gen1_runs],
-        "gen2": [s["run_id"] for s in gen2_runs],
+        "gen1": gen1_runs,
+        "gen2": gen2_runs,
         "delta_table": delta_table,
         "coverage_comparison": coverage_comparison,
         "warnings": warnings,
         "cohorts": {
-            "sentiment_on": {"gen1": [s["run_id"] for s in g1_on], "gen2": [s["run_id"] for s in g2_on]},
-            "sentiment_off": {"gen1": [s["run_id"] for s in g1_off], "gen2": [s["run_id"] for s in g2_off]},
+            "sentiment_on": {"gen1": [s["run_id"] for s in variants["A"]], "gen2": [s["run_id"] for s in variants["C"]]},
+            "sentiment_off": {"gen1": [s["run_id"] for s in variants["B"]], "gen2": [s["run_id"] for s in variants["D"]]},
         },
+        "matrix": {
+            "expected_variants": ["A", "B", "C", "D"],
+            "present_variants": [v for v in ("A", "B", "C", "D") if variants[v]],
+        },
+        "valid_comparisons": valid_comparisons,
+        "incomplete_comparisons": incomplete_comparisons,
+        "invalid_comparisons": invalid_comparisons,
     }
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 _METRICS = [
     ("walkforward_summary", "Sharpe_Delta", "sharpe_delta"),
-    ("walkforward_summary", "Return_Delta",  "return_delta"),
-    ("walkforward_summary", "MaxDD_Delta",   "maxdd_delta"),
+    ("walkforward_summary", "Return_Delta", "return_delta"),
+    ("walkforward_summary", "MaxDD_Delta", "maxdd_delta"),
 ]
 
 
@@ -164,8 +155,6 @@ def _build_coverage_comparison(
     gen1_runs: list[dict[str, Any]],
     gen2_runs: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Compare average DL coverage per pair across generations."""
-
     def avg_coverage(runs: list[dict[str, Any]]) -> dict[str, float]:
         accum: dict[str, list[float]] = {}
         for summary in runs:

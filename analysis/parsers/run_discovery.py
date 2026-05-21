@@ -3,63 +3,79 @@ analysis/parsers/run_discovery.py
 ==================================
 Discover MPML run directories inside an archive root.
 
-A "run directory" is any directory that contains at least one
-``run_manifest_*.json`` file or at least one ``results_ml*.csv`` /
-``walkforward_results*.csv`` file.  This makes discovery robust to
-partial runs and to the mix of old (v1) and new (v2) output shapes.
-
-Gen1 vs Gen2 semantics
------------------------
-The experiment generation is inferred from the ``run_manifest`` flags
-or from the directory / run-id name:
-
-* **Gen1** — missing-indicator semantics OFF.  DL features that are
-  absent for a bar are simply dropped; the PhaseAware baseline fires.
-* **Gen2** — missing-indicator semantics ON.  A synthetic boolean
-  ``dl_missing_indicator`` column signals absence explicitly, so the
-  XGBoost gating model can learn a "no-DL" regime policy.
-
-The generation label is advisory: it is written into the summary JSON
-under ``meta.experiment_gen`` and is used by the comparison layer.
+Integrity hardening rules:
+* A canonical run root must contain exactly one ``run_manifest_*.json``.
+* Legacy CSV-only fallback is allowed only when explicitly marked via
+  ``.mpml_legacy_run_root`` in that directory.
+* Discovery is non-recursive beyond a discovered run root so nested
+  exports/copies cannot be re-discovered as separate runs.
 """
 
 from __future__ import annotations
 
-import re
+import json
+import os
 from pathlib import Path
 from typing import Generator
 
-# Any directory containing these glob patterns is treated as a run root.
-_RUN_MARKERS = [
-    "run_manifest_*.json",
+_LEGACY_RUN_MARKER_FILE = ".mpml_legacy_run_root"
+_LEGACY_CSV_MARKERS = [
     "results_ml*.csv",
     "walkforward_results*.csv",
     "results_summary*.csv",
 ]
 
-# Regex to infer experiment generation from directory / run-id names.
-_GEN2_RE = re.compile(r"gen2|g2|missing.ind|missing_ind", re.IGNORECASE)
+
+def _manifest_files(directory: Path) -> list[Path]:
+    return sorted(directory.glob("run_manifest_*.json"))
 
 
-def _has_run_files(directory: Path) -> bool:
-    """Return True if *directory* contains at least one recognised MPML output."""
-    for pattern in _RUN_MARKERS:
+def _is_legacy_run_root(directory: Path) -> bool:
+    if not (directory / _LEGACY_RUN_MARKER_FILE).exists():
+        return False
+    for pattern in _LEGACY_CSV_MARKERS:
         if any(directory.glob(pattern)):
             return True
     return False
 
 
-def _infer_gen(directory: Path) -> str:
-    """
-    Heuristic: inspect directory name and run_manifest filenames for
-    generation hints.  Falls back to ``"gen1"`` (safe default).
-    """
-    candidate_text = directory.name
-    for manifest in directory.glob("run_manifest_*.json"):
-        candidate_text += " " + manifest.stem
-    if _GEN2_RE.search(candidate_text):
-        return "gen2"
-    return "gen1"
+def _classify_run_root(directory: Path) -> str | None:
+    manifests = _manifest_files(directory)
+    if len(manifests) == 1:
+        return "manifest"
+    if len(manifests) > 1:
+        raise ValueError(
+            f"Run discovery integrity failure: multiple manifests found in run root {directory}"
+        )
+    if _is_legacy_run_root(directory):
+        return "legacy"
+    return None
+
+
+def _extract_experiment_gen_from_manifest(directory: Path) -> str:
+    manifest_file = _manifest_files(directory)[0]
+    try:
+        payload = json.loads(manifest_file.read_text(errors="ignore"))
+    except (OSError, json.JSONDecodeError):
+        # Discovery only classifies roots; manifest parsing/validation later
+        # raises explicit hard errors with full context.
+        return "unknown"
+
+    candidates = [
+        payload.get("experiment_gen"),
+        (payload.get("run") or {}).get("experiment_gen"),
+        (payload.get("experiment") or {}).get("gen"),
+        (payload.get("flags") or {}).get("EXPERIMENT_GEN"),
+    ]
+    for candidate in candidates:
+        if not isinstance(candidate, str):
+            continue
+        lowered = candidate.strip().lower()
+        if lowered in {"gen1", "g1"}:
+            return "gen1"
+        if lowered in {"gen2", "g2"}:
+            return "gen2"
+    return "unknown"
 
 
 def discover_runs(
@@ -70,44 +86,45 @@ def discover_runs(
     """
     Yield ``(run_dir, experiment_gen)`` pairs found under *root*.
 
-    Parameters
-    ----------
-    root:
-        Top-level archive directory (e.g. ``results_archive/`` or a
-        specific run dir such as ``results_archive/fp_gen1_A/``).
-    recursive:
-        When True (default) descend into sub-directories.  Set to
-        False if *root* is itself a single run directory.
-
-    Yields
-    ------
-    tuple[Path, str]
-        ``(run_directory_path, experiment_generation)`` where
-        ``experiment_generation`` is ``"gen1"`` or ``"gen2"``.
+    ``experiment_gen`` is inferred only from explicit manifest metadata
+    (or ``"unknown"`` when absent/legacy).
     """
     root = Path(root).resolve()
 
     if not root.exists():
         raise FileNotFoundError(f"Archive root does not exist: {root}")
+    if not root.is_dir():
+        raise NotADirectoryError(f"Archive root is not a directory: {root}")
 
     yielded: set[Path] = set()
 
-    def _yield_once(path: Path) -> Generator[tuple[Path, str], None, None]:
+    def _yield_once(path: Path, *, mode: str) -> Generator[tuple[Path, str], None, None]:
         resolved = path.resolve()
         if resolved in yielded:
             return
         yielded.add(resolved)
-        yield resolved, _infer_gen(resolved)
+        if mode == "manifest":
+            yield resolved, _extract_experiment_gen_from_manifest(resolved)
+            return
+        yield resolved, "unknown"
 
-    # If root itself is a run directory, yield it directly.
-    if _has_run_files(root):
-        yield from _yield_once(root)
-        # Also descend in case sub-directories are individual run flavours.
+    root_mode = _classify_run_root(root)
+    if root_mode:
+        # Provenance guarantee: once we identify a run root we do not recurse
+        # under it, avoiding nested pseudo-run contamination.
+        yield from _yield_once(root, mode=root_mode)
+        return
 
     if not recursive:
         return
 
-    # Walk depth-first; yield any child directory that looks like a run.
-    for child in sorted(root.rglob("*")):
-        if child.is_dir() and child != root and _has_run_files(child):
-            yield from _yield_once(child)
+    for current_root, dirs, _files in os.walk(root, topdown=True):
+        dirs.sort()
+        current_path = Path(current_root)
+        if current_path == root:
+            continue
+        mode = _classify_run_root(current_path)
+        if not mode:
+            continue
+        yield from _yield_once(current_path, mode=mode)
+        dirs[:] = []
