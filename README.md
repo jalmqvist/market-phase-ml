@@ -76,7 +76,9 @@ python analysis/pipeline.py results_archive/     # multi-run archive
 This automatically:
 
 - Discovers all run directories
+- Builds canonical run identities that include generation, variant, timestamp, and archive path context
 - Parses CSV outputs, run manifests, and (as fallback) log files
+- Validates archive structure and experiment consistency (duplicates, malformed manifests, incomplete cohorts)
 - Generates normalised summary JSON per run
 - Generates sentiment ON/OFF, Gen1 vs Gen2, and selector-uplift comparisons
 - Renders a unified markdown report
@@ -85,11 +87,23 @@ Outputs are written to `analysis/output/` by default:
 
 | File | Description |
 |---|---|
-| `summaries/<run_id>.summary.json` | Per-run normalised summary |
+| `summaries/<canonical_run_id>.summary.json` | Per-run summary with stable canonical identity |
 | `comparisons.json` | Cross-run comparison tables |
-| `report.md` | Human-readable report |
+| `report.md` | Human-readable report with validation and diagnostics sections |
 
 For full documentation see [`docs/research/analysis_framework_v2.md`](docs/research/analysis_framework_v2.md).
+
+Run identity format (example):
+
+- semantic: `gen1_A__20260521T131739Z`
+- canonical (unique): `gen1_A__20260521T131739Z__fp_gen1_A`
+
+Where:
+
+- `gen1/gen2` = missing-indicator generation
+- `A/B/C/D` = experiment variant semantics
+- timestamp = run timestamp (or best available fallback)
+- archive suffix = discovered directory identity to prevent collisions
 
 Run the analysis test suite with:
 

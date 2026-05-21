@@ -59,13 +59,16 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
         return None
 
     manifests: list[dict[str, Any]] = []
+    parse_errors: list[str] = []
     for mf in manifest_files:
         try:
             data = json.loads(mf.read_text(errors="ignore"))
             data["_source_file"] = str(mf.name)
             manifests.append(data)
         except Exception as exc:  # noqa: BLE001
-            manifests.append({"_source_file": str(mf.name), "_parse_error": str(exc)})
+            err = {"_source_file": str(mf.name), "_parse_error": str(exc)}
+            manifests.append(err)
+            parse_errors.append(f"{mf.name}: {exc}")
 
     # Select the primary manifest: prefer DL-enabled over baseline.
     primary = manifests[0]
@@ -79,6 +82,21 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
     run_section = primary.get("run") or {}
     wf_section = primary.get("walkforward") or {}
     flags_section = primary.get("flags") or {}
+    timestamps = [
+        (m.get("run") or {}).get("timestamp_utc")
+        for m in manifests
+        if (m.get("run") or {}).get("timestamp_utc")
+    ]
+    run_ids = [
+        (m.get("run") or {}).get("run_id")
+        for m in manifests
+        if (m.get("run") or {}).get("run_id")
+    ]
+    dl_mode_tags = [
+        (m.get("dl") or {}).get("dl_mode_tag")
+        for m in manifests
+        if (m.get("dl") or {}).get("dl_mode_tag")
+    ]
 
     return {
         "manifests": manifests,
@@ -94,4 +112,8 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
         "git_sha": run_section.get("git_sha"),
         "timestamp_utc": run_section.get("timestamp_utc"),
         "python_version": run_section.get("python_version"),
+        "parse_errors": parse_errors,
+        "timestamps": timestamps,
+        "run_ids": run_ids,
+        "dl_mode_tags": dl_mode_tags,
     }

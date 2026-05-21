@@ -70,13 +70,40 @@ def compare_sentiment_variants(
     if not off_runs:
         warnings.append("No sentiment-OFF runs found; delta table will be empty.")
 
-    delta_table = _build_delta_table(on_runs, off_runs)
+    delta_table: list[dict[str, Any]] = []
+    grouped: dict[str, dict[str, list[dict[str, Any]]]] = {"gen1": {"on": [], "off": []}, "gen2": {"on": [], "off": []}}
+    for s in summaries:
+        gen = (s.get("meta") or {}).get("experiment_gen")
+        if gen not in grouped:
+            continue
+        if (s.get("meta") or {}).get("dl_enabled"):
+            grouped[gen]["on"].append(s)
+        else:
+            grouped[gen]["off"].append(s)
+
+    for gen in ("gen1", "gen2"):
+        gen_on = grouped[gen]["on"]
+        gen_off = grouped[gen]["off"]
+        if gen_on and not gen_off:
+            warnings.append(f"{gen}: missing sentiment-OFF counterpart(s) for comparison.")
+        if gen_off and not gen_on:
+            warnings.append(f"{gen}: missing sentiment-ON counterpart(s) for comparison.")
+        if not gen_on or not gen_off:
+            continue
+        delta_table.extend(_build_delta_table(gen_on, gen_off, generation=gen))
 
     return {
         "sentiment_on": [s["run_id"] for s in on_runs],
         "sentiment_off": [s["run_id"] for s in off_runs],
         "delta_table": delta_table,
         "warnings": warnings,
+        "grouped": {
+            gen: {
+                "on": [r["run_id"] for r in grouped[gen]["on"]],
+                "off": [r["run_id"] for r in grouped[gen]["off"]],
+            }
+            for gen in grouped
+        },
     }
 
 
@@ -126,6 +153,8 @@ def _extract_pair_metrics(
 def _build_delta_table(
     on_runs: list[dict[str, Any]],
     off_runs: list[dict[str, Any]],
+    *,
+    generation: str,
 ) -> list[dict[str, Any]]:
     """Build per-pair, per-metric delta rows (ON − OFF)."""
     on_metrics = _extract_pair_metrics(on_runs)
@@ -142,6 +171,7 @@ def _build_delta_table(
             off_val = off_pair.get(metric)
             delta = (on_val - off_val) if (on_val is not None and off_val is not None) else None
             rows.append({
+                "generation": generation,
                 "pair": pair,
                 "metric": metric,
                 "sentiment_on": on_val,

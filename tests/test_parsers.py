@@ -24,6 +24,8 @@ from analysis.parsers.csv_parsers import parse_run_csvs, _extract_mode_tag
 from analysis.parsers.manifest_parser import parse_manifest
 from analysis.parsers.log_parser import parse_log
 from analysis.parsers.run_discovery import discover_runs
+from analysis.parsers.run_identity import infer_run_identity
+from analysis.validation import validate_summaries, sort_summaries_deterministically
 
 
 # ---------------------------------------------------------------------------
@@ -266,8 +268,53 @@ class TestParseManifest(unittest.TestCase):
             self.assertIsNotNone(result)
             primary = result["primary"]
             self.assertIn("_parse_error", primary)
+            self.assertGreaterEqual(len(result["parse_errors"]), 1)
         finally:
             _rmtree(run_dir)
+
+
+class TestRunIdentity(unittest.TestCase):
+    def test_canonical_identity_includes_archive_path(self):
+        archive = _make_run_dir({})
+        run_dir = archive / "fp_gen1_A"
+        run_dir.mkdir()
+        identity = infer_run_identity(
+            archive_root=archive,
+            run_dir=run_dir,
+            experiment_gen="gen1",
+            manifest={
+                "run_id": "run_20260521T131739Z",
+                "timestamp_utc": "20260521T131739Z",
+                "dl_enabled": True,
+                "primary": {"run": {"run_id": "run_20260521T131739Z"}},
+            },
+        )
+        try:
+            self.assertEqual(identity["semantic_run_name"], "gen1_A")
+            self.assertIn("fp_gen1_A", identity["run_id"])
+            self.assertTrue(identity["run_id"].startswith("gen1_A__20260521T131739Z"))
+        finally:
+            _rmtree(archive)
+
+    def test_identity_mismatch_warns(self):
+        archive = _make_run_dir({})
+        run_dir = archive / "fp_gen1_B"
+        run_dir.mkdir()
+        identity = infer_run_identity(
+            archive_root=archive,
+            run_dir=run_dir,
+            experiment_gen="gen1",
+            manifest={
+                "run_id": "run_20260521T131739Z",
+                "timestamp_utc": "20260521T131739Z",
+                "dl_enabled": True,  # implies A
+                "primary": {"run": {"run_id": "run_20260521T131739Z"}},
+            },
+        )
+        try:
+            self.assertGreaterEqual(len(identity["identity_warnings"]), 1)
+        finally:
+            _rmtree(archive)
 
 
 # ---------------------------------------------------------------------------
@@ -533,6 +580,62 @@ class TestPipelineIntegration(unittest.TestCase):
         # We created one DL-enabled and one baseline run
         self.assertEqual(len(sentiment["sentiment_on"]), 1)
         self.assertEqual(len(sentiment["sentiment_off"]), 1)
+        self.assertIn("validation", comp)
+
+
+class TestValidationAndOrdering(unittest.TestCase):
+    def _summary(self, run_id: str, gen: str, variant: str, ts: str, relpath: str) -> dict:
+        return {
+            "run_id": run_id,
+            "meta": {
+                "experiment_gen": gen,
+                "run_variant": variant,
+                "timestamp_utc": ts,
+                "archive_relpath": relpath,
+                "manifest_present": True,
+                "manifest_diagnostics": {"parse_errors": [], "timestamps": [ts], "run_ids": [run_id], "dl_mode_tags": []},
+                "files_found": ["walkforward_results_summary__baseline.csv"],
+                "dl_enabled": variant in {"A", "C"},
+                "identity_warnings": [],
+            },
+            "csvs": {"walkforward_summary": [{"Pair": "EURUSD", "Sharpe_Delta": 0.1}], "walkforward_per_fold": []},
+            "log": None,
+            "warnings": [],
+        }
+
+    def test_deterministic_ordering(self):
+        s1 = self._summary("r2", "gen2", "D", "20260522T010101Z", "b")
+        s2 = self._summary("r1", "gen1", "A", "20260521T010101Z", "a")
+        ordered = sort_summaries_deterministically([s1, s2])
+        self.assertEqual(ordered[0]["meta"]["experiment_gen"], "gen1")
+        self.assertEqual(ordered[1]["meta"]["experiment_gen"], "gen2")
+
+    def test_duplicate_run_id_detected(self):
+        s1 = self._summary("dup", "gen1", "A", "20260521T010101Z", "a")
+        s2 = self._summary("dup", "gen1", "B", "20260521T010102Z", "b")
+        validation = validate_summaries([s1, s2])
+        self.assertTrue(any("Duplicate canonical run_id" in e for e in validation["errors"]))
+
+    def test_malformed_archive_detected(self):
+        summary = {
+            "run_id": "bad",
+            "meta": {
+                "experiment_gen": "gen1",
+                "run_variant": "U",
+                "timestamp_utc": "unknown_ts",
+                "archive_relpath": "bad_run",
+                "manifest_present": False,
+                "manifest_diagnostics": {"parse_errors": [], "timestamps": [], "run_ids": [], "dl_mode_tags": []},
+                "files_found": [],
+                "dl_enabled": False,
+                "identity_warnings": [],
+            },
+            "csvs": {"walkforward_summary": None, "walkforward_per_fold": None},
+            "log": None,
+            "warnings": [],
+        }
+        validation = validate_summaries([summary])
+        self.assertTrue(any("malformed archive" in e for e in validation["errors"]))
 
 
 if __name__ == "__main__":
