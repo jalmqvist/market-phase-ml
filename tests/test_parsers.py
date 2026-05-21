@@ -131,17 +131,20 @@ class TestParseRunCsvs(unittest.TestCase):
             _rmtree(empty_dir)
 
     def test_malformed_csv_does_not_raise(self):
-        """A file that matches the pattern but has bad/minimal content must not raise."""
+        """A file that matches the pattern but has bad/minimal content must not raise.
+
+        Uses mismatched/unexpected column names (a common real-world malformation)
+        rather than null bytes, since the csv module silently skips null bytes.
+        """
         run_dir = _make_run_dir({
-            "walkforward_results_summary__dl_enabled.csv": "NOT,VALID\x00CSV\x00CONTENT",
+            "walkforward_results_summary__dl_enabled.csv": "WRONG_COL_A,WRONG_COL_B\nfoo,bar\n",
         })
         try:
             # Must not raise regardless of content.
             result = parse_run_csvs(run_dir)
-            # Either returns rows (if parseable) or None with an error entry.
+            # Either returns rows (with unrecognised columns) or None — both fine.
             errors = result.get("_errors", [])
             wf = result.get("walkforward_summary")
-            # Both None-with-no-error (empty CSV) and error-captured are acceptable.
             self.assertTrue(wf is None or isinstance(wf, list) or len(errors) > 0)
         finally:
             _rmtree(run_dir)

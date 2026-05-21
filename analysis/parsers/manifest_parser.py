@@ -24,10 +24,10 @@ LSTM/MLP trained on market-sentiment-ml outputs).
 
 Experiment variants are labelled A–D in comparative studies:
 
-* **A** — sentinel ON,  Gen1 missing-indicator semantics
-* **B** — sentinel OFF, Gen1 (baseline comparison for A)
-* **C** — sentinel ON,  Gen2 missing-indicator semantics
-* **D** — sentinel OFF, Gen2 (baseline comparison for C)
+* **A** — Sentiment ON,  Gen1 missing-indicator semantics
+* **B** — Sentiment OFF, Gen1 (baseline comparison for A)
+* **C** — Sentiment ON,  Gen2 missing-indicator semantics
+* **D** — Sentiment OFF, Gen2 (baseline comparison for C)
 """
 
 from __future__ import annotations

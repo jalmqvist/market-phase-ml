@@ -171,7 +171,7 @@ def build_run_summary(
     # --- meta -------------------------------------------------------------
     meta = {
         "experiment_gen": experiment_gen,
-        "dl_enabled": bool((manifest or {}).get("dl_enabled")),
+        "dl_enabled": bool((manifest or {}).get("dl_enabled", False)),
         "dl_surface": (manifest or {}).get("dl_surface"),
         "dl_surface_string": (manifest or {}).get("dl_surface_string"),
         "dl_artifact_path": (manifest or {}).get("dl_artifact_path"),
