@@ -54,7 +54,7 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         csvs = summary.get("csvs") or {}
         manifest_diag = meta.get("manifest_diagnostics") or {}
 
-        manifest_count = int(manifest_diag.get("manifest_count") or 0)
+        manifest_count = manifest_diag.get("manifest_count") or 0
         if manifest_count > 1:
             manifest_errors.append(
                 f"{run_id}: multiple manifests discovered in one run directory (count={manifest_count})."
@@ -71,7 +71,8 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
                 f"{run_id}: conflicting manifest timestamp ({manifest_timestamp}) vs identity timestamp ({identity_timestamp})."
             )
 
-        if not meta.get("manifest_present") and not meta.get("files_found") and not summary.get("log"):
+        files_found = meta.get("files_found") or []
+        if not meta.get("manifest_present") and not files_found and not summary.get("log"):
             provenance_errors.append(f"{run_id}: malformed archive (no manifest, no CSV, no log).")
 
         variant = meta.get("run_variant") or "U"

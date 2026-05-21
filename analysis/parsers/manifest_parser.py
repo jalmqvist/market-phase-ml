@@ -39,12 +39,13 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
     run_section = data.get("run") or {}
     wf_section = data.get("walkforward") or {}
     flags_section = data.get("flags") or {}
+    dl_enabled = dl_section.get("dl_enabled")
 
     return {
         "manifest_count": 1,
         "manifest_path": str(manifest_path),
         "run_id": run_section.get("run_id"),
-        "dl_enabled": None if "dl_enabled" not in dl_section else bool(dl_section.get("dl_enabled")),
+        "dl_enabled": None if dl_enabled is None else bool(dl_enabled),
         "dl_surface": dl_section.get("dl_surface"),
         "dl_surface_string": dl_section.get("dl_surface_string"),
         "dl_artifact_path": dl_section.get("dl_artifact_path"),

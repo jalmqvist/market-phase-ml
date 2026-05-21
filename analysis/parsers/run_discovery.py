@@ -56,7 +56,9 @@ def _extract_experiment_gen_from_manifest(directory: Path) -> str:
     manifest_file = _manifest_files(directory)[0]
     try:
         payload = json.loads(manifest_file.read_text(errors="ignore"))
-    except Exception:  # noqa: BLE001
+    except (OSError, json.JSONDecodeError):
+        # Discovery only classifies roots; manifest parsing/validation later
+        # raises explicit hard errors with full context.
         return "unknown"
 
     candidates = [

@@ -443,6 +443,8 @@ class TestDiscoverRuns(unittest.TestCase):
             found = list(discover_runs(archive))
             dirs = [p for p, _ in found]
             self.assertEqual(dirs, [run_root.resolve()])
+            csvs = parse_run_csvs(run_root)
+            self.assertNotIn("copied_results.csv", csvs.get("_files_found", []))
         finally:
             _rmtree(archive)
 
@@ -531,7 +533,12 @@ class TestPipelineIntegration(unittest.TestCase):
             run_dir = self.archive / run_name
             run_dir.mkdir()
             manifest = {
-                "run": {"run_id": run_name, "git_sha": "abc123", "timestamp_utc": "T", "run_variant": run_variant},
+                "run": {
+                    "run_id": run_name,
+                    "git_sha": "abc123",
+                    "timestamp_utc": "20260521T000000Z",
+                    "run_variant": run_variant,
+                },
                 "experiment_gen": "gen1",
                 "dl": {
                     "dl_enabled": dl_enabled,
