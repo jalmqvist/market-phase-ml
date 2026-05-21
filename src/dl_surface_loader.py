@@ -317,7 +317,11 @@ def validate_dl_artifact(
     metadata = metadata or {}
     schema_version = _extract_schema_version(df, metadata)
     if schema_version is None:
-        raise ValueError("missing required schema_version in metadata or rows")
+        raise ValueError(
+            "missing schema_version. "
+            "Expected parquet metadata key "
+            "'msml.schema_version' or row column 'schema_version'."
+        )
     if not _is_compatible_schema_version(schema_version):
         raise ValueError(
             f"incompatible schema_version {schema_version!r}; "
@@ -485,7 +489,10 @@ def _read_parquet_metadata(cube_path: Path) -> dict[str, str]:
 
 def _extract_schema_version(df: pd.DataFrame, metadata: dict[str, str]) -> str | None:
     """Get schema version from parquet metadata or row column."""
-    version = metadata.get("schema_version")
+    version = (
+            metadata.get("msml.schema_version")
+            or metadata.get("schema_version")  # backward compatibility
+    )
     if version:
         return str(version)
     if "schema_version" not in df.columns:
