@@ -678,6 +678,7 @@ class TestRunIdentity(unittest.TestCase):
         )
         try:
             self.assertEqual(identity["semantic_run_name"], "gen1_A")
+            self.assertEqual(identity["archive_slug"], "fp_gen1_A")
             self.assertEqual(identity["run_id"], "gen1_A__20260521T131739Z__fp_gen1_A")
         finally:
             _rmtree(archive)

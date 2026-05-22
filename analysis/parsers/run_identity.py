@@ -46,6 +46,8 @@ def _normalize_variant(value: str | None) -> str | None:
     return None
 
 
+# Matches archive directory names like fp_gen1_A, fp_gen2_D, and suffixed reruns
+# such as fp_gen1_B_retry or fp_gen2_C-copy.
 _ARCHIVE_SENTINEL_RE = re.compile(r"fp_(gen[12])_([A-D])(?:$|[_-])", re.IGNORECASE)
 
 
