@@ -218,7 +218,7 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         if len({tuple(sorted(fp.items())) for fp in fingerprints.values()}) > 1:
             reproducibility_warnings.append(
                 f"Runs sharing experiment_seed={seed} have differing reproducibility metadata: "
-                + ", ".join(sorted(fingerprints))
+                + ", ".join(sorted(fingerprints.keys()))
             )
 
         pair_feature_orders: dict[tuple[str, str], dict[str, tuple[str, ...]]] = {}
