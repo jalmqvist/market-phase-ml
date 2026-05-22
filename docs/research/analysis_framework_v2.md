@@ -111,6 +111,7 @@ Run manifests (`run_manifest.json`; legacy `run_manifest_*.json`) are parsed for
 - `walkforward.*` — fold parameters (train years, test months, etc.)
 - `flags.*` — pipeline feature flags
 - `reproducibility.*` — experiment seed metadata propagated from runtime seeding
+- `feature_ordering.*` — canonical feature column ordering captured at runtime
 - `run.run_id`, `run.git_sha`, `run.timestamp_utc`
 
 Each run directory must contain **exactly one** run manifest.
@@ -153,6 +154,15 @@ Each run produces a `<canonical_run_id>.summary.json` with this structure:
       "python_random_seed": 42,
       "torch_seed": 42
     },
+    "feature_ordering": {
+      "dl_feature_columns": ["dl_signal_mean_24h"],
+      "phase_predictor_by_pair": {
+        "EURUSD": ["adx", "atr_pct", "dl_signal_mean_24h"]
+      },
+      "strategy_selector_by_pair": {
+        "EURUSD": ["adx", "atr_pct", "plus_di"]
+      }
+    },
     "git_sha": "89c81974...",
     "timestamp_utc": "20260512T074801Z",
     "run_dir": "results/evidence/dl_v1_preliminary_eurusd_lvtf"
@@ -191,6 +201,12 @@ Each run produces a `<canonical_run_id>.summary.json` with this structure:
 `null` values indicate absent CSV files. Structural corruption (e.g.
 duplicate canonical identities or malformed archives) fails validation
 loudly before final output.
+
+Reproducibility validation also warns when:
+
+- a manifest is missing any canonical seed field
+- repeated runs sharing the same `experiment_seed` carry different seed metadata
+- repeated runs sharing the same `experiment_seed` capture different feature column order
 
 ---
 
@@ -403,6 +419,7 @@ Tests cover:
 - Run discovery (nested archives, gen1/gen2 inference)
 - Canonical identity uniqueness and semantic label inference
 - Deterministic summary ordering and duplicate detection
+- Reproducibility metadata parsing and feature-order drift detection
 - Structural validation (malformed archives and manifest parse diagnostics)
 - Partial-run handling (manifest-only, log-only, mixed)
 - Comparison generators (sentiment, selector, gen1 vs gen2 cohort correctness)

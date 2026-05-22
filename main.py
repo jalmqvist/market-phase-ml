@@ -61,12 +61,17 @@ def get_dl_feature_columns(df: pd.DataFrame) -> list[str]:
     Used everywhere instead of hardcoded assumptions about DL column presence.
     Returns an empty list when DL is disabled or no DL features were attached.
     """
-    return [c for c in D1_FEATURE_COLS if c in df.columns]
+    return sorted(c for c in D1_FEATURE_COLS if c in df.columns)
 
 
 def has_dl_features(df: pd.DataFrame) -> bool:
     """Return True if df contains at least one DL feature column."""
     return bool(get_dl_feature_columns(df))
+
+
+def _stable_feature_columns(cols: list[str] | tuple[str, ...]) -> list[str]:
+    """Return a deterministically sorted, de-duplicated feature column list."""
+    return sorted(dict.fromkeys(cols))
 
 
 # ── Uncomment to force cache refresh ─────
@@ -789,6 +794,7 @@ def attach_dl_features(
             and is_numeric_dtype(merged[col])
             and not is_bool_dtype(merged[col])
         ]
+        feature_cols = _stable_feature_columns(feature_cols)
         optional_dl_cols = [c for c in D1_FEATURE_COLS if c in feature_cols]
         required_feature_cols = [c for c in feature_cols if c not in optional_dl_cols]
 
@@ -1508,6 +1514,11 @@ def main(
         },
         "experiment": experiment_meta,
         "reproducibility": reproducibility_block,
+        "feature_ordering": {
+            "dl_feature_columns": [],
+            "phase_predictor_by_pair": {},
+            "strategy_selector_by_pair": {},
+        },
         "flags": {
             "RUN_IN_SAMPLE_ABLATION": RUN_IN_SAMPLE_ABLATION,
             "RUN_WALKFORWARD": RUN_WALKFORWARD,
@@ -1706,8 +1717,9 @@ def main(
     sample_pair_name = sorted(processed_data.keys())[0]
     sample_pair_df = processed_data[sample_pair_name]
     _run_dl_feature_cols = get_dl_feature_columns(sample_pair_df) if dl_runtime_enabled else []
-    manifest["dl"]["dl_feature_columns"] = _run_dl_feature_cols
+    manifest["dl"]["dl_feature_columns"] = _stable_feature_columns(_run_dl_feature_cols)
     manifest["dl"]["dl_feature_count"] = len(_run_dl_feature_cols)
+    manifest["feature_ordering"]["dl_feature_columns"] = _stable_feature_columns(_run_dl_feature_cols)
     write_manifest(manifest_path, manifest)
 
     for pair_name in sorted(processed_data.keys()):
@@ -1810,6 +1822,7 @@ def main(
     if ml_predicted_data is None:
         print('  No cache found — running ML phase prediction...')
         ml_predicted_data = {}
+        predictor_feature_ordering: dict[str, list[str]] = {}
 
         predictor = PhaseMLPredictor(**predictor_params)
 
@@ -1829,6 +1842,9 @@ def main(
                     'eval':       eval_scores,
                     'predictions': predictions
                 }
+                predictor_feature_ordering[pair_name] = _stable_feature_columns(
+                    list(getattr(predictor, "feature_cols", []) or [])
+                )
             except Exception as e:
                 traceback.print_exc()
                 print(f'  ✗ {pair_name}: ML prediction failed — {e}')
@@ -1839,6 +1855,24 @@ def main(
         )
     else:
         print('  Loaded ML predicted phases from cache.')
+        predictor_feature_ordering = {
+            pair_name: _stable_feature_columns(
+                list(
+                    col
+                    for col in processed_data[pair_name].columns
+                    if col not in PhaseMLExperiment.EXCLUDE_COLS
+                    and is_numeric_dtype(processed_data[pair_name][col])
+                    and not is_bool_dtype(processed_data[pair_name][col])
+                    and (DL_SIGNALS_ENABLED or (col not in D1_FEATURE_COLS and not str(col).startswith("dl_")))
+                )
+            )
+            for pair_name in sorted(processed_data.keys())
+        }
+    manifest["feature_ordering"]["phase_predictor_by_pair"] = {
+        pair_name: predictor_feature_ordering[pair_name]
+        for pair_name in sorted(predictor_feature_ordering)
+    }
+    write_manifest(manifest_path, manifest)
 
     # ── Print accuracy scores regardless of cache hit ─────────────────────
     print('\n  ML Phase Prediction Accuracy Summary:')
@@ -2077,6 +2111,7 @@ def main(
     )
 
     selector_trained = {}
+    selector_feature_ordering: dict[str, list[str]] = {}
 
     for pair_name in sorted(processed_data.keys()):
         df = processed_data[pair_name]
@@ -2102,6 +2137,9 @@ def main(
 
             if metrics:
                 selector_trained[pair_name] = selector
+                selector_feature_ordering[pair_name] = _stable_feature_columns(
+                    list(selector.feature_cols or [])
+                )
                 print(f'    ✓ Model trained: CV accuracy {metrics["cv_accuracy"]:.4f}')
             else:
                 print(f'    ✗ Training failed')
@@ -2114,6 +2152,11 @@ def main(
         print(f'\n✓ Strategy selectors trained for {len(selector_trained)} pairs')
     else:
         print(f'✗ No strategy selectors trained')
+    manifest["feature_ordering"]["strategy_selector_by_pair"] = {
+        pair_name: selector_feature_ordering[pair_name]
+        for pair_name in sorted(selector_feature_ordering)
+    }
+    write_manifest(manifest_path, manifest)
 
     # Aggregate by group for both sizing methods
     # DL pipeline diagnostics before aggregation

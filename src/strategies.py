@@ -1593,13 +1593,13 @@ def run_backtests(
     results = {}
 
     # ── [A] Individual TF strategies ─────────────────────────────────────────
-    for name, strategy in tf_strategies.items():
+    for name, strategy in sorted(tf_strategies.items()):
         print(f'[TF] Running {name}...')
         signals, sl_pct, tp_pct = strategy.generate_signals(df)
         results[name] = backtester.run(df, signals, name, sl_pct, tp_pct)
 
     # ── [B] Individual MR strategies ─────────────────────────────────────────
-    for name, strategy in mr_strategies.items():
+    for name, strategy in sorted(mr_strategies.items()):
         print(f'[MR] Running {name}...')
         signals, sl_pct, tp_pct = strategy.generate_signals(df)
         results[name] = backtester.run(df, signals, name, sl_pct, tp_pct)
@@ -1625,7 +1625,7 @@ def run_backtests(
     print('=' * 70)
 
     summary_rows = []
-    for name, result in results.items():
+    for name, result in sorted(results.items()):
         summary_rows.append({
             'Strategy':         name,
             'Sizing':           result.get('sizing_method', 'unknown'),

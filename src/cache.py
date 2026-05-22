@@ -77,7 +77,7 @@ def clear_cache(name: Optional[str] = None) -> None:
     _ensure_cache_dir()
     pattern = f'{name}__*.pkl' if name else '*.pkl'
     removed = 0
-    for f in CACHE_DIR.glob(pattern):
+    for f in sorted(CACHE_DIR.glob(pattern)):
         f.unlink()
         removed += 1
     print(f'  ✓ Cleared {removed} cache file(s)')

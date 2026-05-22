@@ -116,8 +116,11 @@ def _extract_pair_metrics(
                 accum.setdefault(pair, {}).setdefault(metric_name, []).append(fval)
 
     return {
-        pair: {metric: sum(vals) / len(vals) for metric, vals in metrics.items()}
-        for pair, metrics in accum.items()
+        pair: {
+            metric: sum(metrics[metric]) / len(metrics[metric])
+            for metric in sorted(metrics)
+        }
+        for pair, metrics in sorted(accum.items())
     }
 
 

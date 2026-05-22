@@ -73,8 +73,11 @@ def compare_selector_uplift(
                 pair_accum.setdefault(pair, {}).setdefault(metric, []).append(fval)
 
     aggregate = {
-        pair: {metric: sum(vals) / len(vals) for metric, vals in metrics.items()}
-        for pair, metrics in pair_accum.items()
+        pair: {
+            metric: sum(metrics[metric]) / len(metrics[metric])
+            for metric in sorted(metrics)
+        }
+        for pair, metrics in sorted(pair_accum.items())
     }
 
     return {

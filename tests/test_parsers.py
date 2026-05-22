@@ -219,6 +219,15 @@ class TestParseManifest(unittest.TestCase):
                 "python_random_seed": 42,
                 "torch_seed": 42,
             },
+            "feature_ordering": {
+                "dl_feature_columns": ["dl_signal_mean_24h"],
+                "phase_predictor_by_pair": {
+                    "EURUSD": ["adx", "atr_pct", "dl_signal_mean_24h"],
+                },
+                "strategy_selector_by_pair": {
+                    "EURUSD": ["adx", "atr_pct", "plus_di"],
+                },
+            },
         }
         if extra:
             base.update(extra)
@@ -261,6 +270,13 @@ class TestParseManifest(unittest.TestCase):
     def test_reproducibility_block(self):
         result = parse_manifest(self.run_dir)
         self.assertEqual(result["reproducibility"]["experiment_seed"], 42)
+
+    def test_feature_ordering_block(self):
+        result = parse_manifest(self.run_dir)
+        self.assertEqual(
+            result["feature_ordering"]["phase_predictor_by_pair"]["EURUSD"],
+            ["adx", "atr_pct", "dl_signal_mean_24h"],
+        )
 
     def test_no_manifest_returns_none(self):
         empty_dir = _make_run_dir({})
@@ -677,6 +693,21 @@ class TestValidationAndOrdering(unittest.TestCase):
                 },
                 "files_found": ["walkforward_results_summary__baseline.csv"],
                 "dl_enabled": variant in {"A", "C"},
+                "reproducibility": {
+                    "experiment_seed": 42,
+                    "numpy_seed": 42,
+                    "python_random_seed": 42,
+                    "torch_seed": 42,
+                },
+                "feature_ordering": {
+                    "dl_feature_columns": [],
+                    "phase_predictor_by_pair": {
+                        "EURUSD": ["adx", "atr_pct", "rsi"],
+                    },
+                    "strategy_selector_by_pair": {
+                        "EURUSD": ["adx", "atr_pct", "plus_di"],
+                    },
+                },
                 "identity_warnings": [],
             },
             "csvs": {"walkforward_summary": [{"Pair": "EURUSD", "Sharpe_Delta": 0.1}], "walkforward_per_fold": []},
@@ -715,6 +746,8 @@ class TestValidationAndOrdering(unittest.TestCase):
                 },
                 "files_found": [],
                 "dl_enabled": False,
+                "reproducibility": {},
+                "feature_ordering": {},
                 "identity_warnings": [],
             },
             "csvs": {"walkforward_summary": None, "walkforward_per_fold": None},
@@ -723,6 +756,27 @@ class TestValidationAndOrdering(unittest.TestCase):
         }
         validation = validate_summaries([summary])
         self.assertTrue(any("malformed archive" in e for e in validation["errors"]))
+
+    def test_missing_reproducibility_metadata_warns(self):
+        summary = self._summary("r1", "gen1", "A", "20260521T010101Z", "a")
+        summary["meta"]["reproducibility"] = {"experiment_seed": 42}
+        validation = validate_summaries([summary])
+        self.assertTrue(
+            any("missing reproducibility metadata" in warning for warning in validation["warnings"])
+        )
+
+    def test_feature_order_mismatch_warns(self):
+        s1 = self._summary("r1", "gen1", "A", "20260521T010101Z", "a")
+        s2 = self._summary("r2", "gen1", "B", "20260521T010102Z", "b")
+        s2["meta"]["feature_ordering"]["phase_predictor_by_pair"]["EURUSD"] = [
+            "atr_pct",
+            "adx",
+            "rsi",
+        ]
+        validation = validate_summaries([s1, s2])
+        self.assertTrue(
+            any("differing feature column order" in warning for warning in validation["warnings"])
+        )
 
 
 if __name__ == "__main__":

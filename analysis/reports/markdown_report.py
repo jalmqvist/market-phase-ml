@@ -72,6 +72,7 @@ def render_markdown_report(
         _render_integrity_section(lines, "Provenance Integrity", sections.get("provenance_integrity"))
         _render_integrity_section(lines, "Semantic Integrity", sections.get("semantic_integrity"))
         _render_integrity_section(lines, "Manifest Integrity", sections.get("manifest_integrity"))
+        _render_integrity_section(lines, "Reproducibility Integrity", sections.get("reproducibility_integrity"))
         if errors:
             lines.append("\n### ❌ Structural Errors\n")
             for err in errors:
@@ -384,6 +385,7 @@ def _render_manifest_metadata(lines: list[str], summary: dict[str, Any]) -> None
     meta = summary.get("meta") or {}
     md = meta.get("manifest_diagnostics") or {}
     reproducibility = meta.get("reproducibility") or {}
+    feature_ordering = meta.get("feature_ordering") or {}
     lines.append(f"- Manifest present: {'yes' if meta.get('manifest_present') else 'no'}")
     lines.append(f"- Legacy mode: {'yes' if meta.get('legacy_mode') else 'no'}")
     lines.append(f"- Canonical manifest path: {md.get('manifest_path') or '—'}")
@@ -397,6 +399,13 @@ def _render_manifest_metadata(lines: list[str], summary: dict[str, Any]) -> None
         lines.append(f"  - numpy_seed: {reproducibility.get('numpy_seed', '—')}")
         lines.append(f"  - python_random_seed: {reproducibility.get('python_random_seed', '—')}")
         lines.append(f"  - torch_seed: {reproducibility.get('torch_seed', '—')}")
+    phase_predictor_pairs = sorted((feature_ordering.get("phase_predictor_by_pair") or {}).keys())
+    selector_pairs = sorted((feature_ordering.get("strategy_selector_by_pair") or {}).keys())
+    if phase_predictor_pairs or selector_pairs:
+        lines.append("- Feature ordering metadata:")
+        lines.append(f"  - dl_feature_columns: {', '.join(feature_ordering.get('dl_feature_columns') or []) or '—'}")
+        lines.append(f"  - phase_predictor_by_pair: {', '.join(phase_predictor_pairs) or '—'}")
+        lines.append(f"  - strategy_selector_by_pair: {', '.join(selector_pairs) or '—'}")
     lines.append("")
 
 

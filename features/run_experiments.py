@@ -111,7 +111,7 @@ def run_walk_forward(df, feature_groups, target_col, experiment_seed: int):
             X_test = assemble_features(test, groups)
             y_test = test[target_col]
 
-            feature_cols = list(X_train.columns)
+            feature_cols = sorted(dict.fromkeys(X_train.columns))
 
             required_feature_cols = [
                 c for c in feature_cols

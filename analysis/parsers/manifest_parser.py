@@ -80,6 +80,7 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
     wf_section = data.get("walkforward") or {}
     flags_section = data.get("flags") or {}
     reproducibility_section = data.get("reproducibility") or {}
+    feature_ordering_section = data.get("feature_ordering") or {}
     dl_enabled = dl_section.get("dl_enabled")
 
     return {
@@ -94,6 +95,7 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
         "walkforward": wf_section,
         "flags": flags_section,
         "reproducibility": reproducibility_section if isinstance(reproducibility_section, dict) else {},
+        "feature_ordering": feature_ordering_section if isinstance(feature_ordering_section, dict) else {},
         "git_sha": run_section.get("git_sha"),
         "timestamp_utc": run_section.get("timestamp_utc"),
         "python_version": run_section.get("python_version"),

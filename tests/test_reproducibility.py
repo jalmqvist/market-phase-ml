@@ -28,7 +28,12 @@ except Exception as exc:  # pragma: no cover - environment-dependent
 try:
     import numpy as np
     import pandas as pd
-    from src.models import StrategyPerformanceTracker
+    from src.models import (
+        PhaseMLExperiment,
+        StrategyPerformanceTracker,
+        build_training_matrix,
+    )
+    from src.dl_config import resolve_dl_prediction_artifact_path
     from src.strategies import StrategySelector_Dynamic
     from main import generate_walkforward_folds_by_pos
     _HAS_RUNTIME_DEPS = True
@@ -158,6 +163,60 @@ class TestReproducibility(unittest.TestCase):
         b = tracker.compute_strategy_returns(df, strategy_results)
         self.assertTrue(a.equals(b))
         self.assertAlmostEqual(float(a["best_return"].mean()), float(b["best_return"].mean()))
+
+    @unittest.skipUnless(_HAS_RUNTIME_DEPS, f"missing runtime deps: {_DEPS_ERR}")
+    def test_phase_experiment_feature_columns_are_sorted(self):
+        df = pd.DataFrame(
+            {
+                "z_feature": [1.0, 2.0, 3.0],
+                "adx": [10.0, 11.0, 12.0],
+                "phase": ["LV_Trend"] * 3,
+                "next_direction_binary": [0, 1, 0],
+                "returns": [0.1, 0.2, 0.3],
+                "a_feature": [4.0, 5.0, 6.0],
+            }
+        )
+        exp = PhaseMLExperiment()
+        cols = exp.get_feature_columns(df)
+        self.assertEqual(cols, sorted(cols))
+
+    @unittest.skipUnless(_HAS_RUNTIME_DEPS, f"missing runtime deps: {_DEPS_ERR}")
+    def test_build_training_matrix_sorts_feature_columns(self):
+        X = pd.DataFrame(
+            {
+                "z_feature": [1.0, 2.0, 3.0],
+                "a_feature": [4.0, 5.0, 6.0],
+                "adx": [7.0, 8.0, 9.0],
+            }
+        )
+        y = pd.Series([0, 1, 0])
+        X_out, _, _ = build_training_matrix(
+            X,
+            y,
+            feature_cols=["z_feature", "adx", "a_feature"],
+            required_feature_cols=["z_feature", "adx", "a_feature"],
+            optional_feature_cols=[],
+        )
+        self.assertEqual(list(X_out.columns), ["a_feature", "adx", "z_feature"])
+
+    @unittest.skipUnless(_HAS_RUNTIME_DEPS, f"missing runtime deps: {_DEPS_ERR}")
+    def test_artifact_resolution_tie_break_is_deterministic(self):
+        tmpdir = Path(self.id().replace(".", "_"))
+        tmpdir.mkdir(exist_ok=True)
+        try:
+            a = tmpdir / "a_surface.parquet"
+            b = tmpdir / "b_surface.parquet"
+            a.write_text("a")
+            b.write_text("b")
+            ts = 1_700_000_000
+            os.utime(a, (ts, ts))
+            os.utime(b, (ts, ts))
+            resolved = resolve_dl_prediction_artifact_path(tmpdir)
+            self.assertEqual(resolved, b)
+        finally:
+            for child in sorted(tmpdir.glob("*")):
+                child.unlink()
+            tmpdir.rmdir()
 
 
 if __name__ == "__main__":
