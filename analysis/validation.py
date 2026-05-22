@@ -193,6 +193,27 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
                     f"{run_id}: missing strategy selector feature ordering metadata."
                 )
 
+    # Check for duplicate semantic variant within same generation cohort
+    semantic_variant_groups: dict[str, list[str]] = {}
+    for summary in summaries:
+        run_id = summary.get("run_id", "unknown")
+        meta = summary.get("meta") or {}
+        gen = meta.get("experiment_gen") or "unknown"
+        variant = meta.get("run_variant") or "U"
+        if variant == "U" or gen == "unknown":
+            continue
+        cohort_key = f"{gen}_{variant}"
+        semantic_variant_groups.setdefault(cohort_key, []).append(run_id)
+
+    for cohort_key, run_ids in sorted(semantic_variant_groups.items()):
+        if len(run_ids) > 1:
+            semantic_warnings.append(
+                f"Duplicate semantic variant detected within cohort '{cohort_key}': "
+                + ", ".join(sorted(run_ids))
+                + " — comparisons within this cohort will be averaged. "
+                "Verify this is intentional (re-run vs distinct experiment)."
+            )
+
     if not summaries:
         provenance_errors.append("No summaries available after discovery/parsing.")
 

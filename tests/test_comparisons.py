@@ -267,5 +267,80 @@ class TestCompareGen1Gen2(unittest.TestCase):
         self.assertTrue(any("invalid" in w.lower() for w in result["warnings"]))
 
 
+# ---------------------------------------------------------------------------
+# Analysis matrix completeness tests
+# ---------------------------------------------------------------------------
+
+
+class TestAnalysisMatrixCompleteness(unittest.TestCase):
+    """Verify that comparison matrix correctly identifies present/absent variants."""
+
+    def _full_matrix(self) -> list[dict]:
+        """Build a complete A/B/C/D summary set."""
+        return [
+            _make_summary("fp_gen1_A", experiment_gen="gen1", run_variant="A", sharpe_delta=0.12),
+            _make_summary("fp_gen1_B", experiment_gen="gen1", run_variant="B", sharpe_delta=0.02),
+            _make_summary("fp_gen2_C", experiment_gen="gen2", run_variant="C", sharpe_delta=0.15),
+            _make_summary("fp_gen2_D", experiment_gen="gen2", run_variant="D", sharpe_delta=0.03),
+        ]
+
+    def test_full_matrix_has_no_warnings(self):
+        """Complete A/B/C/D set must produce valid comparisons with no incomplete-cohort warnings."""
+        result_s = compare_sentiment_variants(self._full_matrix())
+        result_g = compare_gen1_gen2(self._full_matrix())
+        self.assertEqual(result_s["incomplete_comparisons"], [])
+        self.assertEqual(result_g["incomplete_comparisons"], [])
+
+    def test_full_matrix_all_valid_comparisons(self):
+        """Complete A/B/C/D set must produce all four expected valid comparisons."""
+        result_s = compare_sentiment_variants(self._full_matrix())
+        result_g = compare_gen1_gen2(self._full_matrix())
+        self.assertIn("gen1:A_vs_B", result_s["valid_comparisons"])
+        self.assertIn("gen2:C_vs_D", result_s["valid_comparisons"])
+        self.assertIn("sentiment_on:A_vs_C", result_g["valid_comparisons"])
+        self.assertIn("sentiment_off:B_vs_D", result_g["valid_comparisons"])
+
+    def test_matrix_present_variants_complete(self):
+        """Present variants must include A, B, C, D with a full set."""
+        result_s = compare_sentiment_variants(self._full_matrix())
+        self.assertEqual(sorted(result_s["matrix"]["present_variants"]), ["A", "B", "C", "D"])
+
+    def test_partial_matrix_correctly_identifies_missing(self):
+        """With only A and C runs, B and D must be reported as missing."""
+        summaries = [
+            _make_summary("fp_gen1_A", experiment_gen="gen1", run_variant="A"),
+            _make_summary("fp_gen2_C", experiment_gen="gen2", run_variant="C"),
+        ]
+        result_s = compare_sentiment_variants(summaries)
+        self.assertIn("gen1:A_vs_B", result_s["incomplete_comparisons"])
+        self.assertIn("gen2:C_vs_D", result_s["incomplete_comparisons"])
+        self.assertEqual(sorted(result_s["matrix"]["present_variants"]), ["A", "C"])
+
+    def test_all_gen1_runs_not_collapsed_to_A(self):
+        """Sentinel: when A and B runs are present, they must go into separate cohorts."""
+        result_s = compare_sentiment_variants(self._full_matrix())
+        grouped = result_s["grouped"]
+        self.assertEqual(grouped["gen1"]["on"], ["fp_gen1_A"])
+        self.assertEqual(grouped["gen1"]["off"], ["fp_gen1_B"])
+
+    def test_all_gen2_runs_not_collapsed_to_C(self):
+        """Sentinel: when C and D runs are present, they must go into separate cohorts."""
+        result_s = compare_sentiment_variants(self._full_matrix())
+        grouped = result_s["grouped"]
+        self.assertEqual(grouped["gen2"]["on"], ["fp_gen2_C"])
+        self.assertEqual(grouped["gen2"]["off"], ["fp_gen2_D"])
+
+    def test_sentiment_delta_uses_correct_cohorts(self):
+        """Sentiment delta must compare A vs B (not B vs B or A vs A)."""
+        result_s = compare_sentiment_variants(self._full_matrix())
+        gen1_rows = [r for r in result_s["delta_table"] if r["generation"] == "gen1"]
+        self.assertTrue(len(gen1_rows) > 0)
+        for row in gen1_rows:
+            on_val = row["sentiment_on"]
+            off_val = row["sentiment_off"]
+            # A=0.12 Sharpe_Delta, B=0.02 Sharpe_Delta
+            self.assertAlmostEqual(row["delta_on_minus_off"], 0.10, places=5)
+
+
 if __name__ == "__main__":
     unittest.main()

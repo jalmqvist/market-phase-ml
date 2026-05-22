@@ -105,13 +105,39 @@ def render_markdown_report(
             f"| {meta.get('timestamp_utc', '—')} |"
         )
     lines.append("")
+    lines.append("### Experiment Semantics (canonical)\n")
+    lines.append("| Run ID | Generation | Variant | Sentiment | Missing Indicators | Semantic Label |")
+    lines.append("|--------|-----------|---------|-----------|-------------------|----------------|")
+    for s in summaries:
+        meta = s.get("meta") or {}
+        experiment = meta.get("experiment") or {}
+        run_id = s.get("run_id", "—")
+        gen = experiment.get("generation") or meta.get("experiment_gen") or "—"
+        variant = experiment.get("variant") or meta.get("run_variant") or "—"
+        sentiment = experiment.get("sentiment_enabled")
+        missing_ind = experiment.get("missing_indicators_enabled")
+        sem_label = experiment.get("semantic_label") or meta.get("semantic_label") or "—"
+        sentiment_str = ("✓" if sentiment else "✗") if sentiment is not None else "—"
+        missing_str = ("✓" if missing_ind else "✗") if missing_ind is not None else "—"
+        lines.append(
+            f"| {run_id} "
+            f"| {gen} "
+            f"| {variant} "
+            f"| {sentiment_str} "
+            f"| {missing_str} "
+            f"| {sem_label} |"
+        )
+    lines.append("")
     lines.append("### Experiment Semantics Reference\n")
-    lines.append("| Run | Meaning |")
-    lines.append("|-----|---------|")
-    lines.append("| Gen1_A | sentiment ON + missing indicators OFF |")
-    lines.append("| Gen1_B | sentiment OFF + missing indicators OFF |")
-    lines.append("| Gen2_C | sentiment ON + missing indicators ON |")
-    lines.append("| Gen2_D | sentiment OFF + missing indicators ON |")
+    lines.append("| Variant | Generation | Sentiment ON | Missing Indicators ON | Meaning |")
+    lines.append("|---------|-----------|-------------|----------------------|---------|")
+    lines.append("| A | Gen1 | ✓ | ✗ | sentiment ON + missing indicators OFF |")
+    lines.append("| B | Gen1 | ✗ | ✗ | sentiment OFF + missing indicators OFF (baseline) |")
+    lines.append("| C | Gen2 | ✓ | ✓ | sentiment ON + missing indicators ON |")
+    lines.append("| D | Gen2 | ✗ | ✓ | sentiment OFF + missing indicators ON (baseline) |")
+    lines.append("")
+    lines.append("> Experiment semantics are canonical and immutable: read from `manifest.experiment` only.")
+    lines.append("> Never inferred from DL flags, folder names, or runtime state.")
     lines.append("")
 
     # ------------------------------------------------------------------
