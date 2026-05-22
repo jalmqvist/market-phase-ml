@@ -175,7 +175,9 @@ def infer_run_identity(
         archive_relpath = run_dir.name
 
     archive_slug = _slugify_path(archive_relpath)
-    _validate_archive_sentinel(run_dir.name, final_gen if final_gen != "unknown" else None, variant if variant != LEGACY_VARIANT else None)
+    sentinel_gen = final_gen if final_gen != "unknown" else None
+    sentinel_variant = variant if variant != LEGACY_VARIANT else None
+    _validate_archive_sentinel(run_dir.name, sentinel_gen, sentinel_variant)
     semantic_name = f"{final_gen}_{variant}"
     semantic_run_id = f"{semantic_name}__{timestamp}"
     canonical_run_id = f"{semantic_run_id}__{archive_slug}"

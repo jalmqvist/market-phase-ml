@@ -1058,7 +1058,9 @@ class TestPipelineIntegration(unittest.TestCase):
                 ["A", "B", "C", "D"],
             )
             report = (output / "report.md").read_text()
+            self.assertIn("gen1_A__20260521T000000Z__fp_gen1_A", report)
             self.assertIn("gen1_B__20260521T000000Z__fp_gen1_B", report)
+            self.assertIn("gen2_C__20260521T000000Z__fp_gen2_C", report)
             self.assertIn("gen2_D__20260521T000000Z__fp_gen2_D", report)
             for summary_path in (output / "summaries").glob("*.summary.json"):
                 summary = json.loads(summary_path.read_text())
