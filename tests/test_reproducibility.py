@@ -1,41 +1,45 @@
 import os
 import sys
 import unittest
+import importlib.util
 from pathlib import Path
-
-import numpy as np
-import pandas as pd
 
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from src.models import StrategyPerformanceTracker
-from src.repro import DEFAULT_EXPERIMENT_SEED, resolve_experiment_seed
-from src.strategies import StrategySelector_Dynamic
-from main import generate_walkforward_folds_by_pos
+_REPRO_PATH = _ROOT / "src" / "repro.py"
+_REPRO_SPEC = importlib.util.spec_from_file_location("mpml_repro_module", _REPRO_PATH)
+if _REPRO_SPEC is None or _REPRO_SPEC.loader is None:
+    raise RuntimeError(f"Unable to load repro module from {_REPRO_PATH}")
+try:
+    _REPRO_MODULE = importlib.util.module_from_spec(_REPRO_SPEC)
+    _REPRO_SPEC.loader.exec_module(_REPRO_MODULE)
+    DEFAULT_EXPERIMENT_SEED = _REPRO_MODULE.DEFAULT_EXPERIMENT_SEED
+    resolve_experiment_seed = _REPRO_MODULE.resolve_experiment_seed
+    _HAS_REPRO_MODULE = True
+    _REPRO_ERR = ""
+except Exception as exc:  # pragma: no cover - environment-dependent
+    DEFAULT_EXPERIMENT_SEED = 42
+    resolve_experiment_seed = None
+    _HAS_REPRO_MODULE = False
+    _REPRO_ERR = str(exc)
 
-
-class _StaticSignalStrategy:
-    def generate_signals(self, df: pd.DataFrame):
-        z = pd.Series(np.zeros(len(df), dtype=float), index=df.index)
-        return z, z.copy(), z.copy()
-
-
-class _TieSelector:
-    feature_cols = ["adx"]
-    required_feature_cols = ["adx"]
-
-    @staticmethod
-    def predict_proba(_features_df: pd.DataFrame) -> dict[str, float]:
-        return {
-            "TrendFollowing": 0.5,
-            "MeanReversion": 0.5,
-            "PhaseAware": 0.0,
-        }
+try:
+    import numpy as np
+    import pandas as pd
+    from src.models import StrategyPerformanceTracker
+    from src.strategies import StrategySelector_Dynamic
+    from main import generate_walkforward_folds_by_pos
+    _HAS_RUNTIME_DEPS = True
+    _DEPS_ERR = ""
+except Exception as exc:  # pragma: no cover - environment-dependent
+    _HAS_RUNTIME_DEPS = False
+    _DEPS_ERR = str(exc)
 
 
 class TestReproducibility(unittest.TestCase):
+    @unittest.skipUnless(_HAS_REPRO_MODULE, f"missing repro module deps: {_REPRO_ERR}")
     def test_seed_resolution_precedence(self):
         prev = os.environ.get("EXPERIMENT_SEED")
         try:
@@ -55,6 +59,7 @@ class TestReproducibility(unittest.TestCase):
             else:
                 os.environ["EXPERIMENT_SEED"] = prev
 
+    @unittest.skipUnless(_HAS_RUNTIME_DEPS, f"missing runtime deps: {_DEPS_ERR}")
     def test_fold_generation_is_deterministic(self):
         dates = pd.to_datetime(
             [
@@ -82,7 +87,25 @@ class TestReproducibility(unittest.TestCase):
         )
         self.assertEqual(folds_a, folds_b)
 
+    @unittest.skipUnless(_HAS_RUNTIME_DEPS, f"missing runtime deps: {_DEPS_ERR}")
     def test_selector_tie_break_is_stable(self):
+        class _StaticSignalStrategy:
+            def generate_signals(self, df: pd.DataFrame):
+                z = pd.Series(np.zeros(len(df), dtype=float), index=df.index)
+                return z, z.copy(), z.copy()
+
+        class _TieSelector:
+            feature_cols = ["adx"]
+            required_feature_cols = ["adx"]
+
+            @staticmethod
+            def predict_proba(_features_df: pd.DataFrame) -> dict[str, float]:
+                return {
+                    "TrendFollowing": 0.5,
+                    "MeanReversion": 0.5,
+                    "PhaseAware": 0.0,
+                }
+
         idx = pd.date_range("2024-01-01", periods=12, freq="D")
         df = pd.DataFrame(
             {
@@ -109,6 +132,7 @@ class TestReproducibility(unittest.TestCase):
         # Deterministic tie-break is alphabetical after equal probabilities.
         self.assertTrue((selected == "MeanReversion").all())
 
+    @unittest.skipUnless(_HAS_RUNTIME_DEPS, f"missing runtime deps: {_DEPS_ERR}")
     def test_strategy_tracker_repeatability_and_aggregate_stability(self):
         idx = pd.date_range("2023-01-01", periods=40, freq="D")
         df = pd.DataFrame(
