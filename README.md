@@ -565,15 +565,34 @@ python main.py
   - `reproducibility.numpy_seed`
   - `reproducibility.python_random_seed`
   - `reproducibility.torch_seed` (when torch is available)
+  - `feature_ordering.phase_predictor_by_pair`
+  - `feature_ordering.strategy_selector_by_pair`
 
 ### Deterministic guarantees
 - Global RNG seeding is applied for Python `random`, NumPy, and torch (best-effort if installed).
+- All ML feature column lists are finalized in sorted order before train/test slicing, `X/y` extraction, model fitting, and feature-importance reporting.
 - Selector tie-breaking and fold generation use deterministic ordering rules.
-- Walk-forward/artifact ordering is stabilized by sorted pair iteration.
+- Filesystem discovery and artifact selection use sorted iteration/tie-breaks.
+- XGBoost defaults are pinned to deterministic CPU settings (`random_state`/`seed`, `n_jobs=1`, `tree_method="exact"`).
+
+### Exact reproducibility procedure
+```bash
+export EXPERIMENT_SEED=42
+python main.py --output-dir /absolute/path/to/results/run1
+
+export EXPERIMENT_SEED=42
+python main.py --output-dir /absolute/path/to/results/run2
+
+diff /absolute/path/to/results/run1/walkforward_results_per_pair__dl_enabled.csv \
+     /absolute/path/to/results/run2/walkforward_results_per_pair__dl_enabled.csv
+```
+
+Expected outcome: no material differences. If analysis is run on both archives, the report will also warn on missing seed metadata or mismatched feature ordering for runs sharing the same seed.
 
 ### Caveats
 - Perfect bitwise equality can still vary across hardware/BLAS/CUDA/PyTorch versions.
 - If torch is not installed, torch-specific seeds are omitted (other deterministic controls still apply).
+- Walk-forward pipelines amplify small ordering bugs quickly; unsorted feature columns or filesystem iteration can become different CV folds, selector decisions, and Sharpe paths.
 
 ### Caching
 The pipeline uses caching to speed up iteration. If you want a clean run, clear cached files (see `src/cache.py` and the `clear_cache(...)` calls in `main.py`).
