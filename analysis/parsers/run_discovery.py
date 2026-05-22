@@ -4,7 +4,8 @@ analysis/parsers/run_discovery.py
 Discover MPML run directories inside an archive root.
 
 Integrity hardening rules:
-* A canonical run root must contain exactly one ``run_manifest_*.json``.
+* A canonical run root must contain exactly one manifest
+  (``run_manifest.json`` or legacy ``run_manifest_*.json``).
 * Legacy CSV-only fallback is allowed only when explicitly marked via
   ``.mpml_legacy_run_root`` in that directory.
 * Discovery is non-recursive beyond a discovered run root so nested
@@ -27,7 +28,20 @@ _LEGACY_CSV_MARKERS = [
 
 
 def _manifest_files(directory: Path) -> list[Path]:
-    return sorted(directory.glob("run_manifest_*.json"))
+    manifests: list[Path] = []
+    canonical = directory / "run_manifest.json"
+    if canonical.exists():
+        manifests.append(canonical)
+    manifests.extend(sorted(directory.glob("run_manifest_*.json")))
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for m in manifests:
+        resolved = m.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        deduped.append(m)
+    return deduped
 
 
 def _is_legacy_run_root(directory: Path) -> bool:
@@ -61,20 +75,11 @@ def _extract_experiment_gen_from_manifest(directory: Path) -> str:
         # raises explicit hard errors with full context.
         return "unknown"
 
-    candidates = [
-        payload.get("experiment_gen"),
-        (payload.get("run") or {}).get("experiment_gen"),
-        (payload.get("experiment") or {}).get("gen"),
-        (payload.get("flags") or {}).get("EXPERIMENT_GEN"),
-    ]
-    for candidate in candidates:
-        if not isinstance(candidate, str):
-            continue
-        lowered = candidate.strip().lower()
-        if lowered in {"gen1", "g1"}:
-            return "gen1"
-        if lowered in {"gen2", "g2"}:
-            return "gen2"
+    generation = (payload.get("experiment") or {}).get("generation")
+    if isinstance(generation, str):
+        lowered = generation.strip().lower()
+        if lowered in {"gen1", "gen2"}:
+            return lowered
     return "unknown"
 
 

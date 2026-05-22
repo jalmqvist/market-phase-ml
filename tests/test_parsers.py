@@ -185,6 +185,13 @@ class TestParseManifest(unittest.TestCase):
 
     def _make_manifest(self, extra: dict | None = None) -> dict:
         base = {
+            "experiment": {
+                "generation": "gen1",
+                "variant": "A",
+                "sentiment_enabled": True,
+                "missing_indicators_enabled": False,
+                "semantic_label": "Gen1_A",
+            },
             "dl": {
                 "dl_enabled": True,
                 "dl_mode_tag": "__dl_enabled",
@@ -224,6 +231,18 @@ class TestParseManifest(unittest.TestCase):
         result = parse_manifest(self.run_dir)
         self.assertIsNotNone(result)
         self.assertEqual(result["run_id"], "run_20260512T064904Z")
+
+    def test_canonical_manifest_filename_supported(self):
+        manifest_data = self._make_manifest()
+        run_dir = _make_run_dir({
+            "run_manifest.json": json.dumps(manifest_data),
+        })
+        try:
+            result = parse_manifest(run_dir)
+            self.assertIsNotNone(result)
+            self.assertEqual(result["run_id"], "run_20260512T064904Z")
+        finally:
+            _rmtree(run_dir)
 
     def test_dl_enabled_true(self):
         result = parse_manifest(self.run_dir)
@@ -283,6 +302,13 @@ class TestRunIdentity(unittest.TestCase):
                 "timestamp_utc": "20260521T131739Z",
                 "dl_enabled": True,
                 "primary": {"run": {"run_id": "run_20260521T131739Z"}},
+                "experiment": {
+                    "generation": "gen1",
+                    "variant": "A",
+                    "sentiment_enabled": True,
+                    "missing_indicators_enabled": False,
+                    "semantic_label": "Gen1_A",
+                },
             },
         )
         try:
@@ -386,6 +412,18 @@ class TestDiscoverRuns(unittest.TestCase):
         finally:
             _rmtree(run_dir)
 
+    def test_single_run_dir_with_canonical_manifest_filename(self):
+        run_dir = _make_run_dir({
+            "run_manifest.json": json.dumps({"experiment": {"generation": "gen1"}}),
+        })
+        try:
+            found = list(discover_runs(run_dir))
+            self.assertGreaterEqual(len(found), 1)
+            paths = [f[0] for f in found]
+            self.assertIn(run_dir, paths)
+        finally:
+            _rmtree(run_dir)
+
     def test_archive_with_nested_runs(self):
         tmp = tempfile.mkdtemp()
         archive = Path(tmp)
@@ -411,7 +449,7 @@ class TestDiscoverRuns(unittest.TestCase):
 
     def test_gen_extracted_from_manifest_explicit_field(self):
         run_dir = _make_run_dir({
-            "run_manifest_gen2__dl_enabled.json": json.dumps({"experiment_gen": "gen2"}),
+            "run_manifest_gen2__dl_enabled.json": json.dumps({"experiment": {"generation": "gen2"}}),
         })
         try:
             found = list(discover_runs(run_dir))
@@ -537,9 +575,14 @@ class TestPipelineIntegration(unittest.TestCase):
                     "run_id": run_name,
                     "git_sha": "abc123",
                     "timestamp_utc": "20260521T000000Z",
-                    "run_variant": run_variant,
                 },
-                "experiment_gen": "gen1",
+                "experiment": {
+                    "generation": "gen1",
+                    "variant": run_variant,
+                    "sentiment_enabled": dl_enabled,
+                    "missing_indicators_enabled": False,
+                    "semantic_label": f"Gen1_{run_variant}",
+                },
                 "dl": {
                     "dl_enabled": dl_enabled,
                     "dl_mode_tag": "__dl_enabled" if dl_enabled else "__baseline",
