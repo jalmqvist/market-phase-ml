@@ -1820,11 +1820,6 @@ class StrategySelector_Dynamic:
                 # Pass the raw bar row to predict_proba.  The selector now handles
                 # all schema reindexing, missing-indicator generation, and strict
                 # schema validation internally.
-                #
-                # ValueError = required features are NaN at this bar → legitimate
-                #              PhaseAware fallback (e.g. no DL coverage yet).
-                # RuntimeError = feature schema mismatch → hard fail; must NOT be
-                #                swallowed — it indicates a training/inference bug.
                 try:
                     probs = selector.predict_proba(df.loc[df.index[[i]]])
 
@@ -1839,12 +1834,14 @@ class StrategySelector_Dynamic:
                     p2 = float(sorted_probs[1][1]) if len(sorted_probs) > 1 else -1.0
 
                 except ValueError:
-                    # Required features unavailable at this bar — fall back to
-                    # PhaseAware silently (no spam; this is expected near startup).
+                    # Required features are NaN at this bar (e.g. no DL coverage
+                    # yet) → legitimate PhaseAware fallback; no log spam.
                     pred_type = None
                     pmax = -1.0
                     p2 = -1.0
-                # RuntimeError (schema mismatch) propagates immediately — no swallowing.
+                # RuntimeError (feature schema mismatch) is NOT caught here — it
+                # propagates immediately as a hard failure.  Swallowing it would
+                # produce silent schema drift and corrupted results.
 
             # 1) Propose a type based on gating policy (ignoring min-hold)
             proposed_type = current_type

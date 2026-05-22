@@ -73,6 +73,13 @@ def _stable_feature_columns(feature_cols: list[str] | tuple[str, ...]) -> list[s
     return sorted(dict.fromkeys(feature_cols))
 
 
+#: Suffix appended to optional feature column names to create missing-value
+#: indicator columns during imputation.  Defined at module level so that both
+#: training (apply_optional_feature_imputation) and inference
+#: (_prepare_inference_matrix) always use the same suffix.
+_MISSING_INDICATOR_SUFFIX: str = "_missing"
+
+
 def _build_deterministic_xgb_classifier(
     *,
     seed: int,
@@ -170,7 +177,7 @@ def apply_optional_feature_imputation(
 
     for col in optional_cols_present:
         if add_missing_indicators:
-            indicator_col = f"{col}_missing"
+            indicator_col = f"{col}{_MISSING_INDICATOR_SUFFIX}"
             if indicator_col not in X_out.columns:
                 X_out[indicator_col] = X_out[col].isna().astype("int8")
         X_out[col] = X_out[col].fillna(fill_value)
@@ -1618,8 +1625,7 @@ class StrategySelector:
         # Project to only the non-indicator base columns (the *_missing indicator
         # columns will be generated deterministically by apply_optional_feature_imputation
         # in the next step, exactly as they were generated during training).
-        _indicator_suffix = "_missing"
-        base_cols = [c for c in self.feature_schema_ if not c.endswith(_indicator_suffix)]
+        base_cols = [c for c in self.feature_schema_ if not c.endswith(_MISSING_INDICATOR_SUFFIX)]
         X = features_df.reindex(columns=base_cols).copy()
 
         # Hard-check required (non-optional) feature columns for NaN.
