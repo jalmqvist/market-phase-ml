@@ -94,7 +94,11 @@ def infer_run_identity(
         missing_indicators_raw if isinstance(missing_indicators_raw, bool) else None
     )
     semantic_label = experiment_block.get("semantic_label")
-    semantic_label = semantic_label if isinstance(semantic_label, str) and semantic_label.strip() else None
+    semantic_label = (
+        semantic_label.strip()
+        if isinstance(semantic_label, str) and semantic_label.strip()
+        else None
+    )
 
     if manifest and not experiment_block:
         identity_warnings.append(

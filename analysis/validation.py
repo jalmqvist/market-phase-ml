@@ -10,6 +10,12 @@ from collections import Counter
 from typing import Any
 
 
+def _expected_variant(generation: str, sentiment_enabled: bool) -> str:
+    if generation == "gen1":
+        return "A" if sentiment_enabled else "B"
+    return "C" if sentiment_enabled else "D"
+
+
 def sort_summaries_deterministically(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         summaries,
@@ -80,14 +86,18 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         gen = meta.get("experiment_gen") or "unknown"
         manifest_present = bool(meta.get("manifest_present"))
         if manifest_present:
-            required = (
-                "generation",
-                "variant",
-                "sentiment_enabled",
-                "missing_indicators_enabled",
-                "semantic_label",
-            )
-            missing_required = [k for k in required if experiment.get(k) is None]
+            missing_required: list[str] = []
+            if experiment.get("generation") is None:
+                missing_required.append("generation")
+            if experiment.get("variant") is None:
+                missing_required.append("variant")
+            if experiment.get("sentiment_enabled") is None:
+                missing_required.append("sentiment_enabled")
+            if experiment.get("missing_indicators_enabled") is None:
+                missing_required.append("missing_indicators_enabled")
+            semantic_label = experiment.get("semantic_label")
+            if not isinstance(semantic_label, str) or not semantic_label.strip():
+                missing_required.append("semantic_label")
             if missing_required:
                 semantic_warnings.append(
                     f"{run_id}: manifest experiment block incomplete (legacy tolerance): missing {', '.join(missing_required)}."
@@ -106,9 +116,7 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
                 f"{run_id}: invalid experiment variant {exp_variant!r} (expected A|B|C|D)."
             )
         if exp_generation in {"gen1", "gen2"} and isinstance(exp_sentiment, bool):
-            expected_variant = "A" if exp_generation == "gen1" and exp_sentiment else (
-                "B" if exp_generation == "gen1" else ("C" if exp_sentiment else "D")
-            )
+            expected_variant = _expected_variant(exp_generation, exp_sentiment)
             if exp_variant in {"A", "B", "C", "D"} and exp_variant != expected_variant:
                 semantic_errors.append(
                     f"{run_id}: semantic conflict (variant={exp_variant} incompatible with generation={exp_generation}, sentiment_enabled={exp_sentiment})."

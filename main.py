@@ -163,10 +163,12 @@ def filter_pair_universe(raw_data: dict) -> dict:
 # ─────────────────────────────────────────
 SEED = 42
 RUN_ID = None  # set to a string to force a specific id; otherwise auto-generated
-_RUN_OUTPUT_DIR: Path | None = None
+_CURRENT_RUN_OUTPUT_DIR: Path | None = None
 
 _VALID_EXPERIMENT_GENERATIONS = {"gen1", "gen2"}
 _VALID_EXPERIMENT_VARIANTS = {"A", "B", "C", "D"}
+_LEGACY_RESULTS_DIR = "results"
+_DEFAULT_RUNS_ROOT = "results_archive"
 
 
 def _validate_experiment_generation(value: str) -> str:
@@ -195,30 +197,37 @@ def _build_experiment_metadata(*, generation: str, sentiment_enabled: bool) -> d
             f"Invalid derived variant: {variant!r}. "
             f"Allowed values={sorted(_VALID_EXPERIMENT_VARIANTS)}"
         )
+    semantic_generation = {"gen1": "Gen1", "gen2": "Gen2"}[generation]
     return {
         "generation": generation,
         "variant": variant,
         "sentiment_enabled": bool(sentiment_enabled),
         "missing_indicators_enabled": bool(missing_indicators_enabled),
-        "semantic_label": f"{generation.capitalize()}_{variant}",
+        "semantic_label": f"{semantic_generation}_{variant}",
     }
 
 
 def _set_run_output_dir(path: Path) -> None:
-    global _RUN_OUTPUT_DIR
-    _RUN_OUTPUT_DIR = Path(path).resolve()
-    _RUN_OUTPUT_DIR.mkdir(parents=True, exist_ok=False)
+    global _CURRENT_RUN_OUTPUT_DIR
+    _CURRENT_RUN_OUTPUT_DIR = Path(path).resolve()
+    try:
+        _CURRENT_RUN_OUTPUT_DIR.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise ValueError(
+            f"Run output directory already exists: {_CURRENT_RUN_OUTPUT_DIR}. "
+            "Use a different --output-dir (or MPML_OUTPUT_DIR) to keep runs immutable."
+        ) from exc
 
 
 def _run_output_dir() -> Path:
-    if _RUN_OUTPUT_DIR is None:
+    if _CURRENT_RUN_OUTPUT_DIR is None:
         raise RuntimeError("Run output directory has not been initialized.")
-    return _RUN_OUTPUT_DIR
+    return _CURRENT_RUN_OUTPUT_DIR
 
 
 def _resolve_output_path(path: str) -> Path:
     raw = Path(path)
-    if raw.parts and raw.parts[0] == "results":
+    if raw.parts and raw.parts[0] == _LEGACY_RESULTS_DIR:
         raw = Path(*raw.parts[1:])
     return _run_output_dir() / raw
 
@@ -520,7 +529,7 @@ def _with_mode_tag(path: str, mode_tag: str) -> str:
     target = _resolve_output_path(path)
     stem = target.stem
     suffix = target.suffix
-    tagged = target.with_name(f"{stem}{mode_tag}{suffix}") if suffix else target
+    tagged = target.with_name(f"{stem}{mode_tag}{suffix}") if suffix else target.with_name(f"{stem}{mode_tag}")
     tagged.parent.mkdir(parents=True, exist_ok=True)
     return str(tagged)
 
@@ -1438,12 +1447,16 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
     dl_mode_tag = "__dl_enabled" if dl_runtime_enabled else "__baseline"
     dl_surface_str = _dl_surface_string(dl_surface)
     experiment_meta = _build_experiment_metadata(
-        generation=experiment_generation or os.getenv("EXPERIMENT_GENERATION", "gen1"),
+        generation=(
+            experiment_generation
+            if experiment_generation is not None
+            else os.getenv("EXPERIMENT_GENERATION", "gen1")
+        ),
         sentiment_enabled=dl_runtime_enabled,
     )
     run_ts = run_cfg.run_id.replace("run_", "")
     computed_default_output_dir = Path(
-        os.getenv("MPML_RUNS_ROOT", "results_archive")
+        os.getenv("MPML_RUNS_ROOT", _DEFAULT_RUNS_ROOT)
     ) / f"{experiment_meta['generation']}_{experiment_meta['variant']}__{run_ts}"
     selected_output_dir = Path(
         output_dir or os.getenv("MPML_OUTPUT_DIR", computed_default_output_dir)
@@ -1471,6 +1484,8 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
         "run": {
             **run_cfg.__dict__,
             "timestamp_utc": run_cfg.run_id.replace("run_", ""),
+            # Legacy compatibility for downstream tooling still reading run.*.
+            # New integrations should migrate to manifest.experiment.
             "experiment_gen": experiment_meta["generation"],
             "run_variant": experiment_meta["variant"],
         },

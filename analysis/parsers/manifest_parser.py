@@ -16,7 +16,12 @@ def _manifest_files(run_dir: Path) -> list[Path]:
     canonical = run_dir / "run_manifest.json"
     if canonical.exists():
         manifests.append(canonical)
-    manifests.extend(sorted(run_dir.glob("run_manifest_*.json")))
+    manifests.extend(
+        sorted(
+            p for p in run_dir.glob("run_manifest_*.json")
+            if p.name != "run_manifest.json"
+        )
+    )
     deduped: list[Path] = []
     seen: set[Path] = set()
     for m in manifests:
