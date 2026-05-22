@@ -20,7 +20,8 @@ def compare_sentiment_variants(
     unknown: list[str] = []
 
     for summary in summaries:
-        variant = ((summary.get("meta") or {}).get("run_variant") or "U").upper()
+        experiment = ((summary.get("meta") or {}).get("experiment") or {})
+        variant = (experiment.get("variant") or "U").upper()
         if variant in variants:
             variants[variant].append(summary)
         else:

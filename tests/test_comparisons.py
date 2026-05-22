@@ -53,12 +53,27 @@ def _make_summary(
     if maxdd_delta is not None:
         wf_row["MaxDD_Delta"] = maxdd_delta
 
+    experiment_semantics = {
+        "A": {"generation": "gen1", "sentiment_enabled": True, "missing_indicators_enabled": False},
+        "B": {"generation": "gen1", "sentiment_enabled": False, "missing_indicators_enabled": False},
+        "C": {"generation": "gen2", "sentiment_enabled": True, "missing_indicators_enabled": True},
+        "D": {"generation": "gen2", "sentiment_enabled": False, "missing_indicators_enabled": True},
+    }
+    semantics = experiment_semantics.get(run_variant, {})
+
     return {
         "run_id": run_id,
         "meta": {
             "dl_enabled": dl_enabled,
             "experiment_gen": experiment_gen,
             "run_variant": run_variant,
+            "experiment": {
+                "generation": semantics.get("generation", experiment_gen),
+                "variant": run_variant,
+                "sentiment_enabled": semantics.get("sentiment_enabled"),
+                "missing_indicators_enabled": semantics.get("missing_indicators_enabled"),
+                "semantic_label": f"{experiment_gen.capitalize()}_{run_variant}",
+            },
         },
         "csvs": {
             "walkforward_summary": [wf_row],

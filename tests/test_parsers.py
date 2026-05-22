@@ -1302,30 +1302,45 @@ class TestValidationAndOrdering(unittest.TestCase):
         self.assertTrue(any("invalid experiment variant" in e for e in validation["errors"]))
 
     def test_semantic_conflict_gen1_variant_C_detected(self):
-        """gen1 run with variant=C is a semantic conflict and must be an error."""
+        """Meta generation mismatch against manifest.experiment must be an error."""
         s = self._summary("r1", "gen1", "C", "20260521T010101Z", "a")
+        s["meta"]["experiment"] = {
+            "generation": "gen2",
+            "variant": "C",
+            "sentiment_enabled": True,
+            "missing_indicators_enabled": True,
+            "semantic_label": "Gen2_C",
+        }
         validation = validate_summaries([s])
-        self.assertTrue(any("semantic conflict" in e and "gen1" in e for e in validation["errors"]))
+        self.assertTrue(any("identity corruption" in e and "generation" in e for e in validation["errors"]))
 
     def test_semantic_conflict_gen2_variant_A_detected(self):
-        """gen2 run with variant=A is a semantic conflict and must be an error."""
+        """Meta variant mismatch against manifest.experiment must be an error."""
         s = self._summary("r1", "gen2", "A", "20260521T010101Z", "a")
+        s["meta"]["experiment"] = {
+            "generation": "gen2",
+            "variant": "C",
+            "sentiment_enabled": True,
+            "missing_indicators_enabled": True,
+            "semantic_label": "Gen2_C",
+        }
         validation = validate_summaries([s])
-        self.assertTrue(any("semantic conflict" in e and "gen2" in e for e in validation["errors"]))
+        self.assertTrue(any("identity corruption" in e and "run_variant" in e for e in validation["errors"]))
 
     def test_validation_rejects_variant_b_with_sentiment_true(self):
         s = self._summary("r_bad", "gen1", "B", "20260521T010101Z", "bad")
         s["meta"]["experiment"] = {
             "generation": "gen1",
             "variant": "B",
-            "sentiment_enabled": True,
+            "sentiment_enabled": False,
             "missing_indicators_enabled": False,
             "semantic_label": "Gen1_B",
         }
+        s["meta"]["sentiment_enabled"] = True
         validation = validate_summaries([s])
         self.assertTrue(
-            any("variant=B requires sentiment_enabled=False" in e for e in validation["errors"]),
-            "Semantic corruption should hard-fail when variant semantics do not match canonical mapping.",
+            any("identity corruption" in e and "sentiment_enabled" in e for e in validation["errors"]),
+            "Semantic corruption should hard-fail when propagated sentiment metadata diverges from manifest.experiment.",
         )
 
 
