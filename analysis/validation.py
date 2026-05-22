@@ -12,7 +12,6 @@ from typing import Any
 from experiment_semantics import (
     LEGACY_VARIANT,
     VALID_EXPERIMENT_VARIANTS,
-    variant_semantics,
 )
 
 _REQUIRED_REPRODUCIBILITY_KEYS = (
@@ -131,7 +130,6 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         exp_sentiment = experiment.get("sentiment_enabled")
         exp_missing = experiment.get("missing_indicators_enabled")
         exp_semantic_label = experiment.get("semantic_label")
-        canonical_for_experiment = None
         if exp_generation is not None and exp_generation not in {"gen1", "gen2"}:
             semantic_errors.append(
                 f"{run_id}: invalid experiment generation {exp_generation!r} (expected gen1|gen2)."
@@ -140,40 +138,34 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
             semantic_errors.append(
                 f"{run_id}: invalid experiment variant {exp_variant!r} (expected A|B|C|D)."
             )
-        if exp_variant in VALID_EXPERIMENT_VARIANTS:
-            canonical_for_experiment = variant_semantics(exp_variant)
-            if canonical_for_experiment is None:
+        if manifest_present:
+            if exp_generation in {"gen1", "gen2"} and gen != exp_generation:
                 semantic_errors.append(
-                    f"{run_id}: canonical semantics missing for variant={exp_variant}."
+                    f"{run_id}: identity corruption (meta experiment_gen={gen!r} does not match manifest.experiment.generation={exp_generation!r})."
                 )
-            else:
-                if exp_generation in {"gen1", "gen2"} and exp_generation != canonical_for_experiment["generation"]:
-                    semantic_errors.append(
-                        f"{run_id}: semantic conflict (variant={exp_variant} requires generation={canonical_for_experiment['generation']}, got {exp_generation})."
-                    )
-                if isinstance(exp_sentiment, bool) and exp_sentiment != canonical_for_experiment["sentiment_enabled"]:
-                    semantic_errors.append(
-                        f"{run_id}: semantic conflict (variant={exp_variant} requires sentiment_enabled={canonical_for_experiment['sentiment_enabled']}, got {exp_sentiment})."
-                    )
-                if isinstance(exp_missing, bool) and exp_missing != canonical_for_experiment["missing_indicators_enabled"]:
-                    semantic_errors.append(
-                        f"{run_id}: semantic conflict (variant={exp_variant} requires missing_indicators_enabled={canonical_for_experiment['missing_indicators_enabled']}, got {exp_missing})."
-                    )
-                if isinstance(exp_semantic_label, str) and exp_semantic_label.strip():
-                    if exp_semantic_label != canonical_for_experiment["semantic_label"]:
-                        semantic_errors.append(
-                            f"{run_id}: semantic conflict (variant={exp_variant} requires semantic_label={canonical_for_experiment['semantic_label']!r}, got {exp_semantic_label!r})."
-                        )
-        if variant in VALID_EXPERIMENT_VARIANTS:
-            canonical = (
-                canonical_for_experiment
-                if exp_variant == variant and canonical_for_experiment is not None
-                else variant_semantics(variant)
-            )
-            if canonical is not None and gen in {"gen1", "gen2"} and gen != canonical["generation"]:
+            if exp_variant in VALID_EXPERIMENT_VARIANTS and variant != exp_variant:
                 semantic_errors.append(
-                    f"{run_id}: semantic conflict (meta experiment_gen={gen} does not match variant={variant} canonical generation={canonical['generation']})."
+                    f"{run_id}: identity corruption (meta run_variant={variant!r} does not match manifest.experiment.variant={exp_variant!r})."
                 )
+            if isinstance(exp_sentiment, bool) and meta.get("sentiment_enabled") != exp_sentiment:
+                semantic_errors.append(
+                    f"{run_id}: identity corruption (meta sentiment_enabled={meta.get('sentiment_enabled')!r} does not match manifest.experiment.sentiment_enabled={exp_sentiment!r})."
+                )
+            if isinstance(exp_missing, bool) and meta.get("missing_indicators_enabled") != exp_missing:
+                semantic_errors.append(
+                    f"{run_id}: identity corruption (meta missing_indicators_enabled={meta.get('missing_indicators_enabled')!r} does not match manifest.experiment.missing_indicators_enabled={exp_missing!r})."
+                )
+            if isinstance(exp_semantic_label, str) and exp_semantic_label.strip():
+                if meta.get("semantic_label") != exp_semantic_label:
+                    semantic_errors.append(
+                        f"{run_id}: identity corruption (meta semantic_label={meta.get('semantic_label')!r} does not match manifest.experiment.semantic_label={exp_semantic_label!r})."
+                    )
+            if exp_generation in {"gen1", "gen2"} and exp_variant in VALID_EXPERIMENT_VARIANTS:
+                expected_run_id_prefix = f"{exp_generation}_{exp_variant}__"
+                if not run_id.startswith(expected_run_id_prefix):
+                    semantic_errors.append(
+                        f"{run_id}: identity corruption (canonical run_id must start with {expected_run_id_prefix!r})."
+                    )
         if variant == LEGACY_VARIANT:
             semantic_warnings.append(
                 f"{run_id}: variant unresolved ({LEGACY_VARIANT}); semantic comparisons may be skipped."

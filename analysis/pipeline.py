@@ -181,11 +181,11 @@ def build_run_summary(
 
     # --- meta -------------------------------------------------------------
     meta = {
-        "experiment_gen": identity.get("experiment_gen") or experiment_gen,
+        "experiment_gen": identity.get("experiment_gen"),
         "run_variant": identity.get("run_variant"),
-        "sentiment_enabled": experiment.get("sentiment_enabled"),
-        "missing_indicators_enabled": experiment.get("missing_indicators_enabled"),
-        "semantic_label": experiment.get("semantic_label"),
+        "sentiment_enabled": identity.get("sentiment_enabled"),
+        "missing_indicators_enabled": identity.get("missing_indicators_enabled"),
+        "semantic_label": identity.get("semantic_label"),
         "legacy_semantics": bool(identity.get("legacy_semantics")),
         "experiment": experiment,
         "dl_enabled": (manifest or {}).get("dl_enabled"),

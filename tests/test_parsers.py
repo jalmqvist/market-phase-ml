@@ -497,13 +497,12 @@ class TestRunIdentity(unittest.TestCase):
         finally:
             _rmtree(archive)
 
-    def test_explicit_variant_overrides_derived(self):
-        """Explicit variant in manifest takes precedence over derived variant."""
+    def test_manifest_experiment_fields_are_used_verbatim(self):
+        """Identity must mirror manifest.experiment without semantic re-derivation."""
         archive = _make_run_dir({})
         run_dir = archive / "explicit_variant"
         run_dir.mkdir()
         try:
-            # A run where explicit variant is B but sentiment_enabled=False (consistent)
             identity = infer_run_identity(
                 archive_root=archive,
                 run_dir=run_dir,
@@ -524,37 +523,64 @@ class TestRunIdentity(unittest.TestCase):
                 },
             )
             self.assertEqual(identity["run_variant"], "B")
-            self.assertEqual(len([w for w in identity["identity_warnings"] if "conflict" in w.lower()]), 0)
+            self.assertEqual(identity["experiment_gen"], "gen1")
+            self.assertFalse(identity["sentiment_enabled"])
+            self.assertFalse(identity["missing_indicators_enabled"])
+            self.assertEqual(identity["semantic_label"], "Gen1_B")
         finally:
             _rmtree(archive)
 
-    def test_variant_conflict_emits_warning(self):
-        """Conflicting explicit variant vs derived variant must emit a warning."""
+    def test_archive_sentinel_gen1_variant_mismatch_raises(self):
         archive = _make_run_dir({})
         run_dir = archive / "conflict_run"
         run_dir.mkdir()
         try:
-            identity = infer_run_identity(
-                archive_root=archive,
-                run_dir=run_dir,
-                experiment_gen="gen1",
-                manifest={
-                    "run_id": "run_20260521T000000Z",
-                    "timestamp_utc": "20260521T000000Z",
-                    "run": {"run_id": "run_20260521T000000Z"},
-                    "experiment": {
-                        "generation": "gen1",
-                        "variant": "B",
-                        "sentiment_enabled": True,  # conflict: B requires False
-                        "missing_indicators_enabled": False,
-                        "semantic_label": "Gen1_B",
-                        "legacy_semantics": False,
-                        "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
+            with self.assertRaises(RuntimeError):
+                infer_run_identity(
+                    archive_root=archive,
+                    run_dir=archive / "fp_gen1_B",
+                    experiment_gen="gen1",
+                    manifest={
+                        "run_id": "run_20260521T000000Z",
+                        "timestamp_utc": "20260521T000000Z",
+                        "run": {"run_id": "run_20260521T000000Z"},
+                        "experiment": {
+                            "generation": "gen1",
+                            "variant": "A",
+                            "sentiment_enabled": False,
+                            "missing_indicators_enabled": False,
+                            "semantic_label": "Gen1_B",
+                            "legacy_semantics": False,
+                            "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
+                        },
                     },
-                },
-            )
-            conflict_warnings = [w for w in identity["identity_warnings"] if "conflict" in w.lower()]
-            self.assertGreater(len(conflict_warnings), 0, "Variant conflict not detected in identity_warnings")
+                )
+        finally:
+            _rmtree(archive)
+
+    def test_archive_sentinel_gen2_variant_mismatch_raises(self):
+        archive = _make_run_dir({})
+        try:
+            with self.assertRaises(RuntimeError):
+                infer_run_identity(
+                    archive_root=archive,
+                    run_dir=archive / "fp_gen2_D",
+                    experiment_gen="gen2",
+                    manifest={
+                        "run_id": "run_20260521T000000Z",
+                        "timestamp_utc": "20260521T000000Z",
+                        "run": {"run_id": "run_20260521T000000Z"},
+                        "experiment": {
+                            "generation": "gen2",
+                            "variant": "C",
+                            "sentiment_enabled": False,
+                            "missing_indicators_enabled": True,
+                            "semantic_label": "Gen2_D",
+                            "legacy_semantics": False,
+                            "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
+                        },
+                    },
+                )
         finally:
             _rmtree(archive)
 
@@ -652,8 +678,7 @@ class TestRunIdentity(unittest.TestCase):
         )
         try:
             self.assertEqual(identity["semantic_run_name"], "gen1_A")
-            self.assertIn("fp_gen1_A", identity["run_id"])
-            self.assertTrue(identity["run_id"].startswith("gen1_A__20260521T131739Z"))
+            self.assertEqual(identity["run_id"], "gen1_A__20260521T131739Z__fp_gen1_A")
         finally:
             _rmtree(archive)
 
@@ -995,7 +1020,7 @@ class TestPipelineIntegration(unittest.TestCase):
         output = Path(tempfile.mkdtemp())
         try:
             for variant, semantics in EXPERIMENT_VARIANTS.items():
-                run_dir = archive / f"run_{variant}"
+                run_dir = archive / f"fp_{semantics['generation']}_{variant}"
                 run_dir.mkdir()
                 manifest = {
                     "run": {
@@ -1021,17 +1046,95 @@ class TestPipelineIntegration(unittest.TestCase):
                 )
 
             run_pipeline(archive, output, verbose=False)
-            validations = json.loads((output / "comparisons.json").read_text())["validation"]
+            comparisons = json.loads((output / "comparisons.json").read_text())
+            validations = comparisons["validation"]
             self.assertEqual(validations["errors"], [])
+            self.assertEqual(
+                comparisons["sentiment"]["matrix"]["present_variants"],
+                ["A", "B", "C", "D"],
+            )
+            self.assertEqual(
+                comparisons["gen"]["matrix"]["present_variants"],
+                ["A", "B", "C", "D"],
+            )
+            report = (output / "report.md").read_text()
+            self.assertIn("gen1_B__20260521T000000Z__fp_gen1_B", report)
+            self.assertIn("gen2_D__20260521T000000Z__fp_gen2_D", report)
             for summary_path in (output / "summaries").glob("*.summary.json"):
                 summary = json.loads(summary_path.read_text())
                 experiment = summary["meta"]["experiment"]
                 variant = experiment["variant"]
                 semantics = EXPERIMENT_VARIANTS[variant]
+                self.assertEqual(summary["meta"]["experiment_gen"], experiment["generation"])
+                self.assertEqual(summary["meta"]["run_variant"], experiment["variant"])
+                self.assertEqual(summary["meta"]["sentiment_enabled"], experiment["sentiment_enabled"])
+                self.assertEqual(
+                    summary["meta"]["missing_indicators_enabled"],
+                    experiment["missing_indicators_enabled"],
+                )
+                self.assertEqual(summary["meta"]["semantic_label"], experiment["semantic_label"])
                 self.assertEqual(experiment["generation"], semantics["generation"])
                 self.assertEqual(experiment["sentiment_enabled"], semantics["sentiment_enabled"])
                 self.assertEqual(experiment["missing_indicators_enabled"], semantics["missing_indicators_enabled"])
                 self.assertEqual(experiment["semantic_label"], semantics["semantic_label"])
+        finally:
+            _rmtree(archive)
+            _rmtree(output)
+
+    def test_variant_b_manifest_stays_b_gen1_through_pipeline(self):
+        from analysis.pipeline import run_pipeline
+
+        archive = Path(tempfile.mkdtemp())
+        output = Path(tempfile.mkdtemp())
+        try:
+            manifests = [
+                ("fp_gen1_A", "gen1", "A", True, False),
+                ("fp_gen1_B", "gen1", "B", False, False),
+                ("fp_gen2_C", "gen2", "C", True, True),
+                ("fp_gen2_D", "gen2", "D", False, True),
+            ]
+            for run_name, generation, variant, sentiment_enabled, missing_indicators_enabled in manifests:
+                run_dir = archive / run_name
+                run_dir.mkdir()
+                manifest = {
+                    "run": {
+                        "run_id": run_name,
+                        "git_sha": "abc123",
+                        "timestamp_utc": "20260521T010101Z",
+                    },
+                    "experiment": {
+                        "generation": generation,
+                        "variant": variant,
+                        "sentiment_enabled": sentiment_enabled,
+                        "missing_indicators_enabled": missing_indicators_enabled,
+                        "semantic_label": f"{generation.capitalize()}_{variant}",
+                        "legacy_semantics": False,
+                        "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
+                    },
+                    "dl": {
+                        "dl_enabled": True,
+                        "dl_mode_tag": "__dl_enabled",
+                    },
+                }
+                (run_dir / "run_manifest.json").write_text(json.dumps(manifest))
+                (run_dir / "walkforward_results_summary__dl_enabled.csv").write_text(
+                    "Pair,Sharpe_Dynamic,Sharpe_Baseline,Sharpe_Delta,N_Folds\n"
+                    "EURUSD,0.35,0.22,0.13,48\n"
+                )
+
+            run_pipeline(archive, output, verbose=False)
+            summary_b = json.loads(
+                (output / "summaries" / "gen1_B__20260521T010101Z__fp_gen1_B.summary.json").read_text()
+            )
+            self.assertEqual(summary_b["meta"]["experiment_gen"], "gen1")
+            self.assertEqual(summary_b["meta"]["run_variant"], "B")
+            self.assertFalse(summary_b["meta"]["sentiment_enabled"])
+            self.assertFalse(summary_b["meta"]["missing_indicators_enabled"])
+            comparisons = json.loads((output / "comparisons.json").read_text())
+            self.assertEqual(
+                comparisons["sentiment"]["matrix"]["present_variants"],
+                ["A", "B", "C", "D"],
+            )
         finally:
             _rmtree(archive)
             _rmtree(output)
