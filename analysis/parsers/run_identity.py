@@ -10,13 +10,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from experiment_semantics import (
-    CURRENT_EXPERIMENT_SEMANTICS_VERSION,
-    LEGACY_RUN_MEANING,
-    LEGACY_VARIANT,
-    VALID_EXPERIMENT_VARIANTS,
-    variant_semantics,
-)
+from experiment_semantics import LEGACY_RUN_MEANING, LEGACY_VARIANT, VALID_EXPERIMENT_VARIANTS
 
 _TS_RE = re.compile(r"(\d{8}T\d{6}Z)")
 
@@ -50,6 +44,49 @@ def _normalize_variant(value: str | None) -> str | None:
     if normalized in VALID_EXPERIMENT_VARIANTS:
         return normalized
     return None
+
+
+# Matches archive directory names like fp_gen1_A, fp_gen2_D, and suffixed reruns
+# such as fp_gen1_B_retry or fp_gen2_C-copy.
+_ARCHIVE_SENTINEL_RE = re.compile(r"fp_(gen[12])_([A-D])(?:$|[_-])", re.IGNORECASE)
+
+
+def _build_run_meaning(
+    generation: str | None,
+    sentiment_enabled: bool | None,
+    missing_indicators_enabled: bool | None,
+) -> str:
+    if (
+        generation not in {"gen1", "gen2"}
+        or not isinstance(sentiment_enabled, bool)
+        or not isinstance(missing_indicators_enabled, bool)
+    ):
+        return LEGACY_RUN_MEANING
+    sentiment = "sentiment ON" if sentiment_enabled else "sentiment OFF"
+    missing = (
+        "missing indicator ON"
+        if missing_indicators_enabled
+        else "missing indicator OFF"
+    )
+    return f"{sentiment} + {missing} ({generation})"
+
+
+def _validate_archive_sentinel(
+    archive_dir_name: str,
+    generation: str | None,
+    variant: str | None,
+) -> None:
+    match = _ARCHIVE_SENTINEL_RE.search(archive_dir_name)
+    if not match:
+        return
+    expected_generation = match.group(1).lower()
+    expected_variant = match.group(2).upper()
+    if generation != expected_generation or variant != expected_variant:
+        raise RuntimeError(
+            "Analysis attribution corruption detected: "
+            f"archive_dir={archive_dir_name!r} encodes {expected_generation}/{expected_variant} "
+            f"but manifest.experiment resolved to {generation!r}/{variant!r}."
+        )
 
 
 def infer_run_identity(
@@ -98,11 +135,15 @@ def infer_run_identity(
             "Manifest experiment block missing; using legacy unknown semantics (variant='U')."
         )
 
-    variant = LEGACY_VARIANT
-    final_gen = "unknown"
-    legacy_semantics = True
-    semantics_version = experiment_block.get("semantics_version")
-    has_current_semantics_version = semantics_version == CURRENT_EXPERIMENT_SEMANTICS_VERSION
+    variant = explicit_variant or LEGACY_VARIANT
+    final_gen = explicit_gen or "unknown"
+    legacy_semantics = not (
+        explicit_gen in {"gen1", "gen2"}
+        and explicit_variant in VALID_EXPERIMENT_VARIANTS
+        and isinstance(sentiment_enabled, bool)
+        and isinstance(missing_indicators_enabled, bool)
+        and semantic_label is not None
+    )
 
     if explicit_gen is None and experiment_block:
         identity_warnings.append("Experiment generation invalid or missing in manifest experiment block.")
@@ -117,47 +158,11 @@ def infer_run_identity(
     if semantic_label is None and experiment_block:
         identity_warnings.append("Experiment semantic_label missing or empty in manifest experiment block.")
 
-    if experiment_block and not has_current_semantics_version:
+    if explicit_variant is None and experiment_block.get("variant") is not None:
         identity_warnings.append(
-            "Manifest experiment semantics version missing or stale; "
-            "treating manifest as legacy semantics (variant='U')."
+            f"Experiment variant invalid: {experiment_block.get('variant')!r} "
+            f"(expected one of {sorted(VALID_EXPERIMENT_VARIANTS)})."
         )
-
-    if explicit_variant and has_current_semantics_version:
-        canonical_semantics = variant_semantics(explicit_variant)
-        if canonical_semantics is not None:
-            variant = explicit_variant
-            final_gen = canonical_semantics["generation"]
-            legacy_semantics = False
-            if explicit_gen and explicit_gen != canonical_semantics["generation"]:
-                identity_warnings.append(
-                    f"Variant conflict: explicit generation='{explicit_gen}' "
-                    f"does not match canonical generation='{canonical_semantics['generation']}'."
-                )
-            if sentiment_enabled is not None and sentiment_enabled != canonical_semantics["sentiment_enabled"]:
-                identity_warnings.append(
-                    f"Variant conflict: explicit sentiment_enabled={sentiment_enabled} "
-                    f"does not match canonical sentiment_enabled={canonical_semantics['sentiment_enabled']}."
-                )
-            if (
-                missing_indicators_enabled is not None
-                and missing_indicators_enabled != canonical_semantics["missing_indicators_enabled"]
-            ):
-                identity_warnings.append(
-                    "Variant conflict: explicit missing_indicators_enabled="
-                    f"{missing_indicators_enabled} does not match canonical "
-                    f"missing_indicators_enabled={canonical_semantics['missing_indicators_enabled']}."
-                )
-            if semantic_label and semantic_label != canonical_semantics["semantic_label"]:
-                identity_warnings.append(
-                    f"Variant conflict: explicit semantic_label='{semantic_label}' "
-                    f"does not match canonical semantic_label='{canonical_semantics['semantic_label']}'."
-                )
-        else:
-            identity_warnings.append(
-                f"Experiment variant invalid: {explicit_variant!r} "
-                f"(expected one of {sorted(VALID_EXPERIMENT_VARIANTS)})."
-            )
 
     if final_gen == "unknown" or variant == LEGACY_VARIANT:
         identity_warnings.append(
@@ -172,6 +177,9 @@ def infer_run_identity(
         archive_relpath = run_dir.name
 
     archive_slug = _slugify_path(archive_relpath)
+    sentinel_gen = final_gen if final_gen != "unknown" else None
+    sentinel_variant = variant if variant != LEGACY_VARIANT else None
+    _validate_archive_sentinel(run_dir.name, sentinel_gen, sentinel_variant)
     semantic_name = f"{final_gen}_{variant}"
     semantic_run_id = f"{semantic_name}__{timestamp}"
     canonical_run_id = f"{semantic_run_id}__{archive_slug}"
@@ -182,11 +190,14 @@ def infer_run_identity(
         "semantic_run_id": semantic_run_id,
         "experiment_gen": final_gen,
         "run_variant": variant,
+        "sentiment_enabled": sentiment_enabled,
+        "missing_indicators_enabled": missing_indicators_enabled,
+        "semantic_label": semantic_label,
         "legacy_semantics": legacy_semantics,
-        "run_meaning": (
-            canonical_semantics["run_meaning"]
-            if not legacy_semantics and (canonical_semantics := variant_semantics(variant))
-            else LEGACY_RUN_MEANING
+        "run_meaning": _build_run_meaning(
+            final_gen if final_gen != "unknown" else None,
+            sentiment_enabled,
+            missing_indicators_enabled,
         ),
         "archive_relpath": archive_relpath,
         "archive_slug": archive_slug,

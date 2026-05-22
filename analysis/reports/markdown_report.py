@@ -114,11 +114,11 @@ def render_markdown_report(
         meta = s.get("meta") or {}
         experiment = meta.get("experiment") or {}
         run_id = s.get("run_id", "—")
-        gen = experiment.get("generation") or meta.get("experiment_gen") or "—"
-        variant = experiment.get("variant") or meta.get("run_variant") or "—"
+        gen = experiment.get("generation") or "—"
+        variant = experiment.get("variant") or "—"
         sentiment = experiment.get("sentiment_enabled")
         missing_ind = experiment.get("missing_indicators_enabled")
-        sem_label = experiment.get("semantic_label") or meta.get("semantic_label") or "—"
+        sem_label = experiment.get("semantic_label") or "—"
         legacy_semantics = bool(meta.get("legacy_semantics") or experiment.get("legacy_semantics"))
         sentiment_str = ("✓" if sentiment else "✗") if sentiment is not None else "—"
         missing_str = ("✓" if missing_ind else "✗") if missing_ind is not None else "—"

@@ -20,7 +20,8 @@ def compare_gen1_gen2(
     variants: dict[str, list[dict[str, Any]]] = {v: [] for v in ("A", "B", "C", "D")}
     unknown: list[str] = []
     for summary in summaries:
-        variant = ((summary.get("meta") or {}).get("run_variant") or "U").upper()
+        experiment = ((summary.get("meta") or {}).get("experiment") or {})
+        variant = (experiment.get("variant") or "U").upper()
         if variant in variants:
             variants[variant].append(summary)
         else:
