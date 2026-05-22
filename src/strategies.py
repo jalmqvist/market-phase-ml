@@ -1817,41 +1817,34 @@ class StrategySelector_Dynamic:
             pred_type = None
 
             if selector is not None:
-                # Use reindex so that columns present in selector.feature_cols
-                # but absent from df (e.g. DL columns with zero coverage for
-                # this pair/slice) become NaN rather than raising KeyError.
-                # The isnull check below then correctly falls through to the
-                # PhaseAware fallback for any bar without complete features.
-                features_df = df.loc[df.index[[i]]].reindex(
-                    columns=selector.feature_cols
-                ).copy()
-                required_cols = [
-                    c for c in (getattr(selector, "required_feature_cols", []) or [])
-                    if c in features_df.columns
-                ]
-                required_ready = (
-                    not required_cols
-                    or not features_df[required_cols].isnull().any().any()
-                )
-                if required_ready:
-                    try:
-                        probs = selector.predict_proba(features_df)  # dict: class -> prob
+                # Pass the raw bar row to predict_proba.  The selector now handles
+                # all schema reindexing, missing-indicator generation, and strict
+                # schema validation internally.
+                #
+                # ValueError = required features are NaN at this bar → legitimate
+                #              PhaseAware fallback (e.g. no DL coverage yet).
+                # RuntimeError = feature schema mismatch → hard fail; must NOT be
+                #                swallowed — it indicates a training/inference bug.
+                try:
+                    probs = selector.predict_proba(df.loc[df.index[[i]]])
 
-                        # sort probs descending to get best and runner-up
-                        sorted_probs = sorted(
-                            probs.items(),
-                            key=lambda kv: (-float(kv[1]), str(kv[0])),
-                        )
+                    # sort probs descending to get best and runner-up
+                    sorted_probs = sorted(
+                        probs.items(),
+                        key=lambda kv: (-float(kv[1]), str(kv[0])),
+                    )
 
-                        pred_type = sorted_probs[0][0]
-                        pmax = float(sorted_probs[0][1])
-                        p2 = float(sorted_probs[1][1]) if len(sorted_probs) > 1 else -1.0
+                    pred_type = sorted_probs[0][0]
+                    pmax = float(sorted_probs[0][1])
+                    p2 = float(sorted_probs[1][1]) if len(sorted_probs) > 1 else -1.0
 
-                    except Exception as e:
-                        print(f"  ⚠️  Selector prediction failed at bar {i}: {e}")
-                        pred_type = None
-                        pmax = -1.0
-                        p2 = -1.0
+                except ValueError:
+                    # Required features unavailable at this bar — fall back to
+                    # PhaseAware silently (no spam; this is expected near startup).
+                    pred_type = None
+                    pmax = -1.0
+                    p2 = -1.0
+                # RuntimeError (schema mismatch) propagates immediately — no swallowing.
 
             # 1) Propose a type based on gating policy (ignoring min-hold)
             proposed_type = current_type

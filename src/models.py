@@ -110,6 +110,50 @@ def safe_existing_columns(df: pd.DataFrame, cols: list) -> list:
     return [c for c in cols if c in df.columns]
 
 
+def validate_feature_schema(
+    fitted_schema: list[str],
+    inference_schema: list[str],
+    *,
+    context: str = "",
+) -> None:
+    """Validate that the inference feature schema exactly matches the fitted schema.
+
+    This is a hard-fail check — inference MUST use the exact fitted schema
+    (same columns, same order, same count).  Any deviation indicates a
+    training/inference drift that would silently corrupt predictions.
+
+    Args:
+        fitted_schema:    Ordered column list captured at fit time.
+        inference_schema: Ordered column list present at inference time.
+        context:          Optional diagnostic label (pair, fold, bar index, …).
+
+    Raises:
+        RuntimeError: If the schemas do not match exactly, with full diagnostics
+                      showing missing columns, extra columns, and ordering issues.
+    """
+    if list(inference_schema) == list(fitted_schema):
+        return  # fast path — exact match
+
+    fitted_set = set(fitted_schema)
+    infer_set = set(inference_schema)
+    missing_cols = sorted(fitted_set - infer_set)
+    extra_cols = sorted(infer_set - fitted_set)
+    order_mismatch_only = (
+        not missing_cols and not extra_cols
+        and list(inference_schema) != list(fitted_schema)
+    )
+
+    ctx = f" [{context}]" if context else ""
+    raise RuntimeError(
+        f"Selector feature schema mismatch during inference{ctx}:\n"
+        f"  fitted_schema    ({len(fitted_schema)} cols): {fitted_schema}\n"
+        f"  inference_schema ({len(inference_schema)} cols): {list(inference_schema)}\n"
+        f"  missing_cols (in fitted but not inference): {missing_cols}\n"
+        f"  extra_cols   (in inference but not fitted): {extra_cols}\n"
+        f"  ordering_mismatch_only: {order_mismatch_only}\n"
+    )
+
+
 def apply_optional_feature_imputation(
     X: pd.DataFrame,
     optional_feature_cols: list[str],
@@ -1378,6 +1422,9 @@ class StrategySelector:
         self.optional_feature_cols = None
         self.scaler = None
         self.random_state = seed
+        # Canonical feature schema frozen at fit time (exact column order used
+        # for scaler.fit and model.fit).  Inference MUST reindex to this schema.
+        self.feature_schema_: list[str] | None = None
 
 
 
@@ -1513,6 +1560,15 @@ class StrategySelector:
         )
 
         self.model.fit(X_scaled, y_encoded)
+
+        # Freeze the canonical feature schema in the EXACT column order used for
+        # scaler.fit() and model.fit().  This is the contract that inference must
+        # honour.  It must be captured BEFORE _stable_feature_columns() re-sorts
+        # everything, because _stable_feature_columns() interleaves the *_missing
+        # indicator columns alphabetically with the base/DL columns, producing a
+        # different order from what the scaler saw at fit time.
+        self.feature_schema_ = list(X.columns)
+
         self.feature_cols = _stable_feature_columns(list(X.columns))
         self.required_feature_cols = _stable_feature_columns(list(base_feature_cols))
         self.optional_feature_cols = _stable_feature_columns(list(dl_feature_cols))
@@ -1541,95 +1597,120 @@ class StrategySelector:
             'diagnostics': diag,
         }
 
-    def predict(self, features_df: pd.DataFrame) -> str:
+    def _prepare_inference_matrix(
+        self,
+        features_df: pd.DataFrame,
+        *,
+        context: str = "",
+    ) -> np.ndarray:
+        """Prepare and validate inference feature matrix, returning scaled ndarray.
+
+        Enforces strict schema equality between fitted and inference schemas.
+        Raises:
+            ValueError:   Required features contain NaN (legitimate PhaseAware fallback).
+            RuntimeError: Feature schema mismatch — hard fail, must not be swallowed.
+        """
+        if self.feature_schema_ is None:
+            raise ValueError("Model not trained. Call train() first.")
+        if self.scaler is None:
+            raise ValueError("Scaler not fitted. Call train() first.")
+
+        # Project to only the non-indicator base columns (the *_missing indicator
+        # columns will be generated deterministically by apply_optional_feature_imputation
+        # in the next step, exactly as they were generated during training).
+        _indicator_suffix = "_missing"
+        base_cols = [c for c in self.feature_schema_ if not c.endswith(_indicator_suffix)]
+        X = features_df.reindex(columns=base_cols).copy()
+
+        # Hard-check required (non-optional) feature columns for NaN.
+        required_cols = [c for c in (self.required_feature_cols or []) if c in X.columns]
+        if required_cols and X[required_cols].isnull().any().any():
+            raise ValueError("Required selector features contain NaN")
+
+        # Deterministic imputation WITH missing-indicator columns — mirrors training.
+        X = apply_optional_feature_imputation(
+            X,
+            self.optional_feature_cols or [],
+            fill_value=0.0,
+            add_missing_indicators=True,
+        )
+
+        # Strict schema validation: inference columns must exactly match fit schema.
+        validate_feature_schema(self.feature_schema_, list(X.columns), context=context)
+
+        # Reindex to exact training column order so scaler.transform() receives
+        # columns in the same order as scaler.fit_transform() did.
+        X_infer = X.reindex(columns=self.feature_schema_)
+        return self.scaler.transform(X_infer)
+
+    def predict(self, features_df: pd.DataFrame, *, context: str = "") -> str:
         """
         Predict best strategy TYPE given current market state.
 
         Args:
-            features_df: DataFrame with one row, columns matching get_feature_columns()
+            features_df: DataFrame with one or more rows.  The selector handles
+                         all schema reindexing internally — callers MUST NOT
+                         pre-reindex to feature_cols.
+            context:     Optional diagnostic label included in error messages.
 
         Returns:
             Strategy type: 'TrendFollowing', 'MeanReversion', or 'PhaseAware'
+
+        Raises:
+            ValueError:   Required features are NaN → caller may fall back to PhaseAware.
+            RuntimeError: Feature schema mismatch → hard fail.
         """
         if self.model is None:
             raise ValueError("Model not trained. Call train() first.")
 
-        # Use reindex so that columns absent from features_df (e.g. DL columns
-        # that were trained on but are missing in the current inference slice)
-        # become NaN rather than raising KeyError.
-        X = features_df.reindex(columns=self.feature_cols).copy()
-        required_cols = [c for c in (self.required_feature_cols or []) if c in X.columns]
-        if required_cols and X[required_cols].isnull().any().any():
-            return 'PhaseAware'  # or: return None
-        X = apply_optional_feature_imputation(
-            X,
-            self.optional_feature_cols or [],
-            fill_value=0.0,
-            add_missing_indicators=False,
-        )
-        if X.isnull().any().any():
-            return 'PhaseAware'
-
-        if getattr(self, "scaler", None) is None:
-            raise ValueError("Scaler not fitted. Train() must set self.scaler.")
-
-        X_scaled = self.scaler.transform(X)
-
+        X_scaled = self._prepare_inference_matrix(features_df, context=context)
         y_pred_encoded = self.model.predict(X_scaled)[0]
-        y_pred = self.label_encoder.inverse_transform([y_pred_encoded])[0]
+        return self.label_encoder.inverse_transform([y_pred_encoded])[0]
 
-        return y_pred
-
-    def predict_proba(self, features_df: pd.DataFrame) -> dict:
+    def predict_proba(self, features_df: pd.DataFrame, *, context: str = "") -> dict:
         """
         Predict probability distribution over strategy types.
 
-        Useful for weighted portfolio allocation.
+        Args:
+            features_df: DataFrame with one or more rows.  The selector handles
+                         all schema reindexing internally — callers MUST NOT
+                         pre-reindex to feature_cols.
+            context:     Optional diagnostic label included in error messages.
 
         Returns:
             Dict: {strategy_type: probability}
+
+        Raises:
+            ValueError:   Required features are NaN → caller may fall back to PhaseAware.
+            RuntimeError: Feature schema mismatch → hard fail.
         """
         if self.model is None:
             raise ValueError("Model not trained. Call train() first.")
-
         if self.scaler is None:
             raise ValueError("Scaler not fitted. Call train() first.")
 
-        # Use reindex so missing columns (e.g. absent DL columns) become NaN
-        # instead of raising KeyError; callers check for NaN before predicting.
-        X = features_df.reindex(columns=self.feature_cols).copy()
-        required_cols = [c for c in (self.required_feature_cols or []) if c in X.columns]
-        if required_cols and X[required_cols].isnull().any().any():
-            raise ValueError("Required selector features contain NaN")
-        X = apply_optional_feature_imputation(
-            X,
-            self.optional_feature_cols or [],
-            fill_value=0.0,
-            add_missing_indicators=False,
-        )
-        X_scaled = self.scaler.transform(X)
-
+        X_scaled = self._prepare_inference_matrix(features_df, context=context)
         probs = self.model.predict_proba(X_scaled)[0]
         return {
             strategy: prob
             for strategy, prob in zip(self.label_encoder.classes_, probs)
         }
 
-    def predict_proba_df(self, X_df: pd.DataFrame) -> np.ndarray:
+    def predict_proba_df(self, X_df: pd.DataFrame, *, context: str = "") -> np.ndarray:
         """
-        Vectorized predict_proba for a feature DataFrame with columns = feature_cols.
-        Returns ndarray shape (n_samples, n_classes).
+        Vectorized predict_proba for a feature DataFrame.
+
+        Args:
+            X_df:    DataFrame with n rows.  The selector handles all schema
+                     reindexing internally — callers MUST NOT pre-reindex.
+            context: Optional diagnostic label included in error messages.
+
+        Returns:
+            ndarray shape (n_samples, n_classes).
+
+        Raises:
+            ValueError:   Required features are NaN → caller may fall back to PhaseAware.
+            RuntimeError: Feature schema mismatch → hard fail.
         """
-        # Use reindex so missing columns become NaN instead of raising KeyError.
-        X = X_df.reindex(columns=self.feature_cols).copy()
-        required_cols = [c for c in (self.required_feature_cols or []) if c in X.columns]
-        if required_cols and X[required_cols].isnull().any().any():
-            raise ValueError("Required selector features contain NaN")
-        X = apply_optional_feature_imputation(
-            X,
-            self.optional_feature_cols or [],
-            fill_value=0.0,
-            add_missing_indicators=False,
-        )
-        X_scaled = self.scaler.transform(X)
+        X_scaled = self._prepare_inference_matrix(X_df, context=context)
         return self.model.predict_proba(X_scaled)
