@@ -383,6 +383,7 @@ def _render_manifest_metadata(lines: list[str], summary: dict[str, Any]) -> None
     lines.append("### Manifest Metadata\n")
     meta = summary.get("meta") or {}
     md = meta.get("manifest_diagnostics") or {}
+    reproducibility = meta.get("reproducibility") or {}
     lines.append(f"- Manifest present: {'yes' if meta.get('manifest_present') else 'no'}")
     lines.append(f"- Legacy mode: {'yes' if meta.get('legacy_mode') else 'no'}")
     lines.append(f"- Canonical manifest path: {md.get('manifest_path') or '—'}")
@@ -390,6 +391,12 @@ def _render_manifest_metadata(lines: list[str], summary: dict[str, Any]) -> None
     lines.append(f"- Canonical manifest timestamp: {md.get('manifest_timestamp') or '—'}")
     lines.append(f"- Canonical manifest mode tag: {md.get('dl_mode_tag') or '—'}")
     lines.append(f"- Manifest count in run root: {md.get('manifest_count', 0)}")
+    if reproducibility:
+        lines.append("- Reproducibility seed metadata:")
+        lines.append(f"  - experiment_seed: {reproducibility.get('experiment_seed', '—')}")
+        lines.append(f"  - numpy_seed: {reproducibility.get('numpy_seed', '—')}")
+        lines.append(f"  - python_random_seed: {reproducibility.get('python_random_seed', '—')}")
+        lines.append(f"  - torch_seed: {reproducibility.get('torch_seed', '—')}")
     lines.append("")
 
 

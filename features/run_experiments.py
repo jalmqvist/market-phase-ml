@@ -1,11 +1,17 @@
 import pandas as pd
 import numpy as np
+import argparse
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from src.models import (
     build_training_matrix,
     OPTIONAL_DL_FEATURE_COLS,
+)
+from src.repro import (
+    DEFAULT_EXPERIMENT_SEED,
+    resolve_experiment_seed,
+    set_global_seed,
 )
 
 from features.experiments import EXPERIMENTS
@@ -79,7 +85,7 @@ def train_test_split_xy(X, y):
 # Walk forward
 # --------------------------------------------------
 
-def run_walk_forward(df, feature_groups, target_col):
+def run_walk_forward(df, feature_groups, target_col, experiment_seed: int):
     df = df.copy()
 
     df["year"] = pd.to_datetime(df["entry_time"]).dt.year
@@ -96,7 +102,8 @@ def run_walk_forward(df, feature_groups, target_col):
         if len(train) == 0 or len(test) == 0:
             continue
 
-        for name, groups in feature_groups.items():
+        for name in sorted(feature_groups.keys()):
+            groups = feature_groups[name]
 
             X_train = assemble_features(train, groups)
             y_train = train[target_col]
@@ -139,7 +146,7 @@ def run_walk_forward(df, feature_groups, target_col):
             if len(X_train) == 0 or len(X_test) == 0:
                 continue
 
-            model = LogisticRegression(max_iter=1000)
+            model = LogisticRegression(max_iter=1000, random_state=experiment_seed)
             model.fit(X_train, y_train)
 
             preds = model.predict(X_test)
@@ -244,7 +251,12 @@ def _build_experiments() -> dict:
 # Main experiment loop
 # --------------------------------------------------
 
-def run():
+def run(*, experiment_seed: int | None = None):
+    resolved_seed = resolve_experiment_seed(
+        cli_seed=experiment_seed,
+        default_seed=DEFAULT_EXPERIMENT_SEED,
+    )
+    set_global_seed(resolved_seed)
 
     print("Loading data...")
     df = pd.read_csv(INPUT_PATH)
@@ -263,7 +275,7 @@ def run():
 
     print("Running walk-forward experiments...")
 
-    wf_results = run_walk_forward(df, experiments, TARGET)
+    wf_results = run_walk_forward(df, experiments, TARGET, resolved_seed)
 
     print("\nWalk-forward results:")
     print(wf_results)
@@ -279,6 +291,17 @@ def run():
 
 
 if __name__ == "__main__":
-    res = run()
+    parser = argparse.ArgumentParser(description="Run MSML walk-forward experiments.")
+    parser.add_argument(
+        "--experiment-seed",
+        type=int,
+        default=None,
+        help=(
+            "Experiment RNG seed. Precedence: --experiment-seed > EXPERIMENT_SEED env "
+            f"> default ({DEFAULT_EXPERIMENT_SEED})."
+        ),
+    )
+    args = parser.parse_args()
+    res = run(experiment_seed=args.experiment_seed)
     print("\nSummary:")
     print(res)

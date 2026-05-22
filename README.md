@@ -548,12 +548,32 @@ See implementation details in `src/strategies.py` (`Backtester`).
 
 ### Run
 ```bash
+# optional (default: 42)
+export EXPERIMENT_SEED=42
+
+# CLI overrides env when both are set
+python main.py --experiment-seed 42
+
+# or use env/default resolution
 python main.py
 ```
 
 ### Outputs
-- `results/` — CSV tables including ablations, comparisons, and walk-forward artifacts
-- `figures/` — generated charts (optional / may evolve)
+- Run-owned directory under `results_archive/<generation>_<variant>__<timestamp>/`
+- Canonical `run_manifest.json` includes:
+  - `reproducibility.experiment_seed`
+  - `reproducibility.numpy_seed`
+  - `reproducibility.python_random_seed`
+  - `reproducibility.torch_seed` (when torch is available)
+
+### Deterministic guarantees
+- Global RNG seeding is applied for Python `random`, NumPy, and torch (best-effort if installed).
+- Selector tie-breaking and fold generation use deterministic ordering rules.
+- Walk-forward/artifact ordering is stabilized by sorted pair iteration.
+
+### Caveats
+- Perfect bitwise equality can still vary across hardware/BLAS/CUDA/PyTorch versions.
+- If torch is not installed, torch-specific seeds are omitted (other deterministic controls still apply).
 
 ### Caching
 The pipeline uses caching to speed up iteration. If you want a clean run, clear cached files (see `src/cache.py` and the `clear_cache(...)` calls in `main.py`).

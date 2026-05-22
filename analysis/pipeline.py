@@ -194,6 +194,7 @@ def build_run_summary(
         "dl_artifact_path": (manifest or {}).get("dl_artifact_path"),
         "walkforward_params": (manifest or {}).get("walkforward"),
         "flags": (manifest or {}).get("flags"),
+        "reproducibility": (manifest or {}).get("reproducibility") or {},
         "git_sha": (manifest or {}).get("git_sha"),
         "timestamp_utc": identity.get("timestamp_utc"),
         "python_version": (manifest or {}).get("python_version"),

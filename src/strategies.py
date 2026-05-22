@@ -1647,7 +1647,10 @@ def run_backtests(
     # ── PhaseAware per-phase breakdown (best by Sharpe) ──────────────────────
     pa_keys = [k for k in results.keys() if k.startswith('PhaseAware_')]
     if pa_keys:
-        best_pa_key = max(pa_keys, key=lambda k: results[k] ['sharpe_ratio'])
+        best_pa_key = sorted(
+            pa_keys,
+            key=lambda k: (-float(results[k]['sharpe_ratio']), k),
+        )[0]
         print('\n' + '=' * 70)
         print(f'BEST PHASE-AWARE COMBO ({best_pa_key}): PER-PHASE PERFORMANCE')
         print('=' * 70)
@@ -1835,7 +1838,10 @@ class StrategySelector_Dynamic:
                         probs = selector.predict_proba(features_df)  # dict: class -> prob
 
                         # sort probs descending to get best and runner-up
-                        sorted_probs = sorted(probs.items(), key=lambda kv: kv[1], reverse=True)
+                        sorted_probs = sorted(
+                            probs.items(),
+                            key=lambda kv: (-float(kv[1]), str(kv[0])),
+                        )
 
                         pred_type = sorted_probs[0][0]
                         pmax = float(sorted_probs[0][1])

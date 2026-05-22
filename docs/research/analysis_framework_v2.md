@@ -110,6 +110,7 @@ Run manifests (`run_manifest.json`; legacy `run_manifest_*.json`) are parsed for
 - `dl.dl_artifact_path` — path to the DL parquet artifact
 - `walkforward.*` — fold parameters (train years, test months, etc.)
 - `flags.*` — pipeline feature flags
+- `reproducibility.*` — experiment seed metadata propagated from runtime seeding
 - `run.run_id`, `run.git_sha`, `run.timestamp_utc`
 
 Each run directory must contain **exactly one** run manifest.
@@ -146,6 +147,12 @@ Each run produces a `<canonical_run_id>.summary.json` with this structure:
     "dl_surface_string": "mlp/LVTF/h24/price_trend",
     "walkforward_params": { "train_years": 7, "test_months": 6, ... },
     "flags": { "DL_SIGNALS_ENABLED": true, "RUN_WALKFORWARD": true, ... },
+    "reproducibility": {
+      "experiment_seed": 42,
+      "numpy_seed": 42,
+      "python_random_seed": 42,
+      "torch_seed": 42
+    },
     "git_sha": "89c81974...",
     "timestamp_utc": "20260512T074801Z",
     "run_dir": "results/evidence/dl_v1_preliminary_eurusd_lvtf"
