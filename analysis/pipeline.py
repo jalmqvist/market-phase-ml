@@ -147,6 +147,7 @@ def build_run_summary(
         manifest=manifest,
     )
     run_id = identity["run_id"]
+    experiment = (manifest or {}).get("experiment") or {}
 
     # --- CSVs -------------------------------------------------------------
     csvs = parse_run_csvs(run_dir)
@@ -181,7 +182,12 @@ def build_run_summary(
 
     # --- meta -------------------------------------------------------------
     meta = {
-        "experiment_gen": identity.get("experiment_gen") or experiment_gen,
+        "experiment_gen": experiment.get("generation") or identity.get("experiment_gen") or experiment_gen,
+        "run_variant": experiment.get("variant") or identity.get("run_variant"),
+        "sentiment_enabled": experiment.get("sentiment_enabled"),
+        "missing_indicators_enabled": experiment.get("missing_indicators_enabled"),
+        "semantic_label": experiment.get("semantic_label"),
+        "experiment": experiment,
         "dl_enabled": (manifest or {}).get("dl_enabled"),
         "dl_surface": (manifest or {}).get("dl_surface"),
         "dl_surface_string": (manifest or {}).get("dl_surface_string"),
@@ -204,7 +210,6 @@ def build_run_summary(
         },
         "semantic_run_name": identity.get("semantic_run_name"),
         "semantic_run_id": identity.get("semantic_run_id"),
-        "run_variant": identity.get("run_variant"),
         "run_meaning": identity.get("run_meaning"),
         "archive_relpath": identity.get("archive_relpath"),
         "archive_slug": identity.get("archive_slug"),

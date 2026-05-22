@@ -37,52 +37,26 @@ def _normalize_gen(value: str | None) -> str | None:
     if not isinstance(value, str):
         return None
     lowered = value.strip().lower()
-    if lowered in {"gen1", "g1"}:
+    if lowered == "gen1":
         return "gen1"
-    if lowered in {"gen2", "g2"}:
+    if lowered == "gen2":
         return "gen2"
     return None
 
 
-def _manifest_experiment_gen(manifest: dict[str, Any] | None) -> str | None:
-    payload = manifest or {}
-    candidates = [
-        payload.get("experiment_gen"),
-        (payload.get("run") or {}).get("experiment_gen"),
-        (payload.get("experiment") or {}).get("gen"),
-        (payload.get("flags") or {}).get("EXPERIMENT_GEN"),
-    ]
-    for candidate in candidates:
-        normalized = _normalize_gen(candidate)
-        if normalized:
-            return normalized
-    return None
-
-
-def _manifest_variant(manifest: dict[str, Any] | None) -> str | None:
-    payload = manifest or {}
-    candidates = [
-        payload.get("run_variant"),
-        (payload.get("run") or {}).get("run_variant"),
-        (payload.get("experiment") or {}).get("variant"),
-    ]
-    for candidate in candidates:
-        if not isinstance(candidate, str):
-            continue
-        normalized = candidate.strip().upper()
-        if normalized in {"A", "B", "C", "D"}:
-            return normalized
-    return None
-
-
-def _variant_from_gen_and_dl(experiment_gen: str, dl_enabled: bool | None) -> str | None:
-    if dl_enabled is None:
+def _normalize_variant(value: str | None) -> str | None:
+    if not isinstance(value, str):
         return None
-    if experiment_gen == "gen1":
-        return "A" if dl_enabled else "B"
-    if experiment_gen == "gen2":
-        return "C" if dl_enabled else "D"
+    normalized = value.strip().upper()
+    if normalized in {"A", "B", "C", "D"}:
+        return normalized
     return None
+
+
+def _variant_from_manifest_semantics(generation: str, sentiment_enabled: bool) -> str:
+    if generation == "gen1":
+        return "A" if sentiment_enabled else "B"
+    return "C" if sentiment_enabled else "D"
 
 
 def infer_run_identity(
@@ -110,27 +84,62 @@ def infer_run_identity(
             "Manifest timestamp missing; using run_id timestamp fallback or unknown_ts."
         )
 
-    explicit_gen = _manifest_experiment_gen(manifest)
-    inferred_gen = _normalize_gen(experiment_gen)
-    final_gen = explicit_gen or inferred_gen or "unknown"
-    if explicit_gen and inferred_gen and explicit_gen != inferred_gen:
+    experiment_block = (manifest or {}).get("experiment") or {}
+    explicit_gen = _normalize_gen(experiment_block.get("generation"))
+    explicit_variant = _normalize_variant(experiment_block.get("variant"))
+    sentiment_enabled_raw = experiment_block.get("sentiment_enabled")
+    sentiment_enabled = sentiment_enabled_raw if isinstance(sentiment_enabled_raw, bool) else None
+    missing_indicators_raw = experiment_block.get("missing_indicators_enabled")
+    missing_indicators_enabled = (
+        missing_indicators_raw if isinstance(missing_indicators_raw, bool) else None
+    )
+    semantic_label = experiment_block.get("semantic_label")
+    semantic_label = (
+        semantic_label.strip()
+        if isinstance(semantic_label, str) and semantic_label.strip()
+        else None
+    )
+
+    if manifest and not experiment_block:
         identity_warnings.append(
-            f"Experiment generation conflict: discovery='{inferred_gen}' manifest='{explicit_gen}'."
+            "Manifest experiment block missing; using legacy unknown semantics (variant='U')."
         )
 
-    dl_enabled_raw = (manifest or {}).get("dl_enabled")
-    dl_enabled: bool | None = None if dl_enabled_raw is None else bool(dl_enabled_raw)
-    explicit_variant = _manifest_variant(manifest)
-    derived_variant = _variant_from_gen_and_dl(final_gen, dl_enabled)
-    variant = explicit_variant or derived_variant or "U"
+    final_gen = explicit_gen or "unknown"
+    variant = explicit_variant or "U"
 
-    if explicit_variant and derived_variant and explicit_variant != derived_variant:
+    if explicit_gen is None and experiment_block:
+        identity_warnings.append("Experiment generation invalid or missing in manifest experiment block.")
+    if explicit_variant is None and experiment_block:
+        identity_warnings.append("Experiment variant invalid or missing in manifest experiment block.")
+    if sentiment_enabled is None and experiment_block:
+        identity_warnings.append("Experiment sentiment_enabled missing or non-boolean in manifest experiment block.")
+    if missing_indicators_enabled is None and experiment_block:
         identity_warnings.append(
-            f"Variant conflict: explicit='{explicit_variant}' derived='{derived_variant}'."
+            "Experiment missing_indicators_enabled missing or non-boolean in manifest experiment block."
         )
-    if variant == "U":
+    if semantic_label is None and experiment_block:
+        identity_warnings.append("Experiment semantic_label missing or empty in manifest experiment block.")
+
+    if explicit_gen and sentiment_enabled is not None:
+        derived_variant = _variant_from_manifest_semantics(explicit_gen, sentiment_enabled)
+        if explicit_variant and explicit_variant != derived_variant:
+            identity_warnings.append(
+                f"Variant conflict: explicit='{explicit_variant}' derived='{derived_variant}'."
+            )
+        elif explicit_variant is None:
+            variant = derived_variant
+
+    if explicit_gen and missing_indicators_enabled is not None:
+        expected_missing = explicit_gen == "gen2"
+        if missing_indicators_enabled != expected_missing:
+            identity_warnings.append(
+                "Experiment semantics conflict: missing_indicators_enabled does not match generation."
+            )
+
+    if final_gen == "unknown" or variant == "U":
         identity_warnings.append(
-            "Variant could not be inferred safely from manifest/config; assigned variant='U'."
+            "Variant unresolved from manifest experiment metadata; assigned variant='U'."
         )
 
     archive_root = archive_root.resolve()

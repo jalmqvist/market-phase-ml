@@ -19,7 +19,7 @@ A regime-aware **time-series ML pipeline** that combines:
 
 ## Notebook walkthrough (recommended)
 
-After you run `python main.py` and the `results/*.csv` artifacts are generated, you can open the notebook:
+After you run `python main.py` and the run-directory artifacts are generated, you can open the notebook:
 
 - `notebooks/01_regime_gating_walkforward.ipynb`
 
@@ -48,7 +48,17 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Key outputs (written to `results/`):
+By default, each invocation now writes into a dedicated immutable run directory:
+
+`results_archive/<generation>_<variant>__<timestamp>/`
+
+You can override the run output path explicitly:
+
+```bash
+python main.py --output-dir /absolute/path/to/my_run_dir
+```
+
+Key outputs (written inside that run directory):
 
 - `ablation_summary_aggregate.csv` — headline in-sample ablation numbers
 - `ablation_summary_per_pair.csv` — per-pair breakdown
@@ -107,9 +117,9 @@ Where:
 
 Integrity notes:
 
-- run discovery trusts `run_manifest_*.json` only (or explicit legacy marker `.mpml_legacy_run_root`)
+- run discovery trusts exactly one run manifest (`run_manifest.json` preferred; legacy `run_manifest_*.json` supported)
 - each run directory must contain exactly one manifest
-- semantic attribution is manifest/config-driven; filename heuristics are intentionally avoided
+- semantic attribution is manifest `experiment`-driven; filename heuristics are intentionally avoided
 
 Run the analysis test suite with:
 

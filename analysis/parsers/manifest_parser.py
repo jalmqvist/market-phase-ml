@@ -1,7 +1,7 @@
 """
 analysis/parsers/manifest_parser.py
 =====================================
-Parse MPML ``run_manifest_*.json`` files.
+Parse MPML canonical manifest files (``run_manifest.json`` or legacy ``run_manifest_*.json``).
 """
 
 from __future__ import annotations
@@ -9,6 +9,46 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+
+
+def _manifest_files(run_dir: Path) -> list[Path]:
+    manifests: list[Path] = []
+    canonical = run_dir / "run_manifest.json"
+    if canonical.exists():
+        manifests.append(canonical)
+    manifests.extend(
+        sorted(
+            p for p in run_dir.glob("run_manifest_*.json")
+            if p.name != "run_manifest.json"
+        )
+    )
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for m in manifests:
+        resolved = m.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        deduped.append(m)
+    return deduped
+
+
+def _parse_experiment_block(data: dict[str, Any]) -> dict[str, Any]:
+    experiment = data.get("experiment") or {}
+    if not isinstance(experiment, dict):
+        return {}
+    generation = experiment.get("generation")
+    variant = experiment.get("variant")
+    sentiment_enabled = experiment.get("sentiment_enabled")
+    missing_indicators_enabled = experiment.get("missing_indicators_enabled")
+    semantic_label = experiment.get("semantic_label")
+    return {
+        "generation": generation,
+        "variant": variant,
+        "sentiment_enabled": sentiment_enabled,
+        "missing_indicators_enabled": missing_indicators_enabled,
+        "semantic_label": semantic_label,
+    }
 
 
 def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
@@ -20,7 +60,7 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
     * 1 manifest   -> return parsed canonical manifest metadata
     * >1 manifests -> raise ``ValueError`` (ambiguous provenance)
     """
-    manifest_files = sorted(run_dir.glob("run_manifest_*.json"))
+    manifest_files = _manifest_files(run_dir)
     if not manifest_files:
         return None
     if len(manifest_files) > 1:
@@ -56,6 +96,6 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
         "timestamp_utc": run_section.get("timestamp_utc"),
         "python_version": run_section.get("python_version"),
         "run": run_section,
-        "experiment": data.get("experiment") or {},
+        "experiment": _parse_experiment_block(data),
         "raw": data,
     }

@@ -46,7 +46,7 @@ analysis/
 ├── parsers/
 │   ├── run_discovery.py         # Discover run directories in an archive
 │   ├── csv_parsers.py           # Parse all recognised MPML CSV outputs
-│   ├── manifest_parser.py       # Parse run_manifest_*.json files
+│   ├── manifest_parser.py       # Parse run_manifest.json (legacy run_manifest_*.json supported)
 │   └── log_parser.py            # Legacy log parser (fallback)
 ├── reports/
 │   └── markdown_report.py       # Markdown report renderer
@@ -103,7 +103,7 @@ annotated with a `_mode_tag` field before merging.
 
 ### Manifest files (configuration)
 
-`run_manifest_*.json` files are parsed for:
+Run manifests (`run_manifest.json`; legacy `run_manifest_*.json`) are parsed for:
 
 - `dl.dl_enabled` — whether DL signals were active
 - `dl.dl_surface` — DL model / regime / horizon specification
@@ -112,7 +112,7 @@ annotated with a `_mode_tag` field before merging.
 - `flags.*` — pipeline feature flags
 - `run.run_id`, `run.git_sha`, `run.timestamp_utc`
 
-Each run directory must contain **exactly one** `run_manifest_*.json`.
+Each run directory must contain **exactly one** run manifest.
 Multiple manifests in one run root are treated as an integrity failure.
 
 ### Log files (legacy fallback)
@@ -202,12 +202,12 @@ prediction surface provides no data:
 Gen2 allows the XGBoost gating model to learn a distinct policy for
 "DL data unavailable" bars, rather than silently falling back.
 
-**Inference policy (integrity mode):**
+**Semantics policy (integrity mode):**
 
-- trust explicit manifest/config metadata only
-- derive variant from explicit generation + `dl_enabled` when safe
-- if semantics cannot be inferred safely, assign variant `U` and warn
+- trust explicit `manifest["experiment"]` metadata only
+- required fields: `generation`, `variant`, `sentiment_enabled`, `missing_indicators_enabled`, `semantic_label`
 - do **not** infer semantics from folder/file naming heuristics
+- legacy runs without the experiment block are tolerated with warnings
 
 ### Sentiment ON vs OFF
 
@@ -280,12 +280,12 @@ Recommended archive layout:
 ```
 results_archive/
 ├── fp_gen1_A/              # Gen1, Sentiment ON
-│   ├── run_manifest_*.json
+│   ├── run_manifest.json
 │   ├── walkforward_results_summary__dl_enabled.csv
 │   ├── ablation_summary_aggregate__dl_enabled.csv
 │   └── ...
 ├── fp_gen1_B/              # Gen1, Sentiment OFF (baseline)
-│   ├── run_manifest_*__baseline.json
+│   ├── run_manifest.json
 │   └── ...
 ├── fp_gen2_C/              # Gen2, Sentiment ON
 │   └── ...
@@ -299,7 +299,7 @@ sentiment comparisons automatically.
 
 Discovery hardening:
 
-- run roots are manifest-centric (exactly one `run_manifest_*.json`)
+- run roots are manifest-centric (exactly one run manifest)
 - nested subdirectories under a discovered run root are not re-scanned
 - CSV-only fallback is legacy-only and requires `.mpml_legacy_run_root`
 

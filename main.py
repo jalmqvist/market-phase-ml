@@ -1,4 +1,5 @@
 # main.py
+import argparse
 import sys
 import importlib.metadata as importlib_metadata
 import traceback
@@ -156,13 +157,79 @@ def filter_pair_universe(raw_data: dict) -> dict:
     print(f"[PAIR FILTER] kept={kept_pairs}")
 
     return filtered
-os.makedirs("results", exist_ok=True)
 
 # ─────────────────────────────────────────
 # REPRODUCIBILITY
 # ─────────────────────────────────────────
 SEED = 42
 RUN_ID = None  # set to a string to force a specific id; otherwise auto-generated
+_CURRENT_RUN_OUTPUT_DIR: Path | None = None
+
+_VALID_EXPERIMENT_GENERATIONS = {"gen1", "gen2"}
+_VALID_EXPERIMENT_VARIANTS = {"A", "B", "C", "D"}
+_LEGACY_RESULTS_DIR = "results"
+_DEFAULT_RUNS_ROOT = "results_archive"
+
+
+def _validate_experiment_generation(value: str) -> str:
+    gen = str(value).strip().lower()
+    if gen not in _VALID_EXPERIMENT_GENERATIONS:
+        raise ValueError(
+            f"Invalid experiment generation: {value!r}. "
+            f"Allowed values={sorted(_VALID_EXPERIMENT_GENERATIONS)}"
+        )
+    return gen
+
+
+def _derive_variant(generation: str, sentiment_enabled: bool) -> str:
+    generation = _validate_experiment_generation(generation)
+    if generation == "gen1":
+        return "A" if sentiment_enabled else "B"
+    return "C" if sentiment_enabled else "D"
+
+
+def _build_experiment_metadata(*, generation: str, sentiment_enabled: bool) -> dict:
+    generation = _validate_experiment_generation(generation)
+    missing_indicators_enabled = generation == "gen2"
+    variant = _derive_variant(generation, sentiment_enabled)
+    if variant not in _VALID_EXPERIMENT_VARIANTS:
+        raise ValueError(
+            f"Invalid derived variant: {variant!r}. "
+            f"Allowed values={sorted(_VALID_EXPERIMENT_VARIANTS)}"
+        )
+    semantic_generation = {"gen1": "Gen1", "gen2": "Gen2"}[generation]
+    return {
+        "generation": generation,
+        "variant": variant,
+        "sentiment_enabled": bool(sentiment_enabled),
+        "missing_indicators_enabled": bool(missing_indicators_enabled),
+        "semantic_label": f"{semantic_generation}_{variant}",
+    }
+
+
+def _set_run_output_dir(path: Path) -> None:
+    global _CURRENT_RUN_OUTPUT_DIR
+    _CURRENT_RUN_OUTPUT_DIR = Path(path).resolve()
+    try:
+        _CURRENT_RUN_OUTPUT_DIR.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise ValueError(
+            f"Run output directory already exists: {_CURRENT_RUN_OUTPUT_DIR}. "
+            "Use a different --output-dir (or MPML_OUTPUT_DIR) to keep runs immutable."
+        ) from exc
+
+
+def _run_output_dir() -> Path:
+    if _CURRENT_RUN_OUTPUT_DIR is None:
+        raise RuntimeError("Run output directory has not been initialized.")
+    return _CURRENT_RUN_OUTPUT_DIR
+
+
+def _resolve_output_path(path: str) -> Path:
+    raw = Path(path)
+    if raw.parts and raw.parts[0] == _LEGACY_RESULTS_DIR:
+        raw = Path(*raw.parts[1:])
+    return _run_output_dir() / raw
 
 # ─────────────────────────────────────────
 # TRANSACTION COSTS (configurable)
@@ -459,8 +526,12 @@ def _dl_surface_string(surface: dict) -> str:
 
 
 def _with_mode_tag(path: str, mode_tag: str) -> str:
-    root, ext = os.path.splitext(path)
-    return f"{root}{mode_tag}{ext}"
+    target = _resolve_output_path(path)
+    stem = target.stem
+    suffix = target.suffix
+    tagged = target.with_name(f"{stem}{mode_tag}{suffix}") if suffix else target.with_name(f"{stem}{mode_tag}")
+    tagged.parent.mkdir(parents=True, exist_ok=True)
+    return str(tagged)
 
 def attach_dl_features(
     processed_df: pd.DataFrame,
@@ -948,7 +1019,7 @@ def save_results(all_pair_results: dict,
                  minors_summary: pd.DataFrame,
                  mode_tag: str) -> None:
     """Save all results to CSV files."""
-    os.makedirs('results', exist_ok=True)
+    _run_output_dir().mkdir(parents=True, exist_ok=True)
 
     # Per-pair results
     per_pair_rows = []
@@ -1334,7 +1405,7 @@ def _assert_backtest_index_matches(pair_name: str, df_ref, results: dict, tag: s
             raise RuntimeError("Equity curve index mismatch at creation time")
 
 
-def main():
+def main(*, output_dir: Path | None = None, experiment_generation: str | None = None):
     run_cfg = build_run_config(seed=SEED, run_id=RUN_ID)
     set_global_seed(run_cfg.seed)
     dl_surface = dict(DL_SIGNAL_SURFACE)
@@ -1375,6 +1446,22 @@ def main():
         print("[WARN] DL enabled but no artifact resolved; DL features will be skipped.")
     dl_mode_tag = "__dl_enabled" if dl_runtime_enabled else "__baseline"
     dl_surface_str = _dl_surface_string(dl_surface)
+    experiment_meta = _build_experiment_metadata(
+        generation=(
+            experiment_generation
+            if experiment_generation is not None
+            else os.getenv("EXPERIMENT_GENERATION", "gen1")
+        ),
+        sentiment_enabled=dl_runtime_enabled,
+    )
+    run_ts = run_cfg.run_id.replace("run_", "")
+    computed_default_output_dir = Path(
+        os.getenv("MPML_RUNS_ROOT", _DEFAULT_RUNS_ROOT)
+    ) / f"{experiment_meta['generation']}_{experiment_meta['variant']}__{run_ts}"
+    selected_output_dir = Path(
+        output_dir or os.getenv("MPML_OUTPUT_DIR", computed_default_output_dir)
+    )
+    _set_run_output_dir(selected_output_dir)
 
     print('=' * 60)
     print("=== RUN MODE: DL ENABLED ===" if dl_runtime_enabled else "=== RUN MODE: BASELINE ===")
@@ -1383,6 +1470,8 @@ def main():
     print(f"DL selected surface: {dl_surface}")
     print(f"surface={dl_surface_str}")
     print(f"DL resolved artifact path: {dl_artifact_path}")
+    print(f"Output dir: {_run_output_dir()}")
+    print(f"Experiment: {experiment_meta}")
     print('=' * 60)
 
     # Convert ticker-keyed pip values into short-name-keyed pip values
@@ -1395,7 +1484,12 @@ def main():
         "run": {
             **run_cfg.__dict__,
             "timestamp_utc": run_cfg.run_id.replace("run_", ""),
+            # Legacy compatibility for downstream tooling still reading run.*.
+            # New integrations should migrate to manifest.experiment.
+            "experiment_gen": experiment_meta["generation"],
+            "run_variant": experiment_meta["variant"],
         },
+        "experiment": experiment_meta,
         "flags": {
             "RUN_IN_SAMPLE_ABLATION": RUN_IN_SAMPLE_ABLATION,
             "RUN_WALKFORWARD": RUN_WALKFORWARD,
@@ -1470,7 +1564,7 @@ def main():
         },
     }
 
-    manifest_path = os.path.join("results", f"run_manifest_{run_cfg.run_id}{dl_mode_tag}.json")
+    manifest_path = str(_run_output_dir() / "run_manifest.json")
     write_manifest(manifest_path, manifest)
     print(f"Saved: {manifest_path}")
 
@@ -1480,7 +1574,8 @@ def main():
 
     # Create output directories
     os.makedirs('src/figures', exist_ok=True)
-    os.makedirs('results', exist_ok=True)
+    _run_output_dir().mkdir(parents=True, exist_ok=True)
+    viz.FIGURES_DIR = _run_output_dir() / "figures"
 
     # ─────────────────────────────────────────
     # 1. DOWNLOAD AND PREPARE ALL PAIRS
@@ -2045,7 +2140,7 @@ def main():
     )
 
     # Save ATR results separately
-    os.makedirs('results', exist_ok=True)
+    _run_output_dir().mkdir(parents=True, exist_ok=True)
     if not majors_atr.empty:
         majors_atr_path = _with_mode_tag('results/results_majors_atr.csv', dl_mode_tag)
         majors_atr.to_csv(majors_atr_path, index=False)
@@ -2588,7 +2683,7 @@ def main():
         if wf_df.empty:
             print("✗ Walk-forward produced no results.")
         else:
-            os.makedirs("results", exist_ok=True)
+            _run_output_dir().mkdir(parents=True, exist_ok=True)
             wf_fold_path = _with_mode_tag("results/walkforward_results_per_fold.csv", dl_mode_tag)
             wf_df.to_csv(wf_fold_path, index=False)
             print(f"Saved: {wf_fold_path}")
@@ -2833,7 +2928,7 @@ def main():
         if tau_df.empty:
             print("✗ Tau sweep produced no results.")
         else:
-            os.makedirs("results", exist_ok=True)
+            _run_output_dir().mkdir(parents=True, exist_ok=True)
             tau_fold_path = _with_mode_tag("results/walkforward_tau_sweep_per_fold.csv", dl_mode_tag)
             tau_df.to_csv(tau_fold_path, index=False)
             print(f"Saved: {tau_fold_path}")
@@ -3029,7 +3124,7 @@ def main():
         if pol_df.empty:
             print("✗ Policy sweep produced no results.")
         else:
-            os.makedirs("results", exist_ok=True)
+            _run_output_dir().mkdir(parents=True, exist_ok=True)
             policy_fold_path = _with_mode_tag("results/walkforward_policy_sweep_per_fold.csv", dl_mode_tag)
             pol_df.to_csv(policy_fold_path, index=False)
             print(f"Saved: {policy_fold_path}")
@@ -3105,7 +3200,10 @@ def main():
     # --- Vol-guard diagnostics plots (optional) ---
     try:
         from src.visualization import plot_vol_guard_diagnostics_all
-        plots = plot_vol_guard_diagnostics_all(results_dir="results", figures_dir="figures")
+        plots = plot_vol_guard_diagnostics_all(
+            results_dir=str(_run_output_dir()),
+            figures_dir=str(_run_output_dir() / "figures"),
+        )
         print("[diag-plots] wrote:", plots)
     except Exception as e:
         print("[diag-plots] skipped:", e)
@@ -3134,4 +3232,22 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description="Run MPML pipeline with run-owned output directories.")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Explicit run output directory (writes all run artifacts here). "
+            "If omitted, MPML creates results_archive/<gen>_<variant>__<timestamp>/."
+        ),
+    )
+    parser.add_argument(
+        "--experiment-generation",
+        type=str,
+        default=None,
+        choices=sorted(_VALID_EXPERIMENT_GENERATIONS),
+        help="Explicit experiment generation (gen1|gen2). Defaults to EXPERIMENT_GENERATION env or gen1.",
+    )
+    args = parser.parse_args()
+    main(output_dir=args.output_dir, experiment_generation=args.experiment_generation)
