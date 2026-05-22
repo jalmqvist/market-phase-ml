@@ -210,7 +210,8 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
             semantic_warnings.append(
                 f"Duplicate semantic variant detected within cohort '{cohort_key}': "
                 + ", ".join(sorted(run_ids))
-                + " — comparisons within this cohort will be averaged. "
+                + " — all duplicate runs will be included in comparisons, "
+                "which may produce misleading or non-comparable results. "
                 "Verify this is intentional (re-run vs distinct experiment)."
             )
 

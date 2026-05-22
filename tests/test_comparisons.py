@@ -333,12 +333,16 @@ class TestAnalysisMatrixCompleteness(unittest.TestCase):
     def test_sentiment_delta_uses_correct_cohorts(self):
         """Sentiment delta must compare A vs B (not B vs B or A vs A)."""
         result_s = compare_sentiment_variants(self._full_matrix())
+        # Verify cohort membership is correct: A in on, B in off
+        self.assertIn("fp_gen1_A", result_s["grouped"]["gen1"]["on"])
+        self.assertIn("fp_gen1_B", result_s["grouped"]["gen1"]["off"])
+        self.assertNotIn("fp_gen1_B", result_s["grouped"]["gen1"]["on"])
+        self.assertNotIn("fp_gen1_A", result_s["grouped"]["gen1"]["off"])
+        # Verify delta is A minus B (0.12 - 0.02 = 0.10)
         gen1_rows = [r for r in result_s["delta_table"] if r["generation"] == "gen1"]
         self.assertTrue(len(gen1_rows) > 0)
         for row in gen1_rows:
-            on_val = row["sentiment_on"]
-            off_val = row["sentiment_off"]
-            # A=0.12 Sharpe_Delta, B=0.02 Sharpe_Delta
+            # A=0.12 Sharpe_Delta, B=0.02 Sharpe_Delta → delta = 0.10
             self.assertAlmostEqual(row["delta_on_minus_off"], 0.10, places=5)
 
 
