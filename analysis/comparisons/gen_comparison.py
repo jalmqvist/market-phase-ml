@@ -117,8 +117,11 @@ def _extract_pair_metrics(
                     continue
                 accum.setdefault(pair, {}).setdefault(metric_name, []).append(fval)
     return {
-        pair: {metric: sum(vals) / len(vals) for metric, vals in metrics.items()}
-        for pair, metrics in accum.items()
+        pair: {
+            metric: sum(metrics[metric]) / len(metrics[metric])
+            for metric in sorted(metrics)
+        }
+        for pair, metrics in sorted(accum.items())
     }
 
 
@@ -162,7 +165,10 @@ def _build_coverage_comparison(
             dl_cov = log.get("dl_coverage") or {}
             for pair, cov in dl_cov.items():
                 accum.setdefault(pair, []).append(float(cov))
-        return {pair: sum(vals) / len(vals) for pair, vals in accum.items()}
+        return {
+            pair: sum(accum[pair]) / len(accum[pair])
+            for pair in sorted(accum)
+        }
 
     g1_cov = avg_coverage(gen1_runs)
     g2_cov = avg_coverage(gen2_runs)

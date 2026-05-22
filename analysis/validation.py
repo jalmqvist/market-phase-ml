@@ -9,6 +9,13 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+_REQUIRED_REPRODUCIBILITY_KEYS = (
+    "experiment_seed",
+    "numpy_seed",
+    "python_random_seed",
+    "torch_seed",
+)
+
 
 def _expected_variant(generation: str, sentiment_enabled: bool) -> str:
     if generation == "gen1":
@@ -36,6 +43,8 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     semantic_warnings: list[str] = []
     manifest_errors: list[str] = []
     manifest_warnings: list[str] = []
+    reproducibility_errors: list[str] = []
+    reproducibility_warnings: list[str] = []
 
     run_ids = [s.get("run_id") for s in summaries if s.get("run_id")]
     for rid, count in Counter(run_ids).items():
@@ -52,6 +61,17 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
             provenance_errors.append(
                 f"Duplicate semantic_run_id detected: {sid} (count={count}) "
                 "(semantic identity must be unique per archive run root)."
+            )
+
+    manifest_run_ids = [
+        (s.get("meta") or {}).get("manifest_run_id")
+        for s in summaries
+        if (s.get("meta") or {}).get("manifest_run_id")
+    ]
+    for manifest_run_id, count in Counter(manifest_run_ids).items():
+        if count > 1:
+            reproducibility_warnings.append(
+                f"Repeated manifest_run_id detected across run roots: {manifest_run_id} (count={count})."
             )
 
     for summary in summaries:
@@ -150,11 +170,80 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         if not summary.get("log"):
             provenance_warnings.append(f"{run_id}: log file absent.")
 
+        reproducibility = meta.get("reproducibility") or {}
+        feature_ordering = meta.get("feature_ordering") or {}
+        if manifest_present:
+            missing_seed_keys = [
+                key for key in _REQUIRED_REPRODUCIBILITY_KEYS
+                if key not in reproducibility
+            ]
+            if missing_seed_keys:
+                reproducibility_warnings.append(
+                    f"{run_id}: missing reproducibility metadata key(s): {', '.join(missing_seed_keys)}."
+                )
+
+            phase_predictor_order = feature_ordering.get("phase_predictor_by_pair") or {}
+            selector_order = feature_ordering.get("strategy_selector_by_pair") or {}
+            if not phase_predictor_order:
+                reproducibility_warnings.append(
+                    f"{run_id}: missing phase predictor feature ordering metadata."
+                )
+            if not selector_order and meta.get("dl_enabled") is not None:
+                reproducibility_warnings.append(
+                    f"{run_id}: missing strategy selector feature ordering metadata."
+                )
+
     if not summaries:
         provenance_errors.append("No summaries available after discovery/parsing.")
 
-    errors = provenance_errors + semantic_errors + manifest_errors
-    warnings = provenance_warnings + semantic_warnings + manifest_warnings
+    reproducibility_groups: dict[str, list[dict[str, Any]]] = {}
+    for summary in summaries:
+        meta = summary.get("meta") or {}
+        reproducibility = meta.get("reproducibility") or {}
+        experiment_seed = reproducibility.get("experiment_seed")
+        if experiment_seed is None:
+            continue
+        reproducibility_groups.setdefault(str(experiment_seed), []).append(summary)
+
+    for seed, grouped in reproducibility_groups.items():
+        if len(grouped) < 2:
+            continue
+        fingerprints = {
+            summary.get("run_id", "unknown"): {
+                key: (summary.get("meta") or {}).get("reproducibility", {}).get(key)
+                for key in _REQUIRED_REPRODUCIBILITY_KEYS
+            }
+            for summary in grouped
+        }
+        if len({tuple(sorted(fp.items())) for fp in fingerprints.values()}) > 1:
+            reproducibility_warnings.append(
+                f"Runs sharing experiment_seed={seed} have differing reproducibility metadata: "
+                + ", ".join(sorted(fingerprints))
+            )
+
+        pair_feature_orders: dict[tuple[str, str], dict[str, tuple[str, ...]]] = {}
+        for summary in grouped:
+            run_id = summary.get("run_id", "unknown")
+            feature_ordering = ((summary.get("meta") or {}).get("feature_ordering") or {})
+            for section_name in ("phase_predictor_by_pair", "strategy_selector_by_pair"):
+                by_pair = feature_ordering.get(section_name) or {}
+                for pair_name, columns in by_pair.items():
+                    pair_feature_orders.setdefault((section_name, pair_name), {})[run_id] = tuple(columns or [])
+
+        for (section_name, pair_name), orders in sorted(pair_feature_orders.items()):
+            if len(set(orders.values())) > 1:
+                reproducibility_warnings.append(
+                    f"Runs sharing experiment_seed={seed} have differing feature column order "
+                    f"for {section_name}:{pair_name}."
+                )
+
+    errors = provenance_errors + semantic_errors + manifest_errors + reproducibility_errors
+    warnings = (
+        provenance_warnings
+        + semantic_warnings
+        + manifest_warnings
+        + reproducibility_warnings
+    )
     diagnostics = [
         f"runs_total={len(summaries)}",
         f"errors={len(errors)}",
@@ -177,6 +266,10 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
             "manifest_integrity": {
                 "errors": manifest_errors,
                 "warnings": manifest_warnings,
+            },
+            "reproducibility_integrity": {
+                "errors": reproducibility_errors,
+                "warnings": reproducibility_warnings,
             },
         },
     }

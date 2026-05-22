@@ -195,6 +195,7 @@ def build_run_summary(
         "walkforward_params": (manifest or {}).get("walkforward"),
         "flags": (manifest or {}).get("flags"),
         "reproducibility": (manifest or {}).get("reproducibility") or {},
+        "feature_ordering": (manifest or {}).get("feature_ordering") or {},
         "git_sha": (manifest or {}).get("git_sha"),
         "timestamp_utc": identity.get("timestamp_utc"),
         "python_version": (manifest or {}).get("python_version"),
@@ -380,7 +381,7 @@ def run_pipeline(
         run_id = summary["run_id"]
         summary_path = summaries_dir / f"{run_id}.summary.json"
         with open(summary_path, "w") as f:
-            json.dump(summary, f, indent=2, default=str)
+            json.dump(summary, f, indent=2, default=str, sort_keys=True)
         _log(f"   ✓ wrote {summary_path.relative_to(output_dir.parent)}")
 
     # 3. Generate comparisons
@@ -399,7 +400,7 @@ def run_pipeline(
 
     comparisons_path = output_dir / "comparisons.json"
     with open(comparisons_path, "w") as f:
-        json.dump(comparisons, f, indent=2, default=str)
+        json.dump(comparisons, f, indent=2, default=str, sort_keys=True)
     _log(f"   ✓ wrote {comparisons_path.relative_to(output_dir.parent)}")
 
     # 4. Render markdown report

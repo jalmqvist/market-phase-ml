@@ -3,7 +3,6 @@
 import pandas as pd
 import numpy as np
 from pandas.api.types import is_bool_dtype, is_numeric_dtype
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score
@@ -57,6 +56,42 @@ from src.dl_config import DL_SIGNALS_ENABLED  # noqa: E402
 # Schema-tolerant helpers
 # ---------------------------------------------------------------------------
 
+_XGB_DETERMINISTIC_COMMON_KWARGS: dict[str, object] = {
+    "n_estimators": 100,
+    "max_depth": 4,
+    "learning_rate": 0.1,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "n_jobs": 1,
+    "tree_method": "exact",
+    "verbosity": 0,
+}
+
+
+def _stable_feature_columns(feature_cols: list[str] | tuple[str, ...]) -> list[str]:
+    """Return a deterministically sorted, de-duplicated feature column list."""
+    return sorted(dict.fromkeys(feature_cols))
+
+
+def _build_deterministic_xgb_classifier(
+    *,
+    seed: int,
+    eval_metric: str,
+    objective: str | None = None,
+) -> xgb.XGBClassifier:
+    """Build an XGBoost classifier with deterministic defaults."""
+    kwargs = dict(_XGB_DETERMINISTIC_COMMON_KWARGS)
+    kwargs.update(
+        {
+            "random_state": int(seed),
+            "seed": int(seed),
+            "eval_metric": eval_metric,
+        }
+    )
+    if objective is not None:
+        kwargs["objective"] = objective
+    return xgb.XGBClassifier(**kwargs)
+
 def safe_existing_columns(df: pd.DataFrame, cols: list) -> list:
     """Return only the columns from *cols* that are present in *df*.
 
@@ -84,7 +119,10 @@ def apply_optional_feature_imputation(
 ) -> pd.DataFrame:
     """Impute optional feature columns deterministically."""
     X_out = X.copy()
-    optional_cols_present = [c for c in optional_feature_cols if c in X_out.columns]
+    optional_cols_present = [
+        c for c in _stable_feature_columns(optional_feature_cols)
+        if c in X_out.columns
+    ]
 
     for col in optional_cols_present:
         if add_missing_indicators:
@@ -107,7 +145,7 @@ def build_training_matrix(
     add_optional_missing_indicators: bool = True,
 ) -> tuple[pd.DataFrame, pd.Series, dict]:
     """Build robust training matrices with required-only masking and optional DL imputation."""
-    feature_cols = list(dict.fromkeys(feature_cols))
+    feature_cols = _stable_feature_columns(feature_cols)
     X_source = X_raw.reindex(columns=feature_cols).copy()
     y_source = y_raw.copy()
 
@@ -266,20 +304,13 @@ class PhaseMLPredictor:
         # Keep this prefix-based to avoid stale hardcoded DL whitelists.
         if not DL_SIGNALS_ENABLED:
             cols = [c for c in cols if c not in DL_D1_FEATURE_COLS and not c.startswith("dl_")]
-        return cols
+        return _stable_feature_columns(cols)
 
     def _build_model(self) -> xgb.XGBClassifier:
         """Build a fresh XGBoost classifier."""
-        return xgb.XGBClassifier(
-            n_estimators=100,
-            max_depth=4,
-            learning_rate=0.1,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            random_state=self.seed,
-            n_jobs=1,
-            eval_metric='mlogloss',    # multi-class log loss
-            verbosity=0
+        return _build_deterministic_xgb_classifier(
+            seed=self.seed,
+            eval_metric="mlogloss",
         )
 
     def fit_predict(self, df: pd.DataFrame) -> pd.Series:
@@ -295,6 +326,7 @@ class PhaseMLPredictor:
         """
         # Recompute feature columns from the fully attached runtime DataFrame.
         feature_cols = self._get_feature_cols(df)
+        self.feature_cols = list(feature_cols)
         detected_dl_cols = [
             c for c in df.columns
             if c.startswith("dl_") and c not in _DL_LEAKAGE_GUARD_COLS
@@ -501,7 +533,7 @@ class PhaseMLPredictor:
 
                 # Ensure all 4 classes are represented
                 unique_classes = set(y_train_int.unique())
-                missing_classes = {0, 1, 2, 3} - unique_classes
+                missing_classes = sorted({0, 1, 2, 3} - unique_classes)
 
                 if missing_classes:
                     for missing_class in missing_classes:
@@ -799,7 +831,7 @@ class PhaseMLExperiment:
         if not DL_SIGNALS_ENABLED:
             feature_cols = [c for c in feature_cols if c not in DL_D1_FEATURE_COLS]
 
-        return feature_cols
+        return _stable_feature_columns(feature_cols)
 
     def prepare_features(self,
                          df: pd.DataFrame,
@@ -825,7 +857,7 @@ class PhaseMLExperiment:
             )
             X = pd.concat([X, phase_dummies], axis=1)
 
-        return X
+        return X.reindex(columns=_stable_feature_columns(list(X.columns)))
 
     def _build_model(self) -> xgb.XGBClassifier:
         """
@@ -834,17 +866,10 @@ class PhaseMLExperiment:
         Centralised here so hyperparameters are consistent
         across all three experiments and easy to tune.
         """
-        return xgb.XGBClassifier(
-            n_estimators=100,
-            max_depth=4,
-            learning_rate=0.1,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            random_state=self.random_state,
-            n_jobs=1,
-            eval_metric='logloss',
-            objective='binary:logistic',
-            verbosity=0,
+        return _build_deterministic_xgb_classifier(
+            seed=self.random_state,
+            eval_metric="logloss",
+            objective="binary:logistic",
         )
 
     def _cross_validate(self,
@@ -1358,7 +1383,7 @@ class StrategySelector:
 
     def get_feature_columns(self) -> list:
         """Features used for prediction."""
-        return list(REQUIRED_FEATURE_COLS)
+        return _stable_feature_columns(list(REQUIRED_FEATURE_COLS))
 
     @staticmethod
     def _strategy_to_category(strategy_name: str) -> str:
@@ -1418,6 +1443,9 @@ class StrategySelector:
             all_feature_cols = base_feature_cols + dl_feature_cols
         else:
             all_feature_cols = base_feature_cols
+        all_feature_cols = _stable_feature_columns(all_feature_cols)
+        base_feature_cols = _stable_feature_columns(base_feature_cols)
+        dl_feature_cols = _stable_feature_columns(dl_feature_cols)
 
         X_train, y_strategy, diag = build_training_matrix(
             training_data,
@@ -1453,16 +1481,9 @@ class StrategySelector:
         # Leakage-free cross-validation: scaler fitted inside each CV fold
         cv_pipeline = Pipeline([
             ('scaler', StandardScaler()),
-            ('model', xgb.XGBClassifier(
-                n_estimators=100,
-                max_depth=4,
-                learning_rate=0.1,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                eval_metric='mlogloss',
-                verbosity=0,
-                random_state=self.seed,
-                n_jobs=1
+            ('model', _build_deterministic_xgb_classifier(
+                seed=self.seed,
+                eval_metric="mlogloss",
             ))
         ])
 
@@ -1486,22 +1507,15 @@ class StrategySelector:
         # Fit final scaler and model on full training set
         self.scaler = StandardScaler()
         X_scaled = self.scaler.fit_transform(X)
-        self.model = xgb.XGBClassifier(
-            n_estimators=100,
-            max_depth=4,
-            learning_rate=0.1,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            eval_metric='mlogloss',
-            verbosity=0,
-            random_state=self.seed,
-            n_jobs=1,
+        self.model = _build_deterministic_xgb_classifier(
+            seed=self.seed,
+            eval_metric="mlogloss",
         )
 
         self.model.fit(X_scaled, y_encoded)
-        self.feature_cols = list(X.columns)
-        self.required_feature_cols = list(base_feature_cols)
-        self.optional_feature_cols = list(dl_feature_cols)
+        self.feature_cols = _stable_feature_columns(list(X.columns))
+        self.required_feature_cols = _stable_feature_columns(list(base_feature_cols))
+        self.optional_feature_cols = _stable_feature_columns(list(dl_feature_cols))
 
         print(f'\n  StrategySelector Training (3-class):')
         print(f'    Samples: {len(X)}')

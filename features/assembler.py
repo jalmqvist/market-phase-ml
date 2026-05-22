@@ -24,7 +24,7 @@ def assemble_features(df: pd.DataFrame, groups: list[str]) -> pd.DataFrame:
         cols.extend(FEATURES[g])
 
     # Remove duplicates while preserving order
-    cols = list(dict.fromkeys(cols))
+    cols = sorted(dict.fromkeys(cols))
 
     missing = [c for c in cols if c not in df.columns]
     if missing:
