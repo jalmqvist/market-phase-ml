@@ -45,12 +45,26 @@ Trading is simply the “toy domain”; the underlying pattern generalizes to ma
 
 ```bash
 pip install -r requirements.txt
-python main.py
+python main.py --experiment-variant A
 ```
 
 By default, each invocation now writes into a dedicated immutable run directory:
 
 `results_archive/<generation>_<variant>__<timestamp>/`
+
+Variant is the canonical runtime identity and must be selected explicitly:
+
+```bash
+# CLI overrides env when both are set
+python main.py --experiment-variant A
+python main.py --experiment-variant B
+python main.py --experiment-variant C
+python main.py --experiment-variant D
+
+# env fallback
+export EXPERIMENT_VARIANT=B
+python main.py
+```
 
 You can override the run output path explicitly:
 
@@ -139,7 +153,9 @@ Each run manifest must contain an explicit `experiment` block:
     "variant": "B",
     "sentiment_enabled": false,
     "missing_indicators_enabled": false,
-    "semantic_label": "Gen1_B"
+    "semantic_label": "Gen1_B",
+    "legacy_semantics": false,
+    "semantics_version": 2
   }
 }
 ```
@@ -573,9 +589,10 @@ See implementation details in `src/strategies.py` (`Backtester`).
 ```bash
 # optional (default: 42)
 export EXPERIMENT_SEED=42
+export EXPERIMENT_VARIANT=A
 
 # CLI overrides env when both are set
-python main.py --experiment-seed 42
+python main.py --experiment-seed 42 --experiment-variant A
 
 # or use env/default resolution
 python main.py

@@ -9,20 +9,18 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from experiment_semantics import (
+    LEGACY_VARIANT,
+    VALID_EXPERIMENT_VARIANTS,
+    variant_semantics,
+)
+
 _REQUIRED_REPRODUCIBILITY_KEYS = (
     "experiment_seed",
     "numpy_seed",
     "python_random_seed",
     "torch_seed",
 )
-
-
-def _expected_variant(generation: str, sentiment_enabled: bool) -> str:
-    if generation == "gen1":
-        return "A" if sentiment_enabled else "B"
-    return "C" if sentiment_enabled else "D"
-
-
 def sort_summaries_deterministically(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         summaries,
@@ -102,9 +100,10 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         if not meta.get("manifest_present") and not files_found and not summary.get("log"):
             provenance_errors.append(f"{run_id}: malformed archive (no manifest, no CSV, no log).")
 
-        variant = meta.get("run_variant") or "U"
+        variant = meta.get("run_variant") or LEGACY_VARIANT
         gen = meta.get("experiment_gen") or "unknown"
         manifest_present = bool(meta.get("manifest_present"))
+        legacy_semantics = bool(meta.get("legacy_semantics"))
         if manifest_present:
             missing_required: list[str] = []
             if experiment.get("generation") is None:
@@ -122,38 +121,58 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
                 semantic_warnings.append(
                     f"{run_id}: manifest experiment block incomplete (legacy tolerance): missing {', '.join(missing_required)}."
                 )
+            if legacy_semantics:
+                semantic_warnings.append(
+                    f"{run_id}: legacy_semantics=True; run marked as variant '{LEGACY_VARIANT}' and excluded from canonical semantic cohorts."
+                )
 
         exp_generation = experiment.get("generation")
         exp_variant = experiment.get("variant")
         exp_sentiment = experiment.get("sentiment_enabled")
         exp_missing = experiment.get("missing_indicators_enabled")
+        exp_semantic_label = experiment.get("semantic_label")
         if exp_generation is not None and exp_generation not in {"gen1", "gen2"}:
             semantic_errors.append(
                 f"{run_id}: invalid experiment generation {exp_generation!r} (expected gen1|gen2)."
             )
-        if exp_variant is not None and exp_variant not in {"A", "B", "C", "D"}:
+        if exp_variant is not None and exp_variant not in VALID_EXPERIMENT_VARIANTS:
             semantic_errors.append(
                 f"{run_id}: invalid experiment variant {exp_variant!r} (expected A|B|C|D)."
             )
-        if exp_generation in {"gen1", "gen2"} and isinstance(exp_sentiment, bool):
-            expected_variant = _expected_variant(exp_generation, exp_sentiment)
-            if exp_variant in {"A", "B", "C", "D"} and exp_variant != expected_variant:
+        if exp_variant in VALID_EXPERIMENT_VARIANTS:
+            canonical = variant_semantics(exp_variant)
+            if canonical is None:
                 semantic_errors.append(
-                    f"{run_id}: semantic conflict (variant={exp_variant} incompatible with generation={exp_generation}, sentiment_enabled={exp_sentiment})."
+                    f"{run_id}: canonical semantics missing for variant={exp_variant}."
                 )
-        if exp_generation in {"gen1", "gen2"} and isinstance(exp_missing, bool):
-            expected_missing = exp_generation == "gen2"
-            if exp_missing != expected_missing:
+            else:
+                if exp_generation in {"gen1", "gen2"} and exp_generation != canonical["generation"]:
+                    semantic_errors.append(
+                        f"{run_id}: semantic conflict (variant={exp_variant} requires generation={canonical['generation']}, got {exp_generation})."
+                    )
+                if isinstance(exp_sentiment, bool) and exp_sentiment != canonical["sentiment_enabled"]:
+                    semantic_errors.append(
+                        f"{run_id}: semantic conflict (variant={exp_variant} requires sentiment_enabled={canonical['sentiment_enabled']}, got {exp_sentiment})."
+                    )
+                if isinstance(exp_missing, bool) and exp_missing != canonical["missing_indicators_enabled"]:
+                    semantic_errors.append(
+                        f"{run_id}: semantic conflict (variant={exp_variant} requires missing_indicators_enabled={canonical['missing_indicators_enabled']}, got {exp_missing})."
+                    )
+                if isinstance(exp_semantic_label, str) and exp_semantic_label.strip():
+                    if exp_semantic_label != canonical["semantic_label"]:
+                        semantic_errors.append(
+                            f"{run_id}: semantic conflict (variant={exp_variant} requires semantic_label={canonical['semantic_label']!r}, got {exp_semantic_label!r})."
+                        )
+        if variant in VALID_EXPERIMENT_VARIANTS:
+            canonical = variant_semantics(variant)
+            if canonical is not None and gen in {"gen1", "gen2"} and gen != canonical["generation"]:
                 semantic_errors.append(
-                    f"{run_id}: semantic conflict (missing_indicators_enabled={exp_missing} incompatible with generation={exp_generation})."
+                    f"{run_id}: semantic conflict (meta experiment_gen={gen} does not match variant={variant} canonical generation={canonical['generation']})."
                 )
-
-        if gen == "gen1" and variant in {"C", "D"}:
-            semantic_errors.append(f"{run_id}: semantic conflict (gen1 run cannot use variant {variant}).")
-        if gen == "gen2" and variant in {"A", "B"}:
-            semantic_errors.append(f"{run_id}: semantic conflict (gen2 run cannot use variant {variant}).")
-        if variant == "U":
-            semantic_warnings.append(f"{run_id}: variant unresolved (U); semantic comparisons may be skipped.")
+        if variant == LEGACY_VARIANT:
+            semantic_warnings.append(
+                f"{run_id}: variant unresolved ({LEGACY_VARIANT}); semantic comparisons may be skipped."
+            )
 
         for warning in meta.get("identity_warnings") or []:
             if "conflict" in warning.lower():
@@ -199,8 +218,8 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         run_id = summary.get("run_id", "unknown")
         meta = summary.get("meta") or {}
         gen = meta.get("experiment_gen") or "unknown"
-        variant = meta.get("run_variant") or "U"
-        if variant == "U" or gen == "unknown":
+        variant = meta.get("run_variant") or LEGACY_VARIANT
+        if variant == LEGACY_VARIANT or gen == "unknown":
             continue
         cohort_key = f"{gen}_{variant}"
         semantic_variant_groups.setdefault(cohort_key, []).append(run_id)
