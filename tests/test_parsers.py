@@ -315,6 +315,220 @@ class TestParseManifest(unittest.TestCase):
 
 
 class TestRunIdentity(unittest.TestCase):
+
+    def _make_manifest(self, generation, variant, sentiment_enabled, missing_indicators_enabled,
+                       ts="20260521T131739Z", run_id=None):
+        run_id = run_id or f"run_{ts}"
+        return {
+            "run_id": run_id,
+            "timestamp_utc": ts,
+            "dl_enabled": sentiment_enabled,
+            "run": {"run_id": run_id, "timestamp_utc": ts},
+            "experiment": {
+                "generation": generation,
+                "variant": variant,
+                "sentiment_enabled": sentiment_enabled,
+                "missing_indicators_enabled": missing_indicators_enabled,
+                "semantic_label": f"{generation.capitalize()}_{variant}",
+            },
+        }
+
+    def _run_identity(self, archive, run_dir_name, manifest):
+        run_dir = archive / run_dir_name
+        run_dir.mkdir(exist_ok=True)
+        return infer_run_identity(
+            archive_root=archive,
+            run_dir=run_dir,
+            experiment_gen=manifest["experiment"]["generation"],
+            manifest=manifest,
+        )
+
+    # ------------------------------------------------------------------
+    # Regression: canonical variant recognition for all four variants
+    # ------------------------------------------------------------------
+
+    def test_fp_gen1_A_recognized_as_variant_A(self):
+        """fp_gen1_A with explicit manifest variant=A must be recognized as A."""
+        archive = _make_run_dir({})
+        try:
+            manifest = self._make_manifest("gen1", "A", True, False)
+            identity = self._run_identity(archive, "fp_gen1_A", manifest)
+            self.assertEqual(identity["run_variant"], "A")
+            self.assertEqual(identity["experiment_gen"], "gen1")
+            self.assertEqual(identity["semantic_run_name"], "gen1_A")
+        finally:
+            _rmtree(archive)
+
+    def test_fp_gen1_B_recognized_as_variant_B(self):
+        """fp_gen1_B with explicit manifest variant=B must be recognized as B."""
+        archive = _make_run_dir({})
+        try:
+            manifest = self._make_manifest("gen1", "B", False, False)
+            identity = self._run_identity(archive, "fp_gen1_B", manifest)
+            self.assertEqual(identity["run_variant"], "B")
+            self.assertEqual(identity["experiment_gen"], "gen1")
+            self.assertEqual(identity["semantic_run_name"], "gen1_B")
+        finally:
+            _rmtree(archive)
+
+    def test_fp_gen2_C_recognized_as_variant_C(self):
+        """fp_gen2_C with explicit manifest variant=C must be recognized as C."""
+        archive = _make_run_dir({})
+        try:
+            manifest = self._make_manifest("gen2", "C", True, True)
+            identity = self._run_identity(archive, "fp_gen2_C", manifest)
+            self.assertEqual(identity["run_variant"], "C")
+            self.assertEqual(identity["experiment_gen"], "gen2")
+            self.assertEqual(identity["semantic_run_name"], "gen2_C")
+        finally:
+            _rmtree(archive)
+
+    def test_fp_gen2_D_recognized_as_variant_D(self):
+        """fp_gen2_D with explicit manifest variant=D must be recognized as D."""
+        archive = _make_run_dir({})
+        try:
+            manifest = self._make_manifest("gen2", "D", False, True)
+            identity = self._run_identity(archive, "fp_gen2_D", manifest)
+            self.assertEqual(identity["run_variant"], "D")
+            self.assertEqual(identity["experiment_gen"], "gen2")
+            self.assertEqual(identity["semantic_run_name"], "gen2_D")
+        finally:
+            _rmtree(archive)
+
+    # ------------------------------------------------------------------
+    # Regression: variants must not collapse to A/C when B/D is explicit
+    # ------------------------------------------------------------------
+
+    def test_gen1_B_does_not_collapse_to_A(self):
+        """Sentinel regression: gen1 variant=B must NOT resolve to A."""
+        archive = _make_run_dir({})
+        try:
+            manifest = self._make_manifest("gen1", "B", False, False)
+            identity = self._run_identity(archive, "fp_gen1_B", manifest)
+            self.assertNotEqual(identity["run_variant"], "A",
+                                "gen1_B collapsed to A — canonical variant not being read from manifest.")
+        finally:
+            _rmtree(archive)
+
+    def test_gen2_D_does_not_collapse_to_C(self):
+        """Sentinel regression: gen2 variant=D must NOT resolve to C."""
+        archive = _make_run_dir({})
+        try:
+            manifest = self._make_manifest("gen2", "D", False, True)
+            identity = self._run_identity(archive, "fp_gen2_D", manifest)
+            self.assertNotEqual(identity["run_variant"], "C",
+                                "gen2_D collapsed to C — canonical variant not being read from manifest.")
+        finally:
+            _rmtree(archive)
+
+    # ------------------------------------------------------------------
+    # Malformed manifests / missing semantics
+    # ------------------------------------------------------------------
+
+    def test_missing_experiment_block_yields_variant_U(self):
+        """Manifest without experiment block must yield variant=U and emit warnings."""
+        archive = _make_run_dir({})
+        run_dir = archive / "legacy_run"
+        run_dir.mkdir()
+        try:
+            identity = infer_run_identity(
+                archive_root=archive,
+                run_dir=run_dir,
+                experiment_gen="unknown",
+                manifest={
+                    "run_id": "run_20260521T000000Z",
+                    "timestamp_utc": "20260521T000000Z",
+                    "run": {"run_id": "run_20260521T000000Z"},
+                },
+            )
+            self.assertEqual(identity["run_variant"], "U")
+            self.assertGreater(len(identity["identity_warnings"]), 0)
+        finally:
+            _rmtree(archive)
+
+    def test_missing_variant_derives_from_sentiment(self):
+        """Manifest with generation + sentiment_enabled but no explicit variant must derive variant."""
+        archive = _make_run_dir({})
+        run_dir = archive / "partial_manifest"
+        run_dir.mkdir()
+        try:
+            identity = infer_run_identity(
+                archive_root=archive,
+                run_dir=run_dir,
+                experiment_gen="gen1",
+                manifest={
+                    "run_id": "run_20260521T000000Z",
+                    "timestamp_utc": "20260521T000000Z",
+                    "run": {"run_id": "run_20260521T000000Z"},
+                    "experiment": {
+                        "generation": "gen1",
+                        "sentiment_enabled": True,
+                        "missing_indicators_enabled": False,
+                    },
+                },
+            )
+            # Should derive A from gen1 + sentiment_enabled=True
+            self.assertEqual(identity["run_variant"], "A")
+        finally:
+            _rmtree(archive)
+
+    def test_explicit_variant_overrides_derived(self):
+        """Explicit variant in manifest takes precedence over derived variant."""
+        archive = _make_run_dir({})
+        run_dir = archive / "explicit_variant"
+        run_dir.mkdir()
+        try:
+            # A run where explicit variant is B but sentiment_enabled=False (consistent)
+            identity = infer_run_identity(
+                archive_root=archive,
+                run_dir=run_dir,
+                experiment_gen="gen1",
+                manifest={
+                    "run_id": "run_20260521T000000Z",
+                    "timestamp_utc": "20260521T000000Z",
+                    "run": {"run_id": "run_20260521T000000Z"},
+                    "experiment": {
+                        "generation": "gen1",
+                        "variant": "B",
+                        "sentiment_enabled": False,
+                        "missing_indicators_enabled": False,
+                        "semantic_label": "Gen1_B",
+                    },
+                },
+            )
+            self.assertEqual(identity["run_variant"], "B")
+            self.assertEqual(len([w for w in identity["identity_warnings"] if "conflict" in w.lower()]), 0)
+        finally:
+            _rmtree(archive)
+
+    def test_variant_conflict_emits_warning(self):
+        """Conflicting explicit variant vs derived variant must emit a warning."""
+        archive = _make_run_dir({})
+        run_dir = archive / "conflict_run"
+        run_dir.mkdir()
+        try:
+            identity = infer_run_identity(
+                archive_root=archive,
+                run_dir=run_dir,
+                experiment_gen="gen1",
+                manifest={
+                    "run_id": "run_20260521T000000Z",
+                    "timestamp_utc": "20260521T000000Z",
+                    "run": {"run_id": "run_20260521T000000Z"},
+                    "experiment": {
+                        "generation": "gen1",
+                        "variant": "B",
+                        "sentiment_enabled": True,  # conflict: B requires False
+                        "missing_indicators_enabled": False,
+                        "semantic_label": "Gen1_B",
+                    },
+                },
+            )
+            conflict_warnings = [w for w in identity["identity_warnings"] if "conflict" in w.lower()]
+            self.assertGreater(len(conflict_warnings), 0, "Variant conflict not detected in identity_warnings")
+        finally:
+            _rmtree(archive)
+
     def test_canonical_identity_includes_archive_path(self):
         archive = _make_run_dir({})
         run_dir = archive / "fp_gen1_A"
@@ -777,6 +991,76 @@ class TestValidationAndOrdering(unittest.TestCase):
         self.assertTrue(
             any("differing feature column order" in warning for warning in validation["warnings"])
         )
+
+    def test_duplicate_semantic_variant_within_cohort_warns(self):
+        """Two Gen1_B runs in the same analysis root must emit a semantic warning."""
+        s1 = self._summary("run_b_1", "gen1", "B", "20260521T010101Z", "run_b_1")
+        s2 = self._summary("run_b_2", "gen1", "B", "20260521T010102Z", "run_b_2")
+        validation = validate_summaries([s1, s2])
+        self.assertTrue(
+            any("Duplicate semantic variant" in w and "gen1_B" in w for w in validation["warnings"]),
+            "Expected warning for duplicate semantic variant gen1_B"
+        )
+
+    def test_no_duplicate_variant_warning_for_different_cohorts(self):
+        """Gen1_A and Gen2_C are different cohorts — no duplicate warning."""
+        s1 = self._summary("r1", "gen1", "A", "20260521T010101Z", "a")
+        s2 = self._summary("r2", "gen2", "C", "20260521T010102Z", "b")
+        validation = validate_summaries([s1, s2])
+        dup_warnings = [w for w in validation["warnings"] if "Duplicate semantic variant" in w]
+        self.assertEqual(len(dup_warnings), 0)
+
+    def test_all_four_variants_no_duplicate_warning(self):
+        """A full A/B/C/D cohort must not trigger duplicate variant warnings."""
+        summaries = [
+            self._summary("r_a", "gen1", "A", "20260521T000001Z", "fp_gen1_A"),
+            self._summary("r_b", "gen1", "B", "20260521T000002Z", "fp_gen1_B"),
+            self._summary("r_c", "gen2", "C", "20260521T000003Z", "fp_gen2_C"),
+            self._summary("r_d", "gen2", "D", "20260521T000004Z", "fp_gen2_D"),
+        ]
+        validation = validate_summaries(summaries)
+        dup_warnings = [w for w in validation["warnings"] if "Duplicate semantic variant" in w]
+        self.assertEqual(len(dup_warnings), 0)
+
+    def test_invalid_generation_detected(self):
+        """Invalid generation value in experiment block must produce semantic error."""
+        s = self._summary("r1", "gen1", "A", "20260521T010101Z", "a")
+        s["meta"]["experiment"] = {
+            "generation": "gen99",  # invalid
+            "variant": "A",
+            "sentiment_enabled": True,
+            "missing_indicators_enabled": False,
+            "semantic_label": "Gen1_A",
+        }
+        validation = validate_summaries([s])
+        self.assertTrue(any("invalid experiment generation" in e for e in validation["errors"]))
+
+    def test_invalid_variant_detected(self):
+        """Invalid variant value in experiment block must produce semantic error."""
+        s = self._summary("r1", "gen1", "A", "20260521T010101Z", "a")
+        s["meta"]["experiment"] = {
+            "generation": "gen1",
+            "variant": "Z",  # invalid
+            "sentiment_enabled": True,
+            "missing_indicators_enabled": False,
+            "semantic_label": "Gen1_Z",
+        }
+        validation = validate_summaries([s])
+        self.assertTrue(any("invalid experiment variant" in e for e in validation["errors"]))
+
+    def test_semantic_conflict_gen1_variant_C_detected(self):
+        """gen1 run with variant=C is a semantic conflict and must be an error."""
+        s = self._summary("r1", "gen1", "C", "20260521T010101Z", "a")
+        validation = validate_summaries([s])
+        self.assertTrue(any("semantic conflict" in e and "gen1" in e for e in validation["errors"]))
+
+    def test_semantic_conflict_gen2_variant_A_detected(self):
+        """gen2 run with variant=A is a semantic conflict and must be an error."""
+        s = self._summary("r1", "gen2", "A", "20260521T010101Z", "a")
+        validation = validate_summaries([s])
+        self.assertTrue(any("semantic conflict" in e and "gen2" in e for e in validation["errors"]))
+
+
 
 
 if __name__ == "__main__":

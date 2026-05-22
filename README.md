@@ -119,7 +119,30 @@ Integrity notes:
 
 - run discovery trusts exactly one run manifest (`run_manifest.json` preferred; legacy `run_manifest_*.json` supported)
 - each run directory must contain exactly one manifest
-- semantic attribution is manifest `experiment`-driven; filename heuristics are intentionally avoided
+- semantic attribution is **manifest `experiment`-driven only** — no inference from folder names, DL flags, or runtime state
+
+Experiment semantics (canonical, immutable):
+
+| Variant | Generation | Sentiment ON | Missing Indicators ON |
+|---------|-----------|-------------|----------------------|
+| A | Gen1 | ✓ | ✗ |
+| B | Gen1 | ✗ | ✗ |
+| C | Gen2 | ✓ | ✓ |
+| D | Gen2 | ✗ | ✓ |
+
+Each run manifest must contain an explicit `experiment` block:
+
+```json
+{
+  "experiment": {
+    "generation": "gen1",
+    "variant": "B",
+    "sentiment_enabled": false,
+    "missing_indicators_enabled": false,
+    "semantic_label": "Gen1_B"
+  }
+}
+```
 
 Run the analysis test suite with:
 

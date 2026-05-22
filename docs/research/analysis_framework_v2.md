@@ -105,6 +105,7 @@ annotated with a `_mode_tag` field before merging.
 
 Run manifests (`run_manifest.json`; legacy `run_manifest_*.json`) are parsed for:
 
+- `experiment.*` — **canonical experiment semantics** (primary source of truth)
 - `dl.dl_enabled` — whether DL signals were active
 - `dl.dl_surface` — DL model / regime / horizon specification
 - `dl.dl_artifact_path` — path to the DL parquet artifact
@@ -116,6 +117,51 @@ Run manifests (`run_manifest.json`; legacy `run_manifest_*.json`) are parsed for
 
 Each run directory must contain **exactly one** run manifest.
 Multiple manifests in one run root are treated as an integrity failure.
+
+#### Manifest experiment schema (required fields)
+
+The `experiment` block is the **single source of truth** for all semantic attribution.
+Semantics are **never** inferred from DL flags, folder names, or runtime state.
+
+```json
+{
+  "experiment": {
+    "generation": "gen1",
+    "variant": "B",
+    "sentiment_enabled": false,
+    "missing_indicators_enabled": false,
+    "semantic_label": "Gen1_B"
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `generation` | `"gen1"` \| `"gen2"` | ✓ | Experiment generation |
+| `variant` | `"A"` \| `"B"` \| `"C"` \| `"D"` | ✓ | Canonical experiment variant |
+| `sentiment_enabled` | `bool` | ✓ | Whether DL sentiment features are active in model inputs |
+| `missing_indicators_enabled` | `bool` | ✓ | Whether explicit `*_missing` indicators were added during feature construction |
+| `semantic_label` | `str` | ✓ | Human-readable label (e.g. `"Gen1_B"`) |
+
+**Important distinctions:**
+
+- `sentiment_enabled` ≠ `flags.DL_SIGNALS_ENABLED` — the DL infrastructure may be active
+  while the actual DL signal contribution is disabled or ablated. `sentiment_enabled` is the
+  canonical flag for whether DL features are truly included in model inputs.
+- `missing_indicators_enabled` must **not** be inferred from feature column names after the
+  fact. It must be set explicitly at runtime.
+
+Variant mapping (canonical, deterministic):
+
+| Variant | `generation` | `sentiment_enabled` | `missing_indicators_enabled` |
+|---------|-------------|---------------------|------------------------------|
+| A | gen1 | `true` | `false` |
+| B | gen1 | `false` | `false` |
+| C | gen2 | `true` | `true` |
+| D | gen2 | `false` | `true` |
+
+Legacy manifests without the `experiment` block are tolerated with warnings and reported
+as `variant=U` (unknown). They are clearly marked in the report as legacy-semantics runs.
 
 ### Log files (legacy fallback)
 
@@ -212,6 +258,11 @@ Reproducibility validation also warns when:
 
 ## Experiment Semantics
 
+> **Integrity rule:** semantics are **canonical and immutable**. The parser reads
+> `manifest.experiment` directly. No heuristic inference from DL flags, folder names,
+> or runtime state is ever performed. Legacy manifests without the experiment block are
+> tolerated with warnings only.
+
 ### Gen1 vs Gen2 (Missing-Indicator Semantics)
 
 The "generation" refers to how the pipeline handles bars where the DL
@@ -237,12 +288,14 @@ Gen2 allows the XGBoost gating model to learn a distinct policy for
 "Sentiment" means the DL prediction surface (from `market-sentiment-ml`)
 is attached as additional feature columns to each bar:
 
-| Mode | `DL_SIGNALS_ENABLED` | Description |
+| Mode | `experiment.sentiment_enabled` | Description |
 |---|---|---|
-| **Sentiment ON** | `true` | DL prediction features active |
+| **Sentiment ON** | `true` | DL prediction features active in model inputs |
 | **Sentiment OFF** | `false` | Pure regime/feature baseline |
 
-Detected from `manifest.dl.dl_enabled`.
+**Note:** `sentiment_enabled` is the canonical flag. It is **not** the same as
+`flags.DL_SIGNALS_ENABLED` — the DL infrastructure may be active while the DL signal
+contribution is ablated. Always read `manifest.experiment.sentiment_enabled`.
 
 ### Experiment Variants (A–D)
 
@@ -336,6 +389,42 @@ Example:
 - `gen2_C__20260521T141210Z__fp_gen2_C`
 
 This avoids run-id collisions when manifest timestamps are reused.
+
+---
+
+## Structural Validation
+
+The pipeline performs semantic and provenance integrity checks before writing output.
+Validation **hard-fails** (raises `RuntimeError`) on:
+
+| Condition | Severity |
+|---|---|
+| Duplicate canonical `run_id` | Error |
+| Duplicate `semantic_run_id` across roots | Error |
+| Multiple manifests in one run root | Error |
+| No manifests, no CSVs, no log (empty run) | Error |
+| Invalid `experiment.generation` value | Error |
+| Invalid `experiment.variant` value | Error |
+| Cross-generation variant conflict (e.g. gen1 run with variant=C) | Error |
+| Semantic inconsistency (variant conflicts with generation + sentiment) | Error |
+
+Validation emits **warnings** (non-fatal) for:
+
+| Condition | Severity |
+|---|---|
+| Missing `experiment` block in manifest | Warning |
+| Incomplete `experiment` fields | Warning |
+| Duplicate semantic variant within cohort (e.g. two Gen1_B runs) | Warning |
+| Missing reproducibility seed metadata | Warning |
+| Missing feature ordering metadata | Warning |
+| Absent optional CSV sections | Warning |
+
+Cohort construction rules:
+
+- Sentiment comparison (A vs B, C vs D) is **generation-scoped** — A may only be compared to B, and C to D.
+- Gen comparison (A vs C, B vs D) is **sentiment-scoped** — A may only be compared to C, and B to D.
+- Incomplete cohorts produce warnings and skip that comparison; they are **never silently mixed**.
+- Unknown-variant (`U`) runs are always excluded from all comparisons.
 
 ---
 
