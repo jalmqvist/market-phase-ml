@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from experiment_semantics import EXPERIMENT_VARIANTS
+
 
 def render_markdown_report(
     summaries: list[dict[str, Any]],
@@ -106,8 +108,8 @@ def render_markdown_report(
         )
     lines.append("")
     lines.append("### Experiment Semantics (canonical)\n")
-    lines.append("| Run ID | Generation | Variant | Sentiment | Missing Indicators | Semantic Label |")
-    lines.append("|--------|-----------|---------|-----------|-------------------|----------------|")
+    lines.append("| Run ID | Generation | Variant | Legacy Semantics | Sentiment | Missing Indicators | Semantic Label |")
+    lines.append("|--------|-----------|---------|------------------|-----------|-------------------|----------------|")
     for s in summaries:
         meta = s.get("meta") or {}
         experiment = meta.get("experiment") or {}
@@ -117,12 +119,14 @@ def render_markdown_report(
         sentiment = experiment.get("sentiment_enabled")
         missing_ind = experiment.get("missing_indicators_enabled")
         sem_label = experiment.get("semantic_label") or meta.get("semantic_label") or "—"
+        legacy_semantics = bool(meta.get("legacy_semantics") or experiment.get("legacy_semantics"))
         sentiment_str = ("✓" if sentiment else "✗") if sentiment is not None else "—"
         missing_str = ("✓" if missing_ind else "✗") if missing_ind is not None else "—"
         lines.append(
             f"| {run_id} "
             f"| {gen} "
             f"| {variant} "
+            f"| {'✓' if legacy_semantics else '✗'} "
             f"| {sentiment_str} "
             f"| {missing_str} "
             f"| {sem_label} |"
@@ -131,10 +135,15 @@ def render_markdown_report(
     lines.append("### Experiment Semantics Reference\n")
     lines.append("| Variant | Generation | Sentiment ON | Missing Indicators ON | Meaning |")
     lines.append("|---------|-----------|-------------|----------------------|---------|")
-    lines.append("| A | Gen1 | ✓ | ✗ | sentiment ON + missing indicators OFF |")
-    lines.append("| B | Gen1 | ✗ | ✗ | sentiment OFF + missing indicators OFF (baseline) |")
-    lines.append("| C | Gen2 | ✓ | ✓ | sentiment ON + missing indicators ON |")
-    lines.append("| D | Gen2 | ✗ | ✓ | sentiment OFF + missing indicators ON (baseline) |")
+    for variant in ("A", "B", "C", "D"):
+        semantics = EXPERIMENT_VARIANTS[variant]
+        lines.append(
+            f"| {variant} "
+            f"| {semantics['generation'].capitalize()} "
+            f"| {'✓' if semantics['sentiment_enabled'] else '✗'} "
+            f"| {'✓' if semantics['missing_indicators_enabled'] else '✗'} "
+            f"| {semantics['run_meaning']} |"
+        )
     lines.append("")
     lines.append("> Experiment semantics are canonical and immutable: read from `manifest.experiment` only.")
     lines.append("> Never inferred from DL flags, folder names, or runtime state.")

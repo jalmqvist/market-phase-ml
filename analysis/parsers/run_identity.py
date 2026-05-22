@@ -10,16 +10,15 @@ import re
 from pathlib import Path
 from typing import Any
 
+from experiment_semantics import (
+    CURRENT_EXPERIMENT_SEMANTICS_VERSION,
+    LEGACY_RUN_MEANING,
+    LEGACY_VARIANT,
+    VALID_EXPERIMENT_VARIANTS,
+    variant_semantics,
+)
+
 _TS_RE = re.compile(r"(\d{8}T\d{6}Z)")
-
-_RUN_MEANINGS = {
-    "A": "sentiment ON + missing indicator OFF (Gen1)",
-    "B": "sentiment OFF + missing indicator OFF (Gen1 baseline)",
-    "C": "sentiment ON + missing indicator ON (Gen2)",
-    "D": "sentiment OFF + missing indicator ON (Gen2 baseline)",
-    "U": "unknown experiment semantics",
-}
-
 
 def _extract_timestamp(text: str | None) -> str | None:
     if not text:
@@ -48,15 +47,9 @@ def _normalize_variant(value: str | None) -> str | None:
     if not isinstance(value, str):
         return None
     normalized = value.strip().upper()
-    if normalized in {"A", "B", "C", "D"}:
+    if normalized in VALID_EXPERIMENT_VARIANTS:
         return normalized
     return None
-
-
-def _variant_from_manifest_semantics(generation: str, sentiment_enabled: bool) -> str:
-    if generation == "gen1":
-        return "A" if sentiment_enabled else "B"
-    return "C" if sentiment_enabled else "D"
 
 
 def infer_run_identity(
@@ -105,8 +98,11 @@ def infer_run_identity(
             "Manifest experiment block missing; using legacy unknown semantics (variant='U')."
         )
 
-    final_gen = explicit_gen or "unknown"
-    variant = explicit_variant or "U"
+    variant = LEGACY_VARIANT
+    final_gen = "unknown"
+    legacy_semantics = True
+    semantics_version = experiment_block.get("semantics_version")
+    has_current_semantics_version = semantics_version == CURRENT_EXPERIMENT_SEMANTICS_VERSION
 
     if explicit_gen is None and experiment_block:
         identity_warnings.append("Experiment generation invalid or missing in manifest experiment block.")
@@ -121,25 +117,51 @@ def infer_run_identity(
     if semantic_label is None and experiment_block:
         identity_warnings.append("Experiment semantic_label missing or empty in manifest experiment block.")
 
-    if explicit_gen and sentiment_enabled is not None:
-        derived_variant = _variant_from_manifest_semantics(explicit_gen, sentiment_enabled)
-        if explicit_variant and explicit_variant != derived_variant:
-            identity_warnings.append(
-                f"Variant conflict: explicit='{explicit_variant}' derived='{derived_variant}'."
-            )
-        elif explicit_variant is None:
-            variant = derived_variant
-
-    if explicit_gen and missing_indicators_enabled is not None:
-        expected_missing = explicit_gen == "gen2"
-        if missing_indicators_enabled != expected_missing:
-            identity_warnings.append(
-                "Experiment semantics conflict: missing_indicators_enabled does not match generation."
-            )
-
-    if final_gen == "unknown" or variant == "U":
+    if experiment_block and not has_current_semantics_version:
         identity_warnings.append(
-            "Variant unresolved from manifest experiment metadata; assigned variant='U'."
+            "Manifest experiment semantics version missing or stale; "
+            "treating manifest as legacy semantics (variant='U')."
+        )
+
+    if explicit_variant and has_current_semantics_version:
+        canonical_semantics = variant_semantics(explicit_variant)
+        if canonical_semantics is not None:
+            variant = explicit_variant
+            final_gen = canonical_semantics["generation"]
+            legacy_semantics = False
+            if explicit_gen and explicit_gen != canonical_semantics["generation"]:
+                identity_warnings.append(
+                    f"Variant conflict: explicit generation='{explicit_gen}' "
+                    f"does not match canonical generation='{canonical_semantics['generation']}'."
+                )
+            if sentiment_enabled is not None and sentiment_enabled != canonical_semantics["sentiment_enabled"]:
+                identity_warnings.append(
+                    f"Variant conflict: explicit sentiment_enabled={sentiment_enabled} "
+                    f"does not match canonical sentiment_enabled={canonical_semantics['sentiment_enabled']}."
+                )
+            if (
+                missing_indicators_enabled is not None
+                and missing_indicators_enabled != canonical_semantics["missing_indicators_enabled"]
+            ):
+                identity_warnings.append(
+                    "Variant conflict: explicit missing_indicators_enabled="
+                    f"{missing_indicators_enabled} does not match canonical "
+                    f"missing_indicators_enabled={canonical_semantics['missing_indicators_enabled']}."
+                )
+            if semantic_label and semantic_label != canonical_semantics["semantic_label"]:
+                identity_warnings.append(
+                    f"Variant conflict: explicit semantic_label='{semantic_label}' "
+                    f"does not match canonical semantic_label='{canonical_semantics['semantic_label']}'."
+                )
+        else:
+            identity_warnings.append(
+                f"Experiment variant invalid: {explicit_variant!r} "
+                f"(expected one of {sorted(VALID_EXPERIMENT_VARIANTS)})."
+            )
+
+    if final_gen == "unknown" or variant == LEGACY_VARIANT:
+        identity_warnings.append(
+            "Variant unresolved from canonical manifest experiment metadata; assigned variant='U'."
         )
 
     archive_root = archive_root.resolve()
@@ -160,7 +182,12 @@ def infer_run_identity(
         "semantic_run_id": semantic_run_id,
         "experiment_gen": final_gen,
         "run_variant": variant,
-        "run_meaning": _RUN_MEANINGS.get(variant, _RUN_MEANINGS["U"]),
+        "legacy_semantics": legacy_semantics,
+        "run_meaning": (
+            canonical_semantics["run_meaning"]
+            if not legacy_semantics and (canonical_semantics := variant_semantics(variant))
+            else LEGACY_RUN_MEANING
+        ),
         "archive_relpath": archive_relpath,
         "archive_slug": archive_slug,
         "timestamp_utc": timestamp,

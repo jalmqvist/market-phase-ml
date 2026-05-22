@@ -26,6 +26,9 @@ from analysis.parsers.log_parser import parse_log
 from analysis.parsers.run_discovery import discover_runs
 from analysis.parsers.run_identity import infer_run_identity
 from analysis.validation import validate_summaries, sort_summaries_deterministically
+from experiment_semantics import CURRENT_EXPERIMENT_SEMANTICS_VERSION
+from experiment_semantics import EXPERIMENT_VARIANTS
+from experiment_semantics import build_experiment_metadata_from_variant
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +194,8 @@ class TestParseManifest(unittest.TestCase):
                 "sentiment_enabled": True,
                 "missing_indicators_enabled": False,
                 "semantic_label": "Gen1_A",
+                "legacy_semantics": False,
+                "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
             },
             "dl": {
                 "dl_enabled": True,
@@ -303,6 +308,24 @@ class TestParseManifest(unittest.TestCase):
         finally:
             _rmtree(run_dir)
 
+
+class TestCanonicalExperimentMetadata(unittest.TestCase):
+    def test_variant_b_metadata_keeps_sentiment_disabled(self):
+        experiment = build_experiment_metadata_from_variant("B")
+        self.assertEqual(experiment["variant"], "B")
+        self.assertEqual(experiment["generation"], "gen1")
+        self.assertFalse(experiment["sentiment_enabled"])
+        self.assertFalse(experiment["missing_indicators_enabled"])
+        self.assertEqual(experiment["semantic_label"], "Gen1_B")
+
+    def test_variant_d_metadata_keeps_sentiment_disabled(self):
+        experiment = build_experiment_metadata_from_variant("D")
+        self.assertEqual(experiment["variant"], "D")
+        self.assertEqual(experiment["generation"], "gen2")
+        self.assertFalse(experiment["sentiment_enabled"])
+        self.assertTrue(experiment["missing_indicators_enabled"])
+        self.assertEqual(experiment["semantic_label"], "Gen2_D")
+
     def test_corrupt_manifest_raises(self):
         run_dir = _make_run_dir({
             "run_manifest_bad__dl_enabled.json": "NOT JSON {{{",
@@ -330,6 +353,8 @@ class TestRunIdentity(unittest.TestCase):
                 "sentiment_enabled": sentiment_enabled,
                 "missing_indicators_enabled": missing_indicators_enabled,
                 "semantic_label": f"{generation.capitalize()}_{variant}",
+                "legacy_semantics": False,
+                "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
             },
         }
 
@@ -446,8 +471,8 @@ class TestRunIdentity(unittest.TestCase):
         finally:
             _rmtree(archive)
 
-    def test_missing_variant_derives_from_sentiment(self):
-        """Manifest with generation + sentiment_enabled but no explicit variant must derive variant."""
+    def test_missing_variant_is_marked_legacy_unknown(self):
+        """Manifest without explicit variant must be legacy_semantics with variant=U."""
         archive = _make_run_dir({})
         run_dir = archive / "partial_manifest"
         run_dir.mkdir()
@@ -467,8 +492,8 @@ class TestRunIdentity(unittest.TestCase):
                     },
                 },
             )
-            # Should derive A from gen1 + sentiment_enabled=True
-            self.assertEqual(identity["run_variant"], "A")
+            self.assertEqual(identity["run_variant"], "U")
+            self.assertTrue(identity["legacy_semantics"])
         finally:
             _rmtree(archive)
 
@@ -493,6 +518,8 @@ class TestRunIdentity(unittest.TestCase):
                         "sentiment_enabled": False,
                         "missing_indicators_enabled": False,
                         "semantic_label": "Gen1_B",
+                        "legacy_semantics": False,
+                        "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
                     },
                 },
             )
@@ -521,11 +548,81 @@ class TestRunIdentity(unittest.TestCase):
                         "sentiment_enabled": True,  # conflict: B requires False
                         "missing_indicators_enabled": False,
                         "semantic_label": "Gen1_B",
+                        "legacy_semantics": False,
+                        "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
                     },
                 },
             )
             conflict_warnings = [w for w in identity["identity_warnings"] if "conflict" in w.lower()]
             self.assertGreater(len(conflict_warnings), 0, "Variant conflict not detected in identity_warnings")
+        finally:
+            _rmtree(archive)
+
+    def test_dl_infrastructure_on_variant_b_remains_sentiment_off(self):
+        archive = _make_run_dir({})
+        run_dir = archive / "fp_gen1_B_dl_on"
+        run_dir.mkdir()
+        try:
+            identity = infer_run_identity(
+                archive_root=archive,
+                run_dir=run_dir,
+                experiment_gen="gen1",
+                manifest={
+                    "run_id": "run_20260521T000000Z",
+                    "timestamp_utc": "20260521T000000Z",
+                    "dl_enabled": True,
+                    "run": {"run_id": "run_20260521T000000Z"},
+                    "experiment": {
+                        "generation": "gen1",
+                        "variant": "B",
+                        "sentiment_enabled": False,
+                        "missing_indicators_enabled": False,
+                        "semantic_label": "Gen1_B",
+                        "legacy_semantics": False,
+                        "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
+                    },
+                },
+            )
+            self.assertEqual(identity["run_variant"], "B")
+            self.assertFalse(identity["legacy_semantics"])
+            self.assertEqual(
+                [w for w in identity["identity_warnings"] if "sentiment_enabled" in w],
+                [],
+            )
+        finally:
+            _rmtree(archive)
+
+    def test_dl_infrastructure_on_variant_d_remains_sentiment_off(self):
+        archive = _make_run_dir({})
+        run_dir = archive / "fp_gen2_D_dl_on"
+        run_dir.mkdir()
+        try:
+            identity = infer_run_identity(
+                archive_root=archive,
+                run_dir=run_dir,
+                experiment_gen="gen2",
+                manifest={
+                    "run_id": "run_20260521T000000Z",
+                    "timestamp_utc": "20260521T000000Z",
+                    "dl_enabled": True,
+                    "run": {"run_id": "run_20260521T000000Z"},
+                    "experiment": {
+                        "generation": "gen2",
+                        "variant": "D",
+                        "sentiment_enabled": False,
+                        "missing_indicators_enabled": True,
+                        "semantic_label": "Gen2_D",
+                        "legacy_semantics": False,
+                        "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
+                    },
+                },
+            )
+            self.assertEqual(identity["run_variant"], "D")
+            self.assertFalse(identity["legacy_semantics"])
+            self.assertEqual(
+                [w for w in identity["identity_warnings"] if "sentiment_enabled" in w],
+                [],
+            )
         finally:
             _rmtree(archive)
 
@@ -548,6 +645,8 @@ class TestRunIdentity(unittest.TestCase):
                     "sentiment_enabled": True,
                     "missing_indicators_enabled": False,
                     "semantic_label": "Gen1_A",
+                    "legacy_semantics": False,
+                    "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
                 },
             },
         )
@@ -822,6 +921,8 @@ class TestPipelineIntegration(unittest.TestCase):
                     "sentiment_enabled": dl_enabled,
                     "missing_indicators_enabled": False,
                     "semantic_label": f"Gen1_{run_variant}",
+                    "legacy_semantics": False,
+                    "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
                 },
                 "dl": {
                     "dl_enabled": dl_enabled,
@@ -887,6 +988,54 @@ class TestPipelineIntegration(unittest.TestCase):
         self.assertEqual(len(sentiment["sentiment_off"]), 1)
         self.assertIn("validation", comp)
 
+    def test_variant_roundtrip_integrity_all_variants(self):
+        from analysis.pipeline import run_pipeline
+
+        archive = Path(tempfile.mkdtemp())
+        output = Path(tempfile.mkdtemp())
+        try:
+            for variant, semantics in EXPERIMENT_VARIANTS.items():
+                run_dir = archive / f"run_{variant}"
+                run_dir.mkdir()
+                manifest = {
+                    "run": {
+                        "run_id": f"run_{variant}",
+                        "git_sha": "abc123",
+                        "timestamp_utc": "20260521T000000Z",
+                    },
+                    "experiment": {
+                        "generation": semantics["generation"],
+                        "variant": variant,
+                        "sentiment_enabled": semantics["sentiment_enabled"],
+                        "missing_indicators_enabled": semantics["missing_indicators_enabled"],
+                        "semantic_label": semantics["semantic_label"],
+                        "legacy_semantics": False,
+                        "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
+                    },
+                    "dl": {"dl_enabled": True, "dl_mode_tag": "__dl_enabled"},
+                }
+                (run_dir / "run_manifest.json").write_text(json.dumps(manifest))
+                (run_dir / "walkforward_results_summary__dl_enabled.csv").write_text(
+                    "Pair,Sharpe_Dynamic,Sharpe_Baseline,Sharpe_Delta,N_Folds\n"
+                    "EURUSD,0.35,0.22,0.13,48\n"
+                )
+
+            run_pipeline(archive, output, verbose=False)
+            validations = json.loads((output / "comparisons.json").read_text())["validation"]
+            self.assertEqual(validations["errors"], [])
+            for summary_path in (output / "summaries").glob("*.summary.json"):
+                summary = json.loads(summary_path.read_text())
+                experiment = summary["meta"]["experiment"]
+                variant = experiment["variant"]
+                semantics = EXPERIMENT_VARIANTS[variant]
+                self.assertEqual(experiment["generation"], semantics["generation"])
+                self.assertEqual(experiment["sentiment_enabled"], semantics["sentiment_enabled"])
+                self.assertEqual(experiment["missing_indicators_enabled"], semantics["missing_indicators_enabled"])
+                self.assertEqual(experiment["semantic_label"], semantics["semantic_label"])
+        finally:
+            _rmtree(archive)
+            _rmtree(output)
+
 
 class TestValidationAndOrdering(unittest.TestCase):
     def _summary(self, run_id: str, gen: str, variant: str, ts: str, relpath: str) -> dict:
@@ -895,6 +1044,7 @@ class TestValidationAndOrdering(unittest.TestCase):
             "meta": {
                 "experiment_gen": gen,
                 "run_variant": variant,
+                "legacy_semantics": False,
                 "timestamp_utc": ts,
                 "archive_relpath": relpath,
                 "manifest_present": True,
@@ -1059,6 +1209,21 @@ class TestValidationAndOrdering(unittest.TestCase):
         s = self._summary("r1", "gen2", "A", "20260521T010101Z", "a")
         validation = validate_summaries([s])
         self.assertTrue(any("semantic conflict" in e and "gen2" in e for e in validation["errors"]))
+
+    def test_validation_rejects_variant_b_with_sentiment_true(self):
+        s = self._summary("r_bad", "gen1", "B", "20260521T010101Z", "bad")
+        s["meta"]["experiment"] = {
+            "generation": "gen1",
+            "variant": "B",
+            "sentiment_enabled": True,
+            "missing_indicators_enabled": False,
+            "semantic_label": "Gen1_B",
+        }
+        validation = validate_summaries([s])
+        self.assertTrue(
+            any("variant=B requires sentiment_enabled=False" in e for e in validation["errors"]),
+            "Semantic corruption should hard-fail when variant semantics do not match canonical mapping.",
+        )
 
 
 

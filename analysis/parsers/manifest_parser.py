@@ -42,12 +42,16 @@ def _parse_experiment_block(data: dict[str, Any]) -> dict[str, Any]:
     sentiment_enabled = experiment.get("sentiment_enabled")
     missing_indicators_enabled = experiment.get("missing_indicators_enabled")
     semantic_label = experiment.get("semantic_label")
+    legacy_semantics = experiment.get("legacy_semantics")
+    semantics_version = experiment.get("semantics_version")
     return {
         "generation": generation,
         "variant": variant,
         "sentiment_enabled": sentiment_enabled,
         "missing_indicators_enabled": missing_indicators_enabled,
         "semantic_label": semantic_label,
+        "legacy_semantics": legacy_semantics,
+        "semantics_version": semantics_version,
     }
 
 

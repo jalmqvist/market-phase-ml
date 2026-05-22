@@ -163,6 +163,15 @@ class TestCompareSentimentVariants(unittest.TestCase):
         self.assertEqual(result["delta_table"], [])
         self.assertTrue(any("invalid" in w.lower() for w in result["warnings"]))
 
+    def test_sentiment_comparison_ignores_dl_enabled_flag(self):
+        summaries = [
+            _make_summary("run_a", dl_enabled=True, experiment_gen="gen1", run_variant="A", sharpe_delta=0.10),
+            _make_summary("run_b", dl_enabled=True, experiment_gen="gen1", run_variant="B", sharpe_delta=0.05),
+        ]
+        result = compare_sentiment_variants(summaries)
+        self.assertEqual(result["grouped"]["gen1"]["on"], ["run_a"])
+        self.assertEqual(result["grouped"]["gen1"]["off"], ["run_b"])
+
 
 # ---------------------------------------------------------------------------
 # Selector uplift tests

@@ -52,9 +52,8 @@ Gen1 vs Gen2:
     Gen1 = no indicator; Gen2 = explicit ``dl_missing_indicator`` column.
 
 Sentiment ON/OFF:
-    Refers to whether ``DL_SIGNALS_ENABLED=true`` was set for the run.
-    Sentiment ON = DL prediction surface attached to each bar.
-    OFF = pure regime/feature baseline.
+    Refers only to canonical manifest experiment variant semantics.
+    Never inferred from DL runtime flags or folder names.
 
 Experiment variants (comparative studies):
     A — Sentiment ON,  Gen1
@@ -182,11 +181,12 @@ def build_run_summary(
 
     # --- meta -------------------------------------------------------------
     meta = {
-        "experiment_gen": experiment.get("generation") or identity.get("experiment_gen") or experiment_gen,
-        "run_variant": experiment.get("variant") or identity.get("run_variant"),
+        "experiment_gen": identity.get("experiment_gen") or experiment_gen,
+        "run_variant": identity.get("run_variant"),
         "sentiment_enabled": experiment.get("sentiment_enabled"),
         "missing_indicators_enabled": experiment.get("missing_indicators_enabled"),
         "semantic_label": experiment.get("semantic_label"),
+        "legacy_semantics": bool(identity.get("legacy_semantics")),
         "experiment": experiment,
         "dl_enabled": (manifest or {}).get("dl_enabled"),
         "dl_surface": (manifest or {}).get("dl_surface"),

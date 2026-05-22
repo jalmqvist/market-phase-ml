@@ -48,6 +48,11 @@ from src.repro import (
 from src.dl_config import resolve_dl_prediction_artifact_path
 from src.dl_surface_loader import VALID_DL_REGIMES
 from src.dl_daily_features import load_and_aggregate_d1, D1_FEATURE_COLS
+from experiment_semantics import (
+    VALID_EXPERIMENT_VARIANTS,
+    build_experiment_metadata_from_variant,
+    normalize_variant,
+)
 
 
 # ─────────────────────────────────────────
@@ -176,7 +181,6 @@ RUN_ID = None  # set to a string to force a specific id; otherwise auto-generate
 _CURRENT_RUN_OUTPUT_DIR: Path | None = None
 
 _VALID_EXPERIMENT_GENERATIONS = {"gen1", "gen2"}
-_VALID_EXPERIMENT_VARIANTS = {"A", "B", "C", "D"}
 _LEGACY_RESULTS_DIR = "results"
 _DEFAULT_RUNS_ROOT = "results_archive"
 
@@ -191,30 +195,18 @@ def _validate_experiment_generation(value: str) -> str:
     return gen
 
 
-def _derive_variant(generation: str, sentiment_enabled: bool) -> str:
-    generation = _validate_experiment_generation(generation)
-    if generation == "gen1":
-        return "A" if sentiment_enabled else "B"
-    return "C" if sentiment_enabled else "D"
-
-
-def _build_experiment_metadata(*, generation: str, sentiment_enabled: bool) -> dict:
-    generation = _validate_experiment_generation(generation)
-    missing_indicators_enabled = generation == "gen2"
-    variant = _derive_variant(generation, sentiment_enabled)
-    if variant not in _VALID_EXPERIMENT_VARIANTS:
+def _validate_experiment_variant(value: str) -> str:
+    variant = normalize_variant(value)
+    if variant is None:
         raise ValueError(
-            f"Invalid derived variant: {variant!r}. "
-            f"Allowed values={sorted(_VALID_EXPERIMENT_VARIANTS)}"
+            f"Invalid experiment variant: {value!r}. "
+            f"Allowed values={sorted(VALID_EXPERIMENT_VARIANTS)}"
         )
-    semantic_generation = {"gen1": "Gen1", "gen2": "Gen2"}[generation]
-    return {
-        "generation": generation,
-        "variant": variant,
-        "sentiment_enabled": bool(sentiment_enabled),
-        "missing_indicators_enabled": bool(missing_indicators_enabled),
-        "semantic_label": f"{semantic_generation}_{variant}",
-    }
+    return variant
+
+
+def _build_experiment_metadata(*, variant: str) -> dict:
+    return build_experiment_metadata_from_variant(_validate_experiment_variant(variant))
 
 
 def _set_run_output_dir(path: Path) -> None:
@@ -1423,6 +1415,7 @@ def main(
     *,
     output_dir: Path | None = None,
     experiment_generation: str | None = None,
+    experiment_variant: str | None = None,
     experiment_seed: int | None = None,
 ):
     resolved_seed = resolve_experiment_seed(
@@ -1469,14 +1462,25 @@ def main(
         print("[WARN] DL enabled but no artifact resolved; DL features will be skipped.")
     dl_mode_tag = "__dl_enabled" if dl_runtime_enabled else "__baseline"
     dl_surface_str = _dl_surface_string(dl_surface)
-    experiment_meta = _build_experiment_metadata(
-        generation=(
-            experiment_generation
-            if experiment_generation is not None
-            else os.getenv("EXPERIMENT_GENERATION", "gen1")
-        ),
-        sentiment_enabled=dl_runtime_enabled,
+    selected_variant = (
+        experiment_variant
+        if experiment_variant is not None
+        else os.getenv("EXPERIMENT_VARIANT", "A")
     )
+    experiment_meta = _build_experiment_metadata(variant=selected_variant)
+    generation_hint = (
+        experiment_generation
+        if experiment_generation is not None
+        else os.getenv("EXPERIMENT_GENERATION")
+    )
+    if generation_hint is not None:
+        normalized_generation_hint = _validate_experiment_generation(generation_hint)
+        if normalized_generation_hint != experiment_meta["generation"]:
+            raise ValueError(
+                "Conflicting experiment semantic inputs: "
+                f"variant={experiment_meta['variant']} implies generation={experiment_meta['generation']}, "
+                f"but generation hint was {normalized_generation_hint}."
+            )
     run_ts = run_cfg.run_id.replace("run_", "")
     computed_default_output_dir = Path(
         os.getenv("MPML_RUNS_ROOT", _DEFAULT_RUNS_ROOT)
@@ -3324,7 +3328,17 @@ if __name__ == '__main__':
         type=str,
         default=None,
         choices=sorted(_VALID_EXPERIMENT_GENERATIONS),
-        help="Explicit experiment generation (gen1|gen2). Defaults to EXPERIMENT_GENERATION env or gen1.",
+        help="Optional generation consistency hint (gen1|gen2). Must match selected variant semantics if provided.",
+    )
+    parser.add_argument(
+        "--experiment-variant",
+        type=str,
+        default=None,
+        choices=sorted(VALID_EXPERIMENT_VARIANTS),
+        help=(
+            "Canonical experiment variant (A|B|C|D). "
+            "Precedence: --experiment-variant > EXPERIMENT_VARIANT env > default A."
+        ),
     )
     parser.add_argument(
         "--experiment-seed",
@@ -3339,5 +3353,6 @@ if __name__ == '__main__':
     main(
         output_dir=args.output_dir,
         experiment_generation=args.experiment_generation,
+        experiment_variant=args.experiment_variant,
         experiment_seed=args.experiment_seed,
     )
