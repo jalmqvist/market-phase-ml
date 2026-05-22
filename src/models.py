@@ -1258,9 +1258,10 @@ class StrategyPerformanceTracker:
         training_data = []
 
         # Get equity curves for each strategy
+        strategy_names = sorted(strategy_results.keys())
         equity_curves = {
-            name: results['equity_curve']
-            for name, results in strategy_results.items()
+            name: strategy_results[name]['equity_curve']
+            for name in strategy_names
         }
         # Align all equity curves to the bar index (df.index)
         eq_df = pd.concat(equity_curves, axis=1)
@@ -1310,7 +1311,7 @@ class StrategyPerformanceTracker:
                     row[col] = df[col].iloc[i]
 
             # Strategy returns over next window_days
-            for strategy_name in equity_curves.keys():
+            for strategy_name in strategy_names:
                 eq_current = eq_df[strategy_name].iloc[i]
                 eq_future = eq_df[strategy_name].iloc[i + self.window_days]
                 ret = (eq_future - eq_current) / eq_current
@@ -1318,10 +1319,14 @@ class StrategyPerformanceTracker:
 
             # Which strategy had best return?
             strategy_returns = {
-                name: row[f'{name}_return']
-                for name in equity_curves.keys()
+                name: float(row[f'{name}_return'])
+                for name in strategy_names
             }
-            best_strategy = max(strategy_returns, key=strategy_returns.get)
+            # Deterministic tie-break: higher return first, then strategy name.
+            best_strategy = sorted(
+                strategy_returns.items(),
+                key=lambda kv: (-kv[1], kv[0]),
+            )[0][0]
 
             row['best_strategy'] = best_strategy
             row['best_return'] = strategy_returns[best_strategy]

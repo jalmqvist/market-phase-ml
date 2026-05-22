@@ -38,7 +38,13 @@ from src.models import (
     smooth_phase_labels, safe_existing_columns,
 )
 from src.strategies import Backtester as BT, PhaseAwareStrategy, StrategySelector_Dynamic
-from src.repro import set_global_seed, build_run_config, write_manifest
+from src.repro import (
+    DEFAULT_EXPERIMENT_SEED,
+    build_run_config,
+    resolve_experiment_seed,
+    set_global_seed,
+    write_manifest,
+)
 from src.dl_config import resolve_dl_prediction_artifact_path
 from src.dl_surface_loader import VALID_DL_REGIMES
 from src.dl_daily_features import load_and_aggregate_d1, D1_FEATURE_COLS
@@ -161,7 +167,6 @@ def filter_pair_universe(raw_data: dict) -> dict:
 # ─────────────────────────────────────────
 # REPRODUCIBILITY
 # ─────────────────────────────────────────
-SEED = 42
 RUN_ID = None  # set to a string to force a specific id; otherwise auto-generated
 _CURRENT_RUN_OUTPUT_DIR: Path | None = None
 
@@ -1156,6 +1161,9 @@ def generate_walkforward_folds_by_pos(
       - train_end advances by step_months
       - test window length = test_months
     """
+    dates = pd.DatetimeIndex(pd.to_datetime(dates))
+    if not dates.is_monotonic_increasing:
+        dates = dates.sort_values()
     start = pd.Timestamp(dates.min())
     end = pd.Timestamp(dates.max())
 
@@ -1405,9 +1413,18 @@ def _assert_backtest_index_matches(pair_name: str, df_ref, results: dict, tag: s
             raise RuntimeError("Equity curve index mismatch at creation time")
 
 
-def main(*, output_dir: Path | None = None, experiment_generation: str | None = None):
-    run_cfg = build_run_config(seed=SEED, run_id=RUN_ID)
-    set_global_seed(run_cfg.seed)
+def main(
+    *,
+    output_dir: Path | None = None,
+    experiment_generation: str | None = None,
+    experiment_seed: int | None = None,
+):
+    resolved_seed = resolve_experiment_seed(
+        cli_seed=experiment_seed,
+        default_seed=DEFAULT_EXPERIMENT_SEED,
+    )
+    run_cfg = build_run_config(seed=resolved_seed, run_id=RUN_ID)
+    reproducibility_block = set_global_seed(run_cfg.seed)
     dl_surface = dict(DL_SIGNAL_SURFACE)
     dl_regime = str(dl_surface.get("dl_regime", "")).upper()
     dl_surface["dl_regime"] = dl_regime
@@ -1490,6 +1507,7 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
             "run_variant": experiment_meta["variant"],
         },
         "experiment": experiment_meta,
+        "reproducibility": reproducibility_block,
         "flags": {
             "RUN_IN_SAMPLE_ABLATION": RUN_IN_SAMPLE_ABLATION,
             "RUN_WALKFORWARD": RUN_WALKFORWARD,
@@ -1685,18 +1703,21 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
         return
 
     # ── Update manifest with DL feature surface metadata (per run) ─────────
-    sample_pair_df = next(iter(processed_data.values()))
+    sample_pair_name = sorted(processed_data.keys())[0]
+    sample_pair_df = processed_data[sample_pair_name]
     _run_dl_feature_cols = get_dl_feature_columns(sample_pair_df) if dl_runtime_enabled else []
     manifest["dl"]["dl_feature_columns"] = _run_dl_feature_cols
     manifest["dl"]["dl_feature_count"] = len(_run_dl_feature_cols)
     write_manifest(manifest_path, manifest)
 
-    for pair_name, df in processed_data.items():
+    for pair_name in sorted(processed_data.keys()):
+        df = processed_data[pair_name]
         print_phase_distribution(df, pair_name)
 
     # ── Temporary diagnostic — phase label smoothing effect ──────────────
     print('\n  Phase smoothing diagnostic:')
-    for pair_name, df in list(processed_data.items())[:2]:
+    for pair_name in sorted(processed_data.keys())[:2]:
+        df = processed_data[pair_name]
         raw      = df['phase']
         smoothed = smooth_phase_labels(raw, confirmation_bars=5)
         changed  = (raw != smoothed).sum()
@@ -1715,7 +1736,7 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
     # ─────────────────────────────────────────
     print('\n[3/5] Running ML experiments...')
 
-    ml_params     = dict(n_splits=5, random_state=42)
+    ml_params     = dict(n_splits=5, random_state=run_cfg.seed)
     ml_data_hash  = _hash_dict_of_dataframes(processed_data)
     ml_param_hash = _hash_params(**ml_params)
 
@@ -1727,7 +1748,8 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
         print('  No cache found — running ML experiments...')
         ml_results_all = {}
 
-        for pair_name, df in processed_data.items():
+        for pair_name in sorted(processed_data.keys()):
+            df = processed_data[pair_name]
             print(f'\n  --- {pair_name} ---')
             try:
                 experiment = PhaseMLExperiment(
@@ -1772,7 +1794,8 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
         retrain_freq=21,
         confirmation_bars=5,
         smooth_labels=True,
-        random_state=42,
+        random_state=run_cfg.seed,
+        seed=run_cfg.seed,
         min_dl_coverage_pct=MIN_DL_TRAIN_COVERAGE_PCT,
     )
 
@@ -1790,7 +1813,8 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
 
         predictor = PhaseMLPredictor(**predictor_params)
 
-        for pair_name, df in processed_data.items():
+        for pair_name in sorted(processed_data.keys()):
+            df = processed_data[pair_name]
             print(f'\n  --- {pair_name} ---')
             try:
                 predictions = predictor.fit_predict(df)
@@ -1949,7 +1973,8 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
         print('  No cache found — running backtests...')
         all_pair_results = {}
 
-        for pair_name, df in processed_data.items():
+        for pair_name in sorted(processed_data.keys()):
+            df = processed_data[pair_name]
             pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
             print(f'\n  --- {pair_name} (pip={pip_value}) ---')
 
@@ -2039,7 +2064,10 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
     print('  (Predicting strategy TYPE: TrendFollowing vs MeanReversion vs PhaseAware)')
 
     # DL pipeline diagnostics before strategy selector training
-    _sample_df_4b = next(iter(processed_data.values())) if processed_data else None
+    _sample_df_4b = (
+        processed_data[sorted(processed_data.keys())[0]]
+        if processed_data else None
+    )
     _dl_cols_4b = get_dl_feature_columns(_sample_df_4b) if _sample_df_4b is not None else []
     print(
         f"[DL PIPELINE] strategy-selector training: "
@@ -2050,7 +2078,8 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
 
     selector_trained = {}
 
-    for pair_name, df in processed_data.items():
+    for pair_name in sorted(processed_data.keys()):
+        df = processed_data[pair_name]
         print(f'\n  --- {pair_name} ---')
 
         try:
@@ -2065,7 +2094,7 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
             training_data = tracker.compute_strategy_returns(df, pair_backtest)
 
             # Train selector model (3-class: TF vs MR vs PhaseAware)
-            selector = StrategySelector()
+            selector = StrategySelector(seed=run_cfg.seed)
             metrics = selector.train(
                 training_data,
                 diagnostics_label=f"dynamic selector training pair={pair_name}",
@@ -2161,7 +2190,8 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
     else:
         dynamic_results = {}
         # DL pipeline diagnostics before dynamic backtests
-        for _pn, _sel in selector_trained.items():
+        for _pn in sorted(selector_trained.keys()):
+            _sel = selector_trained[_pn]
             _sel_dl = [c for c in (_sel.feature_cols or []) if c.startswith("dl_")]
             print(
                 f"[DL PIPELINE] dynamic-bt selector: pair={_pn} "
@@ -2169,7 +2199,8 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
                 f"dl_cols_in_selector={sorted(_sel_dl)}"
             )
 
-        for pair_name, df in processed_data.items():
+        for pair_name in sorted(processed_data.keys()):
+            df = processed_data[pair_name]
             print(f'\n  --- {pair_name} ---')
             _pair_dl_cols = get_dl_feature_columns(df)
             print(
@@ -2257,7 +2288,7 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
 
         comparison = []
 
-        for pair_name in dynamic_results.keys():
+        for pair_name in sorted(dynamic_results.keys()):
             if DEBUG_BASELINE_KEYS:
                 print(f"{pair_name}: available baseline keys: {list(hardcoded_results.get(pair_name, {}).keys())}")
             baseline_key = 'PhaseAware_TF4_MR42'
@@ -2321,7 +2352,7 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
 
         ablation_rows = []
 
-        for pair_name in dynamic_results.keys():
+        for pair_name in sorted(dynamic_results.keys()):
             # ensure we have hardcoded results for this pair
             pair_hc = hardcoded_results.get(pair_name, {})
 
@@ -2386,7 +2417,8 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
         walkforward_rows = []
         vol_diag_rows = []
 
-        for pair_name, df_full in processed_data.items():
+        for pair_name in sorted(processed_data.keys()):
+            df_full = processed_data[pair_name]
             print(f"\n  --- {pair_name} ---")
 
             pair_results_full = hardcoded_results.get(pair_name, {})
@@ -2439,7 +2471,7 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
                     continue
 
                 # --- Train selector on this fold ---
-                selector = StrategySelector()
+                selector = StrategySelector(seed=run_cfg.seed)
                 selector.train(
                     training_data,
                     do_cv=False,
@@ -2765,7 +2797,8 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
 
         tau_rows = []
 
-        for pair_name, df_full in processed_data.items():
+        for pair_name in sorted(processed_data.keys()):
+            df_full = processed_data[pair_name]
             print(f"\n  --- {pair_name} ---")
 
             pair_results_full = hardcoded_results.get(pair_name, {})
@@ -2812,7 +2845,7 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
                 if len(training_data) < 200:
                     continue
 
-                selector = StrategySelector()
+                selector = StrategySelector(seed=run_cfg.seed)
                 selector.train(
                     training_data,
                     do_cv=False,
@@ -2990,7 +3023,8 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
 
         policy_rows = []
 
-        for pair_name, df_full in processed_data.items():
+        for pair_name in sorted(processed_data.keys()):
+            df_full = processed_data[pair_name]
             print(f"\n  --- {pair_name} ---")
 
             pair_results_full = hardcoded_results.get(pair_name, {})
@@ -3037,7 +3071,7 @@ def main(*, output_dir: Path | None = None, experiment_generation: str | None = 
                 if len(training_data) < 200:
                     continue
 
-                selector = StrategySelector()
+                selector = StrategySelector(seed=run_cfg.seed)
                 selector.train(
                     training_data,
                     do_cv=False,
@@ -3249,5 +3283,18 @@ if __name__ == '__main__':
         choices=sorted(_VALID_EXPERIMENT_GENERATIONS),
         help="Explicit experiment generation (gen1|gen2). Defaults to EXPERIMENT_GENERATION env or gen1.",
     )
+    parser.add_argument(
+        "--experiment-seed",
+        type=int,
+        default=None,
+        help=(
+            "Experiment RNG seed. Precedence: --experiment-seed > EXPERIMENT_SEED env "
+            f"> default ({DEFAULT_EXPERIMENT_SEED})."
+        ),
+    )
     args = parser.parse_args()
-    main(output_dir=args.output_dir, experiment_generation=args.experiment_generation)
+    main(
+        output_dir=args.output_dir,
+        experiment_generation=args.experiment_generation,
+        experiment_seed=args.experiment_seed,
+    )

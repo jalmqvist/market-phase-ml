@@ -213,6 +213,12 @@ class TestParseManifest(unittest.TestCase):
                 "DL_SIGNALS_ENABLED": True,
                 "RUN_WALKFORWARD": True,
             },
+            "reproducibility": {
+                "experiment_seed": 42,
+                "numpy_seed": 42,
+                "python_random_seed": 42,
+                "torch_seed": 42,
+            },
         }
         if extra:
             base.update(extra)
@@ -251,6 +257,10 @@ class TestParseManifest(unittest.TestCase):
     def test_walkforward_params(self):
         result = parse_manifest(self.run_dir)
         self.assertEqual(result["walkforward"]["train_years"], 7)
+
+    def test_reproducibility_block(self):
+        result = parse_manifest(self.run_dir)
+        self.assertEqual(result["reproducibility"]["experiment_seed"], 42)
 
     def test_no_manifest_returns_none(self):
         empty_dir = _make_run_dir({})

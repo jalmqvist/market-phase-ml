@@ -11,6 +11,8 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
+DEFAULT_EXPERIMENT_SEED = 42
+
 
 @dataclass(frozen=True)
 class RunConfig:
@@ -29,7 +31,26 @@ def _safe_git_sha() -> str:
         return "unknown"
 
 
-def set_global_seed(seed: int) -> None:
+def resolve_experiment_seed(
+    *,
+    cli_seed: Optional[int] = None,
+    env_var: str = "EXPERIMENT_SEED",
+    default_seed: int = DEFAULT_EXPERIMENT_SEED,
+) -> int:
+    if cli_seed is not None:
+        return int(cli_seed)
+    env_seed = os.getenv(env_var, "").strip()
+    if env_seed:
+        try:
+            return int(env_seed)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid {env_var} value {env_seed!r}; expected an integer."
+            ) from exc
+    return int(default_seed)
+
+
+def set_global_seed(seed: int) -> dict[str, Any]:
     """
     Best-effort global seeding for reproducibility.
     Note: exact reproducibility can still vary across OS/BLAS/threading.
@@ -37,6 +58,31 @@ def set_global_seed(seed: int) -> None:
     os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
+    reproducibility = {
+        "experiment_seed": int(seed),
+        "numpy_seed": int(seed),
+        "python_random_seed": int(seed),
+        "torch_seed": None,
+        "torch_deterministic": False,
+    }
+    try:
+        import torch  # type: ignore[import-not-found]
+
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        try:
+            torch.use_deterministic_algorithms(True)
+            reproducibility["torch_deterministic"] = True
+        except Exception:
+            reproducibility["torch_deterministic"] = False
+        if hasattr(torch.backends, "cudnn"):
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+        reproducibility["torch_seed"] = int(seed)
+    except Exception:
+        pass
+    return reproducibility
 
 
 def make_run_id(prefix: str = "run") -> str:
