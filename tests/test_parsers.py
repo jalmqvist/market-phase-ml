@@ -313,12 +313,18 @@ class TestCanonicalExperimentMetadata(unittest.TestCase):
     def test_variant_b_metadata_keeps_sentiment_disabled(self):
         experiment = build_experiment_metadata_from_variant("B")
         self.assertEqual(experiment["variant"], "B")
+        self.assertEqual(experiment["generation"], "gen1")
         self.assertFalse(experiment["sentiment_enabled"])
+        self.assertFalse(experiment["missing_indicators_enabled"])
+        self.assertEqual(experiment["semantic_label"], "Gen1_B")
 
     def test_variant_d_metadata_keeps_sentiment_disabled(self):
         experiment = build_experiment_metadata_from_variant("D")
         self.assertEqual(experiment["variant"], "D")
+        self.assertEqual(experiment["generation"], "gen2")
         self.assertFalse(experiment["sentiment_enabled"])
+        self.assertTrue(experiment["missing_indicators_enabled"])
+        self.assertEqual(experiment["semantic_label"], "Gen2_D")
 
     def test_corrupt_manifest_raises(self):
         run_dir = _make_run_dir({
@@ -579,6 +585,10 @@ class TestRunIdentity(unittest.TestCase):
             )
             self.assertEqual(identity["run_variant"], "B")
             self.assertFalse(identity["legacy_semantics"])
+            self.assertEqual(
+                [w for w in identity["identity_warnings"] if "sentiment_enabled" in w],
+                [],
+            )
         finally:
             _rmtree(archive)
 
@@ -609,6 +619,10 @@ class TestRunIdentity(unittest.TestCase):
             )
             self.assertEqual(identity["run_variant"], "D")
             self.assertFalse(identity["legacy_semantics"])
+            self.assertEqual(
+                [w for w in identity["identity_warnings"] if "sentiment_enabled" in w],
+                [],
+            )
         finally:
             _rmtree(archive)
 
@@ -976,8 +990,6 @@ class TestPipelineIntegration(unittest.TestCase):
 
     def test_variant_roundtrip_integrity_all_variants(self):
         from analysis.pipeline import run_pipeline
-        import tempfile
-        import shutil
 
         archive = Path(tempfile.mkdtemp())
         output = Path(tempfile.mkdtemp())
@@ -1021,8 +1033,8 @@ class TestPipelineIntegration(unittest.TestCase):
                 self.assertEqual(experiment["missing_indicators_enabled"], semantics["missing_indicators_enabled"])
                 self.assertEqual(experiment["semantic_label"], semantics["semantic_label"])
         finally:
-            shutil.rmtree(str(archive), ignore_errors=True)
-            shutil.rmtree(str(output), ignore_errors=True)
+            _rmtree(archive)
+            _rmtree(output)
 
 
 class TestValidationAndOrdering(unittest.TestCase):

@@ -131,6 +131,7 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         exp_sentiment = experiment.get("sentiment_enabled")
         exp_missing = experiment.get("missing_indicators_enabled")
         exp_semantic_label = experiment.get("semantic_label")
+        canonical_for_experiment = None
         if exp_generation is not None and exp_generation not in {"gen1", "gen2"}:
             semantic_errors.append(
                 f"{run_id}: invalid experiment generation {exp_generation!r} (expected gen1|gen2)."
@@ -140,31 +141,35 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
                 f"{run_id}: invalid experiment variant {exp_variant!r} (expected A|B|C|D)."
             )
         if exp_variant in VALID_EXPERIMENT_VARIANTS:
-            canonical = variant_semantics(exp_variant)
-            if canonical is None:
+            canonical_for_experiment = variant_semantics(exp_variant)
+            if canonical_for_experiment is None:
                 semantic_errors.append(
                     f"{run_id}: canonical semantics missing for variant={exp_variant}."
                 )
             else:
-                if exp_generation in {"gen1", "gen2"} and exp_generation != canonical["generation"]:
+                if exp_generation in {"gen1", "gen2"} and exp_generation != canonical_for_experiment["generation"]:
                     semantic_errors.append(
-                        f"{run_id}: semantic conflict (variant={exp_variant} requires generation={canonical['generation']}, got {exp_generation})."
+                        f"{run_id}: semantic conflict (variant={exp_variant} requires generation={canonical_for_experiment['generation']}, got {exp_generation})."
                     )
-                if isinstance(exp_sentiment, bool) and exp_sentiment != canonical["sentiment_enabled"]:
+                if isinstance(exp_sentiment, bool) and exp_sentiment != canonical_for_experiment["sentiment_enabled"]:
                     semantic_errors.append(
-                        f"{run_id}: semantic conflict (variant={exp_variant} requires sentiment_enabled={canonical['sentiment_enabled']}, got {exp_sentiment})."
+                        f"{run_id}: semantic conflict (variant={exp_variant} requires sentiment_enabled={canonical_for_experiment['sentiment_enabled']}, got {exp_sentiment})."
                     )
-                if isinstance(exp_missing, bool) and exp_missing != canonical["missing_indicators_enabled"]:
+                if isinstance(exp_missing, bool) and exp_missing != canonical_for_experiment["missing_indicators_enabled"]:
                     semantic_errors.append(
-                        f"{run_id}: semantic conflict (variant={exp_variant} requires missing_indicators_enabled={canonical['missing_indicators_enabled']}, got {exp_missing})."
+                        f"{run_id}: semantic conflict (variant={exp_variant} requires missing_indicators_enabled={canonical_for_experiment['missing_indicators_enabled']}, got {exp_missing})."
                     )
                 if isinstance(exp_semantic_label, str) and exp_semantic_label.strip():
-                    if exp_semantic_label != canonical["semantic_label"]:
+                    if exp_semantic_label != canonical_for_experiment["semantic_label"]:
                         semantic_errors.append(
-                            f"{run_id}: semantic conflict (variant={exp_variant} requires semantic_label={canonical['semantic_label']!r}, got {exp_semantic_label!r})."
+                            f"{run_id}: semantic conflict (variant={exp_variant} requires semantic_label={canonical_for_experiment['semantic_label']!r}, got {exp_semantic_label!r})."
                         )
         if variant in VALID_EXPERIMENT_VARIANTS:
-            canonical = variant_semantics(variant)
+            canonical = (
+                canonical_for_experiment
+                if exp_variant == variant and canonical_for_experiment is not None
+                else variant_semantics(variant)
+            )
             if canonical is not None and gen in {"gen1", "gen2"} and gen != canonical["generation"]:
                 semantic_errors.append(
                     f"{run_id}: semantic conflict (meta experiment_gen={gen} does not match variant={variant} canonical generation={canonical['generation']})."
