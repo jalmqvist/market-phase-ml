@@ -8,7 +8,7 @@ from typing import Any
 
 CURRENT_EXPERIMENT_SEMANTICS_VERSION = 3
 LEGACY_VARIANT = "U"
-VALID_EXPERIMENT_VARIANTS = {"A", "B", "C", "D"}
+VALID_EXPERIMENT_VARIANTS = {"A", "B", "C", "D", "E", "F"}
 EXPERIMENT_RUN_FAMILY = "factorial_v1"
 
 EXPERIMENT_FACTOR_KEYS: tuple[str, ...] = (
@@ -73,6 +73,35 @@ EXPERIMENT_VARIANTS: dict[str, dict[str, Any]] = {
         "selector_enabled": True,
         "semantic_label": "Gen2_D",
         "run_meaning": "sentiment OFF + missing indicator ON (Gen2 baseline)",
+    },
+    "E": {
+        "generation": "gen1",
+        "sentiment_enabled": False,
+        "missing_indicators_enabled": False,
+        "dl_enabled": True,
+        "msml_regime": "LVTF",
+        "overlap_only": False,
+        "selector_enabled": True,
+        "semantic_label": "Gen1_E",
+        "run_meaning": (
+            "DL infrastructure ON + sentiment OFF "
+            "+ missing indicator OFF (Gen1)"
+        ),
+    },
+
+    "F": {
+        "generation": "gen2",
+        "sentiment_enabled": False,
+        "missing_indicators_enabled": True,
+        "dl_enabled": True,
+        "msml_regime": "LVTF",
+        "overlap_only": False,
+        "selector_enabled": True,
+        "semantic_label": "Gen2_F",
+        "run_meaning": (
+            "DL infrastructure ON + sentiment OFF "
+            "+ missing indicator ON (Gen2)"
+        ),
     },
 }
 
