@@ -142,7 +142,8 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
             )
         if exp_variant is not None and exp_variant not in VALID_EXPERIMENT_VARIANTS:
             semantic_warnings.append(
-                f"{run_id}: non-canonical experiment variant {exp_variant!r} (legacy A|B|C|D are shorthand only)."
+                f"{run_id}: non-canonical experiment variant {exp_variant!r} "
+                f"(allowed canonical variants: {sorted(VALID_EXPERIMENT_VARIANTS)})."
             )
         if manifest_present:
             if exp_generation in {"gen1", "gen2"} and gen != exp_generation:

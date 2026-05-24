@@ -3390,7 +3390,7 @@ if __name__ == '__main__':
         default=None,
         choices=sorted(VALID_EXPERIMENT_VARIANTS),
         help=(
-            "Canonical experiment variant (A|B|C|D). "
+            "Canonical experiment variant (A|B|C|D|E|F). "
             "Precedence: --experiment-variant > EXPERIMENT_VARIANT env > default A."
         ),
     )

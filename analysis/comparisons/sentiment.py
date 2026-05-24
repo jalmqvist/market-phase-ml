@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from experiment_semantics import EXPERIMENT_VARIANTS
+
 from analysis.comparisons.factors import (
     build_on_off_delta_table,
     factor_crosstab,
@@ -34,7 +36,7 @@ def compare_sentiment_variants(
         warnings.append("Skipped runs with unresolved factor semantics: " + ", ".join(sorted(unresolved)))
 
     matrix = {
-        "expected_variants": ["A", "B", "C", "D"],
+        "expected_variants": sorted(EXPERIMENT_VARIANTS),
         "present_variants": sorted(
             {
                 (s.get("meta") or {}).get("run_variant")
@@ -49,30 +51,63 @@ def compare_sentiment_variants(
     valid_comparisons: list[str] = []
     incomplete_comparisons: list[str] = []
     invalid_comparisons: list[str] = []
-    grouped: dict[str, dict[str, list[str]]] = {}
+    grouped: dict[str, dict[str, dict[str, list[str]]]] = {}
 
     generations = sorted({g for g in (summary_generation(s) for s in summaries) if isinstance(g, str)})
     for gen in generations:
-        on_runs = filter_summaries(summaries, generation=gen, factors={"sentiment_enabled": True})
-        off_runs = filter_summaries(summaries, generation=gen, factors={"sentiment_enabled": False})
-        grouped[gen] = {"on": run_ids(on_runs), "off": run_ids(off_runs)}
-        legacy_label = {"gen1": "A_vs_B", "gen2": "C_vs_D"}.get(gen, "on_vs_off")
-        comparison_key = f"{gen}:{legacy_label}"
-        if on_runs and off_runs:
-            delta_table.extend(build_on_off_delta_table(on_runs, off_runs, generation=gen))
-            valid_comparisons.append(comparison_key)
-        else:
-            incomplete_comparisons.append(comparison_key)
-            missing_parts: list[str] = []
-            if not on_runs:
-                missing_parts.append("sentiment_enabled=True")
-            if not off_runs:
-                missing_parts.append("sentiment_enabled=False")
-            warnings.append(
-                f"Sentiment comparison invalid for generation={gen}: missing cohort(s) "
-                + ", ".join(missing_parts)
-                + "."
+        grouped.setdefault(gen, {})
+        missing_values = sorted(
+            {
+                summary_factors(s).get("missing_indicators_enabled")
+                for s in summaries
+                if summary_generation(s) == gen
+                and isinstance(summary_factors(s).get("missing_indicators_enabled"), bool)
+            }
+        )
+        for missing_enabled in missing_values:
+            on_runs = filter_summaries(
+                summaries,
+                generation=gen,
+                factors={
+                    "sentiment_enabled": True,
+                    "missing_indicators_enabled": missing_enabled,
+                },
             )
+            off_runs = filter_summaries(
+                summaries,
+                generation=gen,
+                factors={
+                    "sentiment_enabled": False,
+                    "missing_indicators_enabled": missing_enabled,
+                },
+            )
+            cohort_key = f"missing_indicators={str(missing_enabled).lower()}"
+            grouped[gen][cohort_key] = {"on": run_ids(on_runs), "off": run_ids(off_runs)}
+            comparison_key = (
+                f"generation={gen}/missing_indicators_enabled={str(missing_enabled).lower()}"
+            )
+            if on_runs and off_runs:
+                delta_table.extend(
+                    build_on_off_delta_table(
+                        on_runs,
+                        off_runs,
+                        generation=f"{gen}:{cohort_key}",
+                    )
+                )
+                valid_comparisons.append(comparison_key)
+            else:
+                incomplete_comparisons.append(comparison_key)
+                missing_parts: list[str] = []
+                if not on_runs:
+                    missing_parts.append("sentiment_enabled=True")
+                if not off_runs:
+                    missing_parts.append("sentiment_enabled=False")
+                warnings.append(
+                    f"Sentiment comparison invalid for generation={gen}, "
+                    f"missing_indicators_enabled={str(missing_enabled).lower()}: missing cohort(s) "
+                    + ", ".join(missing_parts)
+                    + "."
+                )
 
     if not valid_comparisons:
         invalid_comparisons.append("sentiment_matrix")

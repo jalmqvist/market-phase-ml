@@ -151,7 +151,7 @@ def render_markdown_report(
     lines.append("### Experiment Semantics Reference\n")
     lines.append("| Variant | Generation | Sentiment ON | Missing Indicators ON | Meaning |")
     lines.append("|---------|-----------|-------------|----------------------|---------|")
-    for variant in ("A", "B", "C", "D"):
+    for variant in sorted(EXPERIMENT_VARIANTS):
         semantics = EXPERIMENT_VARIANTS[variant]
         lines.append(
             f"| {variant} "

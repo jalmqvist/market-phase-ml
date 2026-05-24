@@ -19,6 +19,7 @@ from analysis.comparisons.sentiment import compare_sentiment_variants
 from analysis.comparisons.selector import compare_selector_uplift
 from analysis.comparisons.gen_comparison import compare_gen1_gen2
 from analysis.comparisons.factor_comparison import build_factor_comparisons
+from experiment_semantics import EXPERIMENT_VARIANTS
 
 
 # ---------------------------------------------------------------------------
@@ -57,13 +58,7 @@ def _make_summary(
     if maxdd_delta is not None:
         wf_row["MaxDD_Delta"] = maxdd_delta
 
-    experiment_semantics = {
-        "A": {"generation": "gen1", "sentiment_enabled": True, "missing_indicators_enabled": False},
-        "B": {"generation": "gen1", "sentiment_enabled": False, "missing_indicators_enabled": False},
-        "C": {"generation": "gen2", "sentiment_enabled": True, "missing_indicators_enabled": True},
-        "D": {"generation": "gen2", "sentiment_enabled": False, "missing_indicators_enabled": True},
-    }
-    semantics = experiment_semantics.get(run_variant, {})
+    semantics = EXPERIMENT_VARIANTS.get(run_variant, {})
     sentiment_enabled = semantics.get("sentiment_enabled")
     missing_indicators_enabled = semantics.get("missing_indicators_enabled")
 
@@ -199,8 +194,8 @@ class TestCompareSentimentVariants(unittest.TestCase):
             _make_summary("run_b", dl_enabled=True, experiment_gen="gen1", run_variant="B", sharpe_delta=0.05),
         ]
         result = compare_sentiment_variants(summaries)
-        self.assertEqual(result["grouped"]["gen1"]["on"], ["run_a"])
-        self.assertEqual(result["grouped"]["gen1"]["off"], ["run_b"])
+        self.assertEqual(result["grouped"]["gen1"]["missing_indicators=false"]["on"], ["run_a"])
+        self.assertEqual(result["grouped"]["gen1"]["missing_indicators=false"]["off"], ["run_b"])
 
 
 # ---------------------------------------------------------------------------
@@ -268,8 +263,8 @@ class TestCompareGen1Gen2(unittest.TestCase):
 
     def test_delta_table(self):
         summaries = [
-            _make_summary("run_g1", experiment_gen="gen1", sharpe_delta=0.10),
-            _make_summary("run_g2", experiment_gen="gen2", sharpe_delta=0.20),
+            _make_summary("run_g1", experiment_gen="gen1", run_variant="A", sharpe_delta=0.10),
+            _make_summary("run_g2", experiment_gen="gen2", run_variant="F", sharpe_delta=0.20),
         ]
         result = compare_gen1_gen2(summaries)
         delta_rows = result["delta_table"]
@@ -285,8 +280,8 @@ class TestCompareGen1Gen2(unittest.TestCase):
 
     def test_coverage_comparison(self):
         summaries = [
-            _make_summary("run_g1", experiment_gen="gen1", dl_coverage={"EURUSD": 80.0}),
-            _make_summary("run_g2", experiment_gen="gen2", dl_coverage={"EURUSD": 85.0}),
+            _make_summary("run_g1", experiment_gen="gen1", run_variant="A", dl_coverage={"EURUSD": 80.0}),
+            _make_summary("run_g2", experiment_gen="gen2", run_variant="F", dl_coverage={"EURUSD": 85.0}),
         ]
         result = compare_gen1_gen2(summaries)
         cov = result["coverage_comparison"]
@@ -315,7 +310,7 @@ class TestAnalysisMatrixCompleteness(unittest.TestCase):
     """Verify that comparison matrix correctly identifies present/absent variants."""
 
     def _full_matrix(self) -> list[dict]:
-        """Build a complete A/B/C/D summary set."""
+        """Build the legacy A/B/C/D subset used for scoped regression checks."""
         return [
             _make_summary("fp_gen1_A", experiment_gen="gen1", run_variant="A", sharpe_delta=0.12),
             _make_summary("fp_gen1_B", experiment_gen="gen1", run_variant="B", sharpe_delta=0.02),
@@ -324,20 +319,20 @@ class TestAnalysisMatrixCompleteness(unittest.TestCase):
         ]
 
     def test_full_matrix_has_no_warnings(self):
-        """Complete A/B/C/D set must produce valid comparisons with no incomplete-cohort warnings."""
+        """A/B/C/D subset yields complete sentiment strata but incomplete strict gen strata."""
         result_s = compare_sentiment_variants(self._full_matrix())
         result_g = compare_gen1_gen2(self._full_matrix())
         self.assertEqual(result_s["incomplete_comparisons"], [])
-        self.assertEqual(result_g["incomplete_comparisons"], [])
+        self.assertGreater(len(result_g["incomplete_comparisons"]), 0)
+        self.assertEqual(result_g["valid_comparisons"], [])
 
     def test_full_matrix_all_valid_comparisons(self):
-        """Complete A/B/C/D set must produce all four expected valid comparisons."""
+        """Scoped A/B/C/D subset keeps deterministic conditioned comparisons."""
         result_s = compare_sentiment_variants(self._full_matrix())
         result_g = compare_gen1_gen2(self._full_matrix())
-        self.assertIn("gen1:A_vs_B", result_s["valid_comparisons"])
-        self.assertIn("gen2:C_vs_D", result_s["valid_comparisons"])
-        self.assertIn("sentiment_on:A_vs_C", result_g["valid_comparisons"])
-        self.assertIn("sentiment_off:B_vs_D", result_g["valid_comparisons"])
+        self.assertIn("generation=gen1/missing_indicators_enabled=false", result_s["valid_comparisons"])
+        self.assertIn("generation=gen2/missing_indicators_enabled=true", result_s["valid_comparisons"])
+        self.assertEqual(result_g["valid_comparisons"], [])
 
     def test_matrix_present_variants_complete(self):
         """Present variants must include A, B, C, D with a full set."""
@@ -351,34 +346,34 @@ class TestAnalysisMatrixCompleteness(unittest.TestCase):
             _make_summary("fp_gen2_C", experiment_gen="gen2", run_variant="C"),
         ]
         result_s = compare_sentiment_variants(summaries)
-        self.assertIn("gen1:A_vs_B", result_s["incomplete_comparisons"])
-        self.assertIn("gen2:C_vs_D", result_s["incomplete_comparisons"])
+        self.assertIn("generation=gen1/missing_indicators_enabled=false", result_s["incomplete_comparisons"])
+        self.assertIn("generation=gen2/missing_indicators_enabled=true", result_s["incomplete_comparisons"])
         self.assertEqual(sorted(result_s["matrix"]["present_variants"]), ["A", "C"])
 
     def test_all_gen1_runs_not_collapsed_to_A(self):
         """Sentinel: when A and B runs are present, they must go into separate cohorts."""
         result_s = compare_sentiment_variants(self._full_matrix())
         grouped = result_s["grouped"]
-        self.assertEqual(grouped["gen1"]["on"], ["fp_gen1_A"])
-        self.assertEqual(grouped["gen1"]["off"], ["fp_gen1_B"])
+        self.assertEqual(grouped["gen1"]["missing_indicators=false"]["on"], ["fp_gen1_A"])
+        self.assertEqual(grouped["gen1"]["missing_indicators=false"]["off"], ["fp_gen1_B"])
 
     def test_all_gen2_runs_not_collapsed_to_C(self):
         """Sentinel: when C and D runs are present, they must go into separate cohorts."""
         result_s = compare_sentiment_variants(self._full_matrix())
         grouped = result_s["grouped"]
-        self.assertEqual(grouped["gen2"]["on"], ["fp_gen2_C"])
-        self.assertEqual(grouped["gen2"]["off"], ["fp_gen2_D"])
+        self.assertEqual(grouped["gen2"]["missing_indicators=true"]["on"], ["fp_gen2_C"])
+        self.assertEqual(grouped["gen2"]["missing_indicators=true"]["off"], ["fp_gen2_D"])
 
     def test_sentiment_delta_uses_correct_cohorts(self):
         """Sentiment delta must compare A vs B (not B vs B or A vs A)."""
         result_s = compare_sentiment_variants(self._full_matrix())
         # Verify cohort membership is correct: A in on, B in off
-        self.assertIn("fp_gen1_A", result_s["grouped"]["gen1"]["on"])
-        self.assertIn("fp_gen1_B", result_s["grouped"]["gen1"]["off"])
-        self.assertNotIn("fp_gen1_B", result_s["grouped"]["gen1"]["on"])
-        self.assertNotIn("fp_gen1_A", result_s["grouped"]["gen1"]["off"])
+        self.assertIn("fp_gen1_A", result_s["grouped"]["gen1"]["missing_indicators=false"]["on"])
+        self.assertIn("fp_gen1_B", result_s["grouped"]["gen1"]["missing_indicators=false"]["off"])
+        self.assertNotIn("fp_gen1_B", result_s["grouped"]["gen1"]["missing_indicators=false"]["on"])
+        self.assertNotIn("fp_gen1_A", result_s["grouped"]["gen1"]["missing_indicators=false"]["off"])
         # Verify delta is A minus B (0.12 - 0.02 = 0.10)
-        gen1_rows = [r for r in result_s["delta_table"] if r["generation"] == "gen1"]
+        gen1_rows = [r for r in result_s["delta_table"] if r["generation"] == "gen1:missing_indicators=false"]
         self.assertTrue(len(gen1_rows) > 0)
         for row in gen1_rows:
             # A=0.12 Sharpe_Delta, B=0.02 Sharpe_Delta → delta = 0.10
