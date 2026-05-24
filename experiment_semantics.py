@@ -76,32 +76,26 @@ EXPERIMENT_VARIANTS: dict[str, dict[str, Any]] = {
     },
     "E": {
         "generation": "gen1",
-        "sentiment_enabled": False,
-        "missing_indicators_enabled": False,
-        "dl_enabled": True,
-        "msml_regime": "LVTF",
-        "overlap_only": False,
-        "selector_enabled": True,
-        "semantic_label": "Gen1_E",
-        "run_meaning": (
-            "DL infrastructure ON + sentiment OFF "
-            "+ missing indicator OFF (Gen1)"
-        ),
-    },
-
-    "F": {
-        "generation": "gen2",
-        "sentiment_enabled": False,
+        "sentiment_enabled": True,
         "missing_indicators_enabled": True,
         "dl_enabled": True,
         "msml_regime": "LVTF",
         "overlap_only": False,
         "selector_enabled": True,
+        "semantic_label": "Gen1_E",
+        "run_meaning": "sentiment ON + missing indicator ON (Gen1)",
+    },
+
+    "F": {
+        "generation": "gen2",
+        "sentiment_enabled": True,
+        "missing_indicators_enabled": False,
+        "dl_enabled": True,
+        "msml_regime": "LVTF",
+        "overlap_only": False,
+        "selector_enabled": True,
         "semantic_label": "Gen2_F",
-        "run_meaning": (
-            "DL infrastructure ON + sentiment OFF "
-            "+ missing indicator ON (Gen2)"
-        ),
+        "run_meaning": "sentiment ON + missing indicator OFF (Gen2)",
     },
 }
 

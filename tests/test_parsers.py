@@ -342,6 +342,22 @@ class TestCanonicalExperimentMetadata(unittest.TestCase):
         self.assertTrue(experiment["missing_indicators_enabled"])
         self.assertEqual(experiment["semantic_label"], "Gen2_D")
 
+    def test_variant_e_metadata(self):
+        experiment = build_experiment_metadata_from_variant("E")
+        self.assertEqual(experiment["variant"], "E")
+        self.assertEqual(experiment["generation"], "gen1")
+        self.assertTrue(experiment["sentiment_enabled"])
+        self.assertTrue(experiment["missing_indicators_enabled"])
+        self.assertEqual(experiment["semantic_label"], "Gen1_E")
+
+    def test_variant_f_metadata(self):
+        experiment = build_experiment_metadata_from_variant("F")
+        self.assertEqual(experiment["variant"], "F")
+        self.assertEqual(experiment["generation"], "gen2")
+        self.assertTrue(experiment["sentiment_enabled"])
+        self.assertFalse(experiment["missing_indicators_enabled"])
+        self.assertEqual(experiment["semantic_label"], "Gen2_F")
+
     def test_corrupt_manifest_raises(self):
         run_dir = _make_run_dir({
             "run_manifest_bad__dl_enabled.json": "NOT JSON {{{",
@@ -385,7 +401,7 @@ class TestRunIdentity(unittest.TestCase):
         )
 
     # ------------------------------------------------------------------
-    # Regression: canonical variant recognition for all four variants
+    # Regression: canonical variant recognition for canonical variants
     # ------------------------------------------------------------------
 
     def test_fp_gen1_A_recognized_as_variant_A(self):
@@ -433,6 +449,30 @@ class TestRunIdentity(unittest.TestCase):
             self.assertEqual(identity["run_variant"], "D")
             self.assertEqual(identity["experiment_gen"], "gen2")
             self.assertEqual(identity["semantic_run_name"], "gen2_D")
+        finally:
+            _rmtree(archive)
+
+    def test_fp_gen1_E_recognized_as_variant_E(self):
+        """fp_gen1_E with explicit manifest variant=E must be recognized as E."""
+        archive = _make_run_dir({})
+        try:
+            manifest = self._make_manifest("gen1", "E", True, True)
+            identity = self._run_identity(archive, "fp_gen1_E", manifest)
+            self.assertEqual(identity["run_variant"], "E")
+            self.assertEqual(identity["experiment_gen"], "gen1")
+            self.assertEqual(identity["semantic_run_name"], "gen1_E")
+        finally:
+            _rmtree(archive)
+
+    def test_fp_gen2_F_recognized_as_variant_F(self):
+        """fp_gen2_F with explicit manifest variant=F must be recognized as F."""
+        archive = _make_run_dir({})
+        try:
+            manifest = self._make_manifest("gen2", "F", True, False)
+            identity = self._run_identity(archive, "fp_gen2_F", manifest)
+            self.assertEqual(identity["run_variant"], "F")
+            self.assertEqual(identity["experiment_gen"], "gen2")
+            self.assertEqual(identity["semantic_run_name"], "gen2_F")
         finally:
             _rmtree(archive)
 
@@ -1069,17 +1109,19 @@ class TestPipelineIntegration(unittest.TestCase):
             self.assertEqual(validations["errors"], [])
             self.assertEqual(
                 comparisons["sentiment"]["matrix"]["present_variants"],
-                ["A", "B", "C", "D"],
+                sorted(EXPERIMENT_VARIANTS),
             )
             self.assertEqual(
                 comparisons["gen"]["matrix"]["present_variants"],
-                ["A", "B", "C", "D"],
+                sorted(EXPERIMENT_VARIANTS),
             )
             report = (output / "report.md").read_text()
             self.assertIn("gen1_A__20260521T000000Z__fp_gen1_A", report)
             self.assertIn("gen1_B__20260521T000000Z__fp_gen1_B", report)
             self.assertIn("gen2_C__20260521T000000Z__fp_gen2_C", report)
             self.assertIn("gen2_D__20260521T000000Z__fp_gen2_D", report)
+            self.assertIn("gen1_E__20260521T000000Z__fp_gen1_E", report)
+            self.assertIn("gen2_F__20260521T000000Z__fp_gen2_F", report)
             for summary_path in (output / "summaries").glob("*.summary.json"):
                 summary = json.loads(summary_path.read_text())
                 experiment = summary["meta"]["experiment"]
@@ -1179,7 +1221,7 @@ class TestValidationAndOrdering(unittest.TestCase):
                     "dl_mode_tag": "__baseline",
                 },
                 "files_found": ["walkforward_results_summary__baseline.csv"],
-                "dl_enabled": variant in {"A", "C"},
+                "dl_enabled": bool((EXPERIMENT_VARIANTS.get(variant) or {}).get("dl_enabled", False)),
                 "reproducibility": {
                     "experiment_seed": 42,
                     "numpy_seed": 42,
@@ -1283,14 +1325,19 @@ class TestValidationAndOrdering(unittest.TestCase):
         dup_warnings = [w for w in validation["warnings"] if "Duplicate semantic variant" in w]
         self.assertEqual(len(dup_warnings), 0)
 
-    def test_all_four_variants_no_duplicate_warning(self):
-        """A full A/B/C/D cohort must not trigger duplicate variant warnings."""
-        summaries = [
-            self._summary("r_a", "gen1", "A", "20260521T000001Z", "fp_gen1_A"),
-            self._summary("r_b", "gen1", "B", "20260521T000002Z", "fp_gen1_B"),
-            self._summary("r_c", "gen2", "C", "20260521T000003Z", "fp_gen2_C"),
-            self._summary("r_d", "gen2", "D", "20260521T000004Z", "fp_gen2_D"),
-        ]
+    def test_all_canonical_variants_no_duplicate_warning(self):
+        """One run per canonical variant must not trigger duplicate variant warnings."""
+        summaries = []
+        for idx, (variant, semantics) in enumerate(sorted(EXPERIMENT_VARIANTS.items()), start=1):
+            summaries.append(
+                self._summary(
+                    f"r_{variant.lower()}",
+                    semantics["generation"],
+                    variant,
+                    f"20260521T0000{idx:02d}Z",
+                    f"fp_{semantics['generation']}_{variant}",
+                )
+            )
         validation = validate_summaries(summaries)
         dup_warnings = [w for w in validation["warnings"] if "Duplicate semantic variant" in w]
         self.assertEqual(len(dup_warnings), 0)

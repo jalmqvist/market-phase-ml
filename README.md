@@ -60,11 +60,24 @@ python main.py --experiment-variant A
 python main.py --experiment-variant B
 python main.py --experiment-variant C
 python main.py --experiment-variant D
+python main.py --experiment-variant E
+python main.py --experiment-variant F
 
 # env fallback
 export EXPERIMENT_VARIANT=B
 python main.py
 ```
+
+Canonical variant matrix (source of truth: `experiment_semantics.EXPERIMENT_VARIANTS`):
+
+| Variant | Generation | Sentiment | Missing Indicators |
+|---|---|---|---|
+| A | gen1 | ON | OFF |
+| B | gen1 | OFF | OFF |
+| C | gen2 | ON | ON |
+| D | gen2 | OFF | ON |
+| E | gen1 | ON | ON |
+| F | gen2 | ON | OFF |
 
 You can override the run output path explicitly:
 
@@ -127,8 +140,8 @@ Run identity format (example):
 
 Where:
 
-- `gen1/gen2` = missing-indicator generation
-- `A/B/C/D` = experiment variant semantics
+- `gen1/gen2` = generation label from canonical semantics
+- `A/B/C/D/E/F` = experiment variant semantics
 - timestamp = canonical manifest timestamp (fallback: run_id timestamp, else `unknown_ts`)
 - archive suffix = discovered directory identity to prevent collisions
 
@@ -144,7 +157,7 @@ Experiment metadata (factor-first, canonical):
 |---------|---------|
 | `experiment.run_family` | Comparison ontology version (`factorial_v1`) |
 | `experiment.generation` | Legacy generation label (backward compatibility) |
-| `experiment.variant` | Legacy shorthand label (A/B/C/D) |
+| `experiment.variant` | Canonical variant label (`A`..`F`) |
 | `experiment.factors` | Source of truth for cohort filtering and comparisons |
 
 Each run manifest must contain an explicit `experiment` block:
@@ -181,6 +194,11 @@ DL_SIGNALS_ENABLED=false python main.py --experiment-variant B
 ```
 
 The run remains fully analyzable and will be grouped under `factors.dl_enabled=false`.
+
+### Factor-conditioned comparisons
+
+Cross-run analysis is factor-conditioned (generation/sentiment/missing-indicators) and does not assume only four variants.  
+Comparisons derive from `experiment.factors` + `experiment_semantics.EXPERIMENT_VARIANTS`, not from folder names or DL flags.
 
 ### Alternative MSML regimes
 
@@ -626,6 +644,7 @@ export EXPERIMENT_VARIANT=A
 
 # CLI overrides env when both are set
 python main.py --experiment-seed 42 --experiment-variant A
+python main.py --experiment-seed 42 --experiment-variant F
 
 # or use env/default resolution
 python main.py
