@@ -189,10 +189,19 @@ class TestParseManifest(unittest.TestCase):
     def _make_manifest(self, extra: dict | None = None) -> dict:
         base = {
             "experiment": {
+                "run_family": "factorial_v1",
                 "generation": "gen1",
                 "variant": "A",
                 "sentiment_enabled": True,
                 "missing_indicators_enabled": False,
+                "factors": {
+                    "dl_enabled": True,
+                    "sentiment_enabled": True,
+                    "missing_indicators_enabled": False,
+                    "msml_regime": "LVTF",
+                    "overlap_only": False,
+                    "selector_enabled": True,
+                },
                 "semantic_label": "Gen1_A",
                 "legacy_semantics": False,
                 "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
@@ -282,6 +291,13 @@ class TestParseManifest(unittest.TestCase):
             result["feature_ordering"]["phase_predictor_by_pair"]["EURUSD"],
             ["adx", "atr_pct", "dl_signal_mean_24h"],
         )
+
+    def test_factors_block_parsed(self):
+        result = parse_manifest(self.run_dir)
+        experiment = result["experiment"]
+        self.assertEqual(experiment["run_family"], "factorial_v1")
+        self.assertTrue(experiment["factors"]["dl_enabled"])
+        self.assertEqual(experiment["factors"]["msml_regime"], "LVTF")
 
     def test_no_manifest_returns_none(self):
         empty_dir = _make_run_dir({})
@@ -1002,6 +1018,7 @@ class TestPipelineIntegration(unittest.TestCase):
         self.assertIn("sentiment", comp)
         self.assertIn("selector", comp)
         self.assertIn("gen", comp)
+        self.assertIn("factors", comp)
 
     def test_pipeline_sentiment_comparison(self):
         from analysis.pipeline import run_pipeline
@@ -1292,7 +1309,7 @@ class TestValidationAndOrdering(unittest.TestCase):
         self.assertTrue(any("invalid experiment generation" in e for e in validation["errors"]))
 
     def test_invalid_variant_detected(self):
-        """Invalid variant value in experiment block must produce semantic error."""
+        """Non-canonical variant is tolerated with warning (factor-first semantics)."""
         s = self._summary("r1", "gen1", "A", "20260521T010101Z", "a")
         s["meta"]["experiment"] = {
             "generation": "gen1",
@@ -1302,7 +1319,7 @@ class TestValidationAndOrdering(unittest.TestCase):
             "semantic_label": "Gen1_Z",
         }
         validation = validate_summaries([s])
-        self.assertTrue(any("invalid experiment variant" in e for e in validation["errors"]))
+        self.assertTrue(any("non-canonical experiment variant" in w for w in validation["warnings"]))
 
     def test_semantic_conflict_gen1_variant_C_detected(self):
         """Meta generation mismatch against manifest.experiment must be an error."""

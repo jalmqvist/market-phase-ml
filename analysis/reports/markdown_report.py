@@ -91,15 +91,17 @@ def render_markdown_report(
     # 1. Run metadata overview
     # ------------------------------------------------------------------
     lines.append("## Run Overview\n")
-    lines.append("| Canonical Run ID | Semantic Run | Meaning | DL Enabled | Gen | Variant | Archive Path | Git SHA | Timestamp UTC |")
-    lines.append("|------------------|--------------|---------|-----------|-----|---------|--------------|---------|---------------|")
+    lines.append("| Canonical Run ID | Semantic Run | Meaning | DL Enabled | MSML Regime | Gen | Variant | Archive Path | Git SHA | Timestamp UTC |")
+    lines.append("|------------------|--------------|---------|-----------|-------------|-----|---------|--------------|---------|---------------|")
     for s in summaries:
         meta = s.get("meta") or {}
+        factors = ((meta.get("experiment") or {}).get("factors") or {})
         lines.append(
             f"| {s.get('run_id', '—')} "
             f"| {meta.get('semantic_run_name', '—')} "
             f"| {meta.get('run_meaning', '—')} "
             f"| {'✓' if meta.get('dl_enabled') else '✗'} "
+            f"| {factors.get('msml_regime', '—')} "
             f"| {meta.get('experiment_gen', '—')} "
             f"| {meta.get('run_variant', '—')} "
             f"| {meta.get('archive_relpath', '—')} "
@@ -108,27 +110,41 @@ def render_markdown_report(
         )
     lines.append("")
     lines.append("### Experiment Semantics (canonical)\n")
-    lines.append("| Run ID | Generation | Variant | Legacy Semantics | Sentiment | Missing Indicators | Semantic Label |")
-    lines.append("|--------|-----------|---------|------------------|-----------|-------------------|----------------|")
+    lines.append("| Run ID | Generation | Variant | Run Family | Legacy Semantics | dl_enabled | sentiment_enabled | missing_indicators_enabled | msml_regime | overlap_only | selector_enabled | Semantic Label |")
+    lines.append("|--------|-----------|---------|------------|------------------|------------|-------------------|----------------------------|-------------|-------------|------------------|----------------|")
     for s in summaries:
         meta = s.get("meta") or {}
         experiment = meta.get("experiment") or {}
+        factors = experiment.get("factors") or {}
         run_id = s.get("run_id", "—")
         gen = experiment.get("generation") or "—"
         variant = experiment.get("variant") or "—"
-        sentiment = experiment.get("sentiment_enabled")
-        missing_ind = experiment.get("missing_indicators_enabled")
+        sentiment = factors.get("sentiment_enabled")
+        missing_ind = factors.get("missing_indicators_enabled")
         sem_label = experiment.get("semantic_label") or "—"
         legacy_semantics = bool(meta.get("legacy_semantics") or experiment.get("legacy_semantics"))
+        dl_enabled = factors.get("dl_enabled")
+        msml_regime = factors.get("msml_regime", "—")
+        overlap_only = factors.get("overlap_only")
+        selector_enabled = factors.get("selector_enabled")
+        run_family = experiment.get("run_family") or "—"
+        dl_enabled_str = ("✓" if dl_enabled else "✗") if dl_enabled is not None else "—"
         sentiment_str = ("✓" if sentiment else "✗") if sentiment is not None else "—"
         missing_str = ("✓" if missing_ind else "✗") if missing_ind is not None else "—"
+        overlap_str = ("✓" if overlap_only else "✗") if overlap_only is not None else "—"
+        selector_str = ("✓" if selector_enabled else "✗") if selector_enabled is not None else "—"
         lines.append(
             f"| {run_id} "
             f"| {gen} "
             f"| {variant} "
+            f"| {run_family} "
             f"| {'✓' if legacy_semantics else '✗'} "
+            f"| {dl_enabled_str} "
             f"| {sentiment_str} "
             f"| {missing_str} "
+            f"| {msml_regime} "
+            f"| {overlap_str} "
+            f"| {selector_str} "
             f"| {sem_label} |"
         )
     lines.append("")
@@ -174,6 +190,7 @@ def render_markdown_report(
         lines.append("---\n\n## Cross-Run Comparisons\n")
         _render_sentiment_comparison(lines, comparisons.get("sentiment"))
         _render_gen_comparison(lines, comparisons.get("gen"))
+        _render_factor_comparison(lines, comparisons.get("factors"))
         _render_selector_aggregate(lines, comparisons.get("selector"))
 
     return "\n".join(lines) + "\n"
@@ -339,7 +356,7 @@ def _render_ml_accuracy(lines: list[str], summary: dict[str, Any]) -> None:
 def _render_sentiment_comparison(
     lines: list[str], sentiment: dict[str, Any] | None
 ) -> None:
-    lines.append("### Sentiment ON vs OFF (A/C vs B/D)\n")
+    lines.append("### Sentiment ON vs OFF (factor-conditioned)\n")
     if not sentiment:
         lines.append("⚠ Sentiment comparison not computed.")
         lines.append("")
@@ -366,7 +383,7 @@ def _render_sentiment_comparison(
 def _render_gen_comparison(
     lines: list[str], gen: dict[str, Any] | None
 ) -> None:
-    lines.append("### Gen1 vs Gen2 (Missing-Indicator Semantics)\n")
+    lines.append("### Gen1 vs Gen2 (factor-conditioned)\n")
     if not gen:
         lines.append("⚠ Gen1/Gen2 comparison not computed.")
         lines.append("")
@@ -412,6 +429,33 @@ def _render_selector_aggregate(
             lines.append(f"| {pair} | {sharpe} | {ret} | {dd} |")
     else:
         lines.append("⚠ No aggregate selector data available.")
+    lines.append("")
+
+
+def _render_factor_comparison(
+    lines: list[str], factors_payload: dict[str, Any] | None
+) -> None:
+    lines.append("### Generalized Factor Slicing\n")
+    if not factors_payload:
+        lines.append("⚠ Generalized factor comparison not computed.")
+        lines.append("")
+        return
+    crosstab = factors_payload.get("factor_crosstab") or {}
+    if crosstab:
+        lines.append("**Factor cohorts (run IDs by factor value):**\n")
+        for factor_name, buckets in sorted(crosstab.items()):
+            lines.append(f"- **{factor_name}**")
+            for value, runs in sorted((buckets or {}).items()):
+                lines.append(f"  - {value}: {', '.join(runs) if runs else '—'}")
+    slices = factors_payload.get("slices") or {}
+    if slices:
+        lines.append("\n**Common slices:**")
+        for name, value in sorted(slices.items()):
+            if isinstance(value, dict):
+                rendered = ", ".join(f"{k}={len(v)}" for k, v in sorted(value.items())) or "—"
+            else:
+                rendered = ", ".join(value) if isinstance(value, list) else str(value)
+            lines.append(f"- {name}: {rendered or '—'}")
     lines.append("")
 
 

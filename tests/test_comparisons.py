@@ -18,6 +18,7 @@ if str(_ROOT) not in sys.path:
 from analysis.comparisons.sentiment import compare_sentiment_variants
 from analysis.comparisons.selector import compare_selector_uplift
 from analysis.comparisons.gen_comparison import compare_gen1_gen2
+from analysis.comparisons.factor_comparison import build_factor_comparisons
 
 
 # ---------------------------------------------------------------------------
@@ -35,6 +36,9 @@ def _make_summary(
     maxdd_delta: float | None = None,
     pair: str = "EURUSD",
     dl_coverage: dict | None = None,
+    msml_regime: str = "LVTF",
+    overlap_only: bool = False,
+    selector_enabled: bool = True,
 ) -> dict:
     """Build a minimal summary dict for testing comparisons."""
     if run_variant is None:
@@ -60,6 +64,8 @@ def _make_summary(
         "D": {"generation": "gen2", "sentiment_enabled": False, "missing_indicators_enabled": True},
     }
     semantics = experiment_semantics.get(run_variant, {})
+    sentiment_enabled = semantics.get("sentiment_enabled")
+    missing_indicators_enabled = semantics.get("missing_indicators_enabled")
 
     return {
         "run_id": run_id,
@@ -70,8 +76,17 @@ def _make_summary(
             "experiment": {
                 "generation": semantics.get("generation", experiment_gen),
                 "variant": run_variant,
-                "sentiment_enabled": semantics.get("sentiment_enabled"),
-                "missing_indicators_enabled": semantics.get("missing_indicators_enabled"),
+                "run_family": "factorial_v1",
+                "sentiment_enabled": sentiment_enabled,
+                "missing_indicators_enabled": missing_indicators_enabled,
+                "factors": {
+                    "dl_enabled": dl_enabled,
+                    "sentiment_enabled": sentiment_enabled,
+                    "missing_indicators_enabled": missing_indicators_enabled,
+                    "msml_regime": msml_regime,
+                    "overlap_only": overlap_only,
+                    "selector_enabled": selector_enabled,
+                },
                 "semantic_label": f"{experiment_gen.capitalize()}_{run_variant}",
             },
         },
@@ -134,13 +149,13 @@ class TestCompareSentimentVariants(unittest.TestCase):
         summaries = [_make_summary("run_off", dl_enabled=False)]
         result = compare_sentiment_variants(summaries)
         warnings = result["warnings"]
-        self.assertTrue(any("missing variant" in w for w in warnings))
+        self.assertTrue(any("missing cohort" in w.lower() for w in warnings))
 
     def test_no_off_runs_warning(self):
         summaries = [_make_summary("run_on", dl_enabled=True)]
         result = compare_sentiment_variants(summaries)
         warnings = result["warnings"]
-        self.assertTrue(any("missing variant" in w for w in warnings))
+        self.assertTrue(any("missing cohort" in w.lower() for w in warnings))
 
     def test_multiple_pairs(self):
         summaries = [
@@ -368,6 +383,42 @@ class TestAnalysisMatrixCompleteness(unittest.TestCase):
         for row in gen1_rows:
             # A=0.12 Sharpe_Delta, B=0.02 Sharpe_Delta → delta = 0.10
             self.assertAlmostEqual(row["delta_on_minus_off"], 0.10, places=5)
+
+
+class TestGeneralizedFactorComparisons(unittest.TestCase):
+
+    def test_factor_crosstab_includes_msml_regime(self):
+        summaries = [
+            _make_summary("run_lvtf", run_variant="A", msml_regime="LVTF"),
+            _make_summary("run_lv", run_variant="B", dl_enabled=False, msml_regime="LV"),
+            _make_summary("run_htf", run_variant="C", msml_regime="HTF"),
+        ]
+        result = build_factor_comparisons(summaries)
+        crosstab = result["factor_crosstab"]["msml_regime"]
+        self.assertIn("LVTF", crosstab)
+        self.assertIn("LV", crosstab)
+        self.assertIn("HTF", crosstab)
+
+    def test_mixed_dl_baseline_slices(self):
+        summaries = [
+            _make_summary("run_dl", run_variant="A", dl_enabled=True),
+            _make_summary("run_baseline", run_variant="B", dl_enabled=False),
+        ]
+        result = build_factor_comparisons(summaries)
+        self.assertEqual(result["slices"]["dl_enabled_true"], ["run_dl"])
+        self.assertEqual(result["slices"]["dl_enabled_false"], ["run_baseline"])
+
+    def test_sentiment_by_generation_uses_factor_conditioning(self):
+        summaries = [
+            _make_summary("g1_on", experiment_gen="gen1", run_variant="A", sharpe_delta=0.2),
+            _make_summary("g1_off", experiment_gen="gen1", run_variant="B", dl_enabled=False, sharpe_delta=0.1),
+            _make_summary("g2_on", experiment_gen="gen2", run_variant="C", sharpe_delta=0.3),
+            _make_summary("g2_off", experiment_gen="gen2", run_variant="D", dl_enabled=False, sharpe_delta=0.05),
+        ]
+        result = build_factor_comparisons(summaries)
+        conditioned = result["comparisons"]["sentiment_enabled_by_generation"]
+        self.assertEqual(len(conditioned), 2)
+        self.assertTrue(all(entry["valid"] for entry in conditioned))
 
 
 if __name__ == "__main__":

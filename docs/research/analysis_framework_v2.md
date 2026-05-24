@@ -33,7 +33,7 @@ python analysis/pipeline.py results_archive/ --output-dir reports/ --verbose
 | File | Description |
 |------|-------------|
 | `<output_dir>/summaries/<canonical_run_id>.summary.json` | Per-run normalised summary with canonical identity |
-| `<output_dir>/comparisons.json` | Cross-run sentiment / gen / selector comparisons |
+| `<output_dir>/comparisons.json` | Cross-run sentiment / gen / selector + generalized factor comparisons |
 | `<output_dir>/report.md` | Human-readable report with validation, warnings, and diagnostics |
 
 ---
@@ -118,7 +118,7 @@ Run manifests (`run_manifest.json`; legacy `run_manifest_*.json`) are parsed for
 Each run directory must contain **exactly one** run manifest.
 Multiple manifests in one run root are treated as an integrity failure.
 
-#### Manifest experiment schema (required fields)
+#### Manifest experiment schema (factor-first; required fields)
 
 The `experiment` block is the **single source of truth** for all semantic attribution.
 Semantics are **never** inferred from DL flags, folder names, or runtime state.
@@ -126,10 +126,19 @@ Semantics are **never** inferred from DL flags, folder names, or runtime state.
 ```json
 {
   "experiment": {
+    "run_family": "factorial_v1",
     "generation": "gen1",
     "variant": "B",
     "sentiment_enabled": false,
     "missing_indicators_enabled": false,
+    "factors": {
+      "dl_enabled": false,
+      "sentiment_enabled": false,
+      "missing_indicators_enabled": false,
+      "msml_regime": "LVTF",
+      "overlap_only": false,
+      "selector_enabled": true
+    },
     "semantic_label": "Gen1_B"
   }
 }
@@ -137,10 +146,12 @@ Semantics are **never** inferred from DL flags, folder names, or runtime state.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `generation` | `"gen1"` \| `"gen2"` | ✓ | Experiment generation |
-| `variant` | `"A"` \| `"B"` \| `"C"` \| `"D"` | ✓ | Canonical experiment variant |
-| `sentiment_enabled` | `bool` | ✓ | Whether DL sentiment features are active in model inputs |
-| `missing_indicators_enabled` | `bool` | ✓ | Whether explicit `*_missing` indicators were added during feature construction |
+| `run_family` | `str` | ✓ | Factor ontology version (currently `factorial_v1`) |
+| `generation` | `"gen1"` \| `"gen2"` | ✓ | Legacy generation label (backward compatibility) |
+| `variant` | `str` | ✓ | Legacy shorthand label (A/B/C/D historically) |
+| `factors` | `dict` | ✓ | Source-of-truth factor state for cohorting/comparisons |
+| `sentiment_enabled` | `bool` | compat | Legacy mirror of `factors.sentiment_enabled` |
+| `missing_indicators_enabled` | `bool` | compat | Legacy mirror of `factors.missing_indicators_enabled` |
 | `semantic_label` | `str` | ✓ | Human-readable label (e.g. `"Gen1_B"`) |
 
 **Important distinctions:**
@@ -151,7 +162,7 @@ Semantics are **never** inferred from DL flags, folder names, or runtime state.
 - `missing_indicators_enabled` must **not** be inferred from feature column names after the
   fact. It must be set explicitly at runtime.
 
-Variant mapping (canonical, deterministic):
+Legacy A/B/C/D shorthand mapping:
 
 | Variant | `generation` | `sentiment_enabled` | `missing_indicators_enabled` |
 |---------|-------------|---------------------|------------------------------|
@@ -161,7 +172,7 @@ Variant mapping (canonical, deterministic):
 | D | gen2 | `false` | `true` |
 
 Legacy manifests without the `experiment` block are tolerated with warnings and reported
-as `variant=U` (unknown). They are clearly marked in the report as legacy-semantics runs.
+as `variant=U` (unknown). They remain analyzable via compatibility fallbacks.
 
 ### Log files (legacy fallback)
 
@@ -297,22 +308,21 @@ is attached as additional feature columns to each bar:
 `flags.DL_SIGNALS_ENABLED` — the DL infrastructure may be active while the DL signal
 contribution is ablated. Always read `manifest.experiment.sentiment_enabled`.
 
-### Experiment Variants (A–D)
+### Factor-conditioned comparisons
 
-Comparative studies use a 2×2 design:
+Comparisons no longer rely on hardcoded A/B/C/D pairings. The engine supports:
 
-| Variant | Sentiment | Generation |
-|---|---|---|
-| **A** | ON | Gen1 |
-| **B** | OFF | Gen1 (baseline for A) |
-| **C** | ON | Gen2 |
-| **D** | OFF | Gen2 (baseline for C) |
+- arbitrary factor filtering (`dl_enabled`, `sentiment_enabled`, `missing_indicators_enabled`, `msml_regime`, `overlap_only`, `selector_enabled`)
+- generation-conditioned or regime-conditioned slices
+- mixed DL/non-DL cohort analysis
+- backward-compatible legacy variant reporting
 
-Comparison assumptions:
+Examples:
 
-- Sentiment comparison is generation-scoped (A vs B, C vs D only).
-- Gen comparison is sentiment-scoped (A vs C, B vs D only).
-- Incomplete cohorts are not silently mixed; they are warned and skipped.
+- Sentiment ON vs OFF within each generation (`factors.sentiment_enabled`, conditioned on `generation`)
+- Gen1 vs Gen2 within each sentiment state
+- DL-enabled vs no-DL baselines (`factors.dl_enabled`)
+- Regime slices by `factors.msml_regime` (e.g., LVTF, LV, HTF)
 
 ---
 

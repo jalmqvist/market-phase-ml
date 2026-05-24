@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from experiment_semantics import normalize_experiment_factors
+
 
 def _manifest_files(run_dir: Path) -> list[Path]:
     manifests: list[Path] = []
@@ -37,18 +39,29 @@ def _parse_experiment_block(data: dict[str, Any]) -> dict[str, Any]:
     experiment = data.get("experiment") or {}
     if not isinstance(experiment, dict):
         return {}
+    factors = normalize_experiment_factors(
+        experiment.get("factors"),
+        fallback_sentiment_enabled=experiment.get("sentiment_enabled"),
+        fallback_missing_indicators_enabled=experiment.get("missing_indicators_enabled"),
+        fallback_dl_enabled=experiment.get("dl_enabled"),
+        fallback_msml_regime=experiment.get("msml_regime"),
+    )
     generation = experiment.get("generation")
     variant = experiment.get("variant")
-    sentiment_enabled = experiment.get("sentiment_enabled")
-    missing_indicators_enabled = experiment.get("missing_indicators_enabled")
+    sentiment_enabled = factors.get("sentiment_enabled")
+    missing_indicators_enabled = factors.get("missing_indicators_enabled")
     semantic_label = experiment.get("semantic_label")
     legacy_semantics = experiment.get("legacy_semantics")
     semantics_version = experiment.get("semantics_version")
     return {
+        "run_family": experiment.get("run_family"),
         "generation": generation,
         "variant": variant,
         "sentiment_enabled": sentiment_enabled,
         "missing_indicators_enabled": missing_indicators_enabled,
+        "msml_regime": factors.get("msml_regime"),
+        "dl_enabled": factors.get("dl_enabled"),
+        "factors": factors,
         "semantic_label": semantic_label,
         "legacy_semantics": legacy_semantics,
         "semantics_version": semantics_version,
@@ -85,7 +98,10 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
     flags_section = data.get("flags") or {}
     reproducibility_section = data.get("reproducibility") or {}
     feature_ordering_section = data.get("feature_ordering") or {}
+    experiment_block = _parse_experiment_block(data)
     dl_enabled = dl_section.get("dl_enabled")
+    if dl_enabled is None:
+        dl_enabled = experiment_block.get("factors", {}).get("dl_enabled")
 
     return {
         "manifest_count": 1,
@@ -104,6 +120,6 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
         "timestamp_utc": run_section.get("timestamp_utc"),
         "python_version": run_section.get("python_version"),
         "run": run_section,
-        "experiment": _parse_experiment_block(data),
+        "experiment": experiment_block,
         "raw": data,
     }

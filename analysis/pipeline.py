@@ -22,7 +22,7 @@ What it does
 1. **Discover** all run directories under the archive root.
 2. **Parse** CSV outputs, run manifests, and (as fallback) log files.
 3. **Build** a normalised summary JSON per run.
-4. **Generate** comparisons: sentiment ON/OFF, Gen1 vs Gen2, selector uplift.
+4. **Generate** comparisons: sentiment ON/OFF, Gen1 vs Gen2, selector uplift, and factor slices.
 5. **Render** a unified markdown report.
 6. **Write** outputs to the ``--output-dir`` directory.
 
@@ -47,19 +47,8 @@ Architecture
 
 Experiment semantics
 ---------------------
-Gen1 vs Gen2:
-    Refers to missing-indicator semantics for DL features.
-    Gen1 = no indicator; Gen2 = explicit ``dl_missing_indicator`` column.
-
-Sentiment ON/OFF:
-    Refers only to canonical manifest experiment variant semantics.
-    Never inferred from DL runtime flags or folder names.
-
-Experiment variants (comparative studies):
-    A — Sentiment ON,  Gen1
-    B — Sentiment OFF, Gen1  (baseline for A)
-    C — Sentiment ON,  Gen2
-    D — Sentiment OFF, Gen2  (baseline for C)
+Comparisons are factor-first and read from ``manifest.experiment.factors``.
+Generation/variant fields are retained as legacy compatibility labels only.
 """
 
 from __future__ import annotations
@@ -88,6 +77,7 @@ from analysis.parsers.log_parser import parse_log
 from analysis.comparisons.sentiment import compare_sentiment_variants
 from analysis.comparisons.selector import compare_selector_uplift
 from analysis.comparisons.gen_comparison import compare_gen1_gen2
+from analysis.comparisons.factor_comparison import build_factor_comparisons
 from analysis.reports.markdown_report import render_markdown_report
 from analysis.validation import validate_summaries, sort_summaries_deterministically
 
@@ -147,6 +137,7 @@ def build_run_summary(
     )
     run_id = identity["run_id"]
     experiment = (manifest or {}).get("experiment") or {}
+    factors = experiment.get("factors") or {}
 
     # --- CSVs -------------------------------------------------------------
     csvs = parse_run_csvs(run_dir)
@@ -183,8 +174,9 @@ def build_run_summary(
     meta = {
         "experiment_gen": identity.get("experiment_gen"),
         "run_variant": identity.get("run_variant"),
-        "sentiment_enabled": identity.get("sentiment_enabled"),
-        "missing_indicators_enabled": identity.get("missing_indicators_enabled"),
+        "sentiment_enabled": factors.get("sentiment_enabled", identity.get("sentiment_enabled")),
+        "missing_indicators_enabled": factors.get("missing_indicators_enabled", identity.get("missing_indicators_enabled")),
+        "factors": factors,
         "semantic_label": identity.get("semantic_label"),
         "legacy_semantics": bool(identity.get("legacy_semantics")),
         "experiment": experiment,
@@ -396,6 +388,8 @@ def run_pipeline(
 
     comparisons["gen"] = compare_gen1_gen2(summaries)
     _log(f"   gen1vs2: {len(comparisons['gen'].get('delta_table', []))} delta rows")
+    comparisons["factors"] = build_factor_comparisons(summaries)
+    _log("   factors: generalized cohort slices computed")
     comparisons["validation"] = validation
 
     comparisons_path = output_dir / "comparisons.json"
