@@ -104,7 +104,7 @@ DL_SIGNAL_SURFACE = {
     "model": os.getenv("DL_MODEL", "mlp"),
     "target_horizon": 24,
     "feature_set": os.getenv("DL_FEATURE_SET", "price_trend"),
-    "dl_regime": "LVTF",
+    "dl_regime": os.getenv("DL_REGIME", "LVTF"),
 }
 
 # DL debug verbosity (controls noisy per-pair diagnostics)
@@ -205,8 +205,15 @@ def _validate_experiment_variant(value: str) -> str:
     return variant
 
 
-def _build_experiment_metadata(*, variant: str) -> dict:
-    return build_experiment_metadata_from_variant(_validate_experiment_variant(variant))
+def _build_experiment_metadata(
+    *,
+    variant: str,
+    factor_overrides: dict | None = None,
+) -> dict:
+    return build_experiment_metadata_from_variant(
+        _validate_experiment_variant(variant),
+        factor_overrides=factor_overrides,
+    )
 
 
 def _set_run_output_dir(path: Path) -> None:
@@ -1467,7 +1474,23 @@ def main(
         if experiment_variant is not None
         else os.getenv("EXPERIMENT_VARIANT", "A")
     )
-    experiment_meta = _build_experiment_metadata(variant=selected_variant)
+    requested_msml_regime = os.getenv("MSML_REGIME", dl_regime).strip().upper() or dl_regime
+    overlap_only = os.getenv("OVERLAP_ONLY", "false").strip().lower() in {"1", "true", "yes", "on"}
+    base_experiment_meta = _build_experiment_metadata(variant=selected_variant)
+    base_factors = dict(base_experiment_meta.get("factors") or {})
+    factor_overrides = {
+        # Baseline no-DL runs are first-class factor cohorts.
+        "dl_enabled": dl_runtime_enabled,
+        "sentiment_enabled": bool(base_factors.get("sentiment_enabled")) and dl_runtime_enabled,
+        "missing_indicators_enabled": bool(base_factors.get("missing_indicators_enabled")) and dl_runtime_enabled,
+        "msml_regime": requested_msml_regime,
+        "overlap_only": overlap_only,
+        "selector_enabled": bool(RUN_WALKFORWARD),
+    }
+    experiment_meta = _build_experiment_metadata(
+        variant=selected_variant,
+        factor_overrides=factor_overrides,
+    )
     generation_hint = (
         experiment_generation
         if experiment_generation is not None
@@ -3288,6 +3311,37 @@ def main(
         print("[diag-plots] wrote:", plots)
     except Exception as e:
         print("[diag-plots] skipped:", e)
+
+    logs_dir = _run_output_dir() / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    run_log_path = logs_dir / "run_summary.log"
+    run_log_lines = [
+        f"run_id={run_cfg.run_id}",
+        f"timestamp_utc={run_cfg.run_id.replace('run_', '')}",
+        f"output_dir={_run_output_dir()}",
+        f"dl_enabled={dl_runtime_enabled}",
+        f"msml_regime={(experiment_meta.get('factors') or {}).get('msml_regime')}",
+        f"variant={experiment_meta.get('variant')}",
+        f"generation={experiment_meta.get('generation')}",
+    ]
+    run_log_path.write_text("\n".join(run_log_lines) + "\n")
+    print(f"[log] wrote: {run_log_path}")
+
+    auto_analyze = os.getenv("MPML_AUTO_ANALYZE", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if auto_analyze:
+        try:
+            from analysis.pipeline import run_pipeline as run_analysis_pipeline
+            analysis_output_dir = _run_output_dir() / "analysis"
+            run_analysis_pipeline(
+                archive_root=_run_output_dir(),
+                output_dir=analysis_output_dir,
+                verbose=False,
+            )
+            print(f"[analysis] wrote: {analysis_output_dir}")
+        except Exception as e:
+            print(f"[analysis] skipped: {e}")
+    else:
+        print("[analysis] auto analysis disabled via MPML_AUTO_ANALYZE.")
     # ─────────────────────────────────────────
     # DONE
     # ─────────────────────────────────────────

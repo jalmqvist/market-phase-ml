@@ -12,6 +12,7 @@ from typing import Any
 from experiment_semantics import (
     LEGACY_VARIANT,
     VALID_EXPERIMENT_VARIANTS,
+    normalize_experiment_factors,
 )
 
 _REQUIRED_REPRODUCIBILITY_KEYS = (
@@ -77,6 +78,13 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         csvs = summary.get("csvs") or {}
         manifest_diag = meta.get("manifest_diagnostics") or {}
         experiment = meta.get("experiment") or {}
+        factors = normalize_experiment_factors(
+            experiment.get("factors"),
+            fallback_sentiment_enabled=experiment.get("sentiment_enabled"),
+            fallback_missing_indicators_enabled=experiment.get("missing_indicators_enabled"),
+            fallback_dl_enabled=experiment.get("dl_enabled", meta.get("dl_enabled")),
+            fallback_msml_regime=experiment.get("msml_regime"),
+        )
 
         manifest_count = manifest_diag.get("manifest_count") or 0
         if manifest_count > 1:
@@ -109,10 +117,8 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
                 missing_required.append("generation")
             if experiment.get("variant") is None:
                 missing_required.append("variant")
-            if experiment.get("sentiment_enabled") is None:
-                missing_required.append("sentiment_enabled")
-            if experiment.get("missing_indicators_enabled") is None:
-                missing_required.append("missing_indicators_enabled")
+            if experiment.get("factors") is None:
+                missing_required.append("factors")
             semantic_label = experiment.get("semantic_label")
             if not isinstance(semantic_label, str) or not semantic_label.strip():
                 missing_required.append("semantic_label")
@@ -127,16 +133,16 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
 
         exp_generation = experiment.get("generation")
         exp_variant = experiment.get("variant")
-        exp_sentiment = experiment.get("sentiment_enabled")
-        exp_missing = experiment.get("missing_indicators_enabled")
+        exp_sentiment = factors.get("sentiment_enabled")
+        exp_missing = factors.get("missing_indicators_enabled")
         exp_semantic_label = experiment.get("semantic_label")
         if exp_generation is not None and exp_generation not in {"gen1", "gen2"}:
             semantic_errors.append(
                 f"{run_id}: invalid experiment generation {exp_generation!r} (expected gen1|gen2)."
             )
         if exp_variant is not None and exp_variant not in VALID_EXPERIMENT_VARIANTS:
-            semantic_errors.append(
-                f"{run_id}: invalid experiment variant {exp_variant!r} (expected A|B|C|D)."
+            semantic_warnings.append(
+                f"{run_id}: non-canonical experiment variant {exp_variant!r} (legacy A|B|C|D are shorthand only)."
             )
         if manifest_present:
             if exp_generation in {"gen1", "gen2"} and gen != exp_generation:
@@ -149,11 +155,11 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
                 )
             if isinstance(exp_sentiment, bool) and meta.get("sentiment_enabled") != exp_sentiment:
                 semantic_errors.append(
-                    f"{run_id}: identity corruption (meta sentiment_enabled={meta.get('sentiment_enabled')!r} does not match manifest.experiment.sentiment_enabled={exp_sentiment!r})."
+                    f"{run_id}: identity corruption (meta sentiment_enabled={meta.get('sentiment_enabled')!r} does not match manifest.experiment.factors.sentiment_enabled={exp_sentiment!r})."
                 )
             if isinstance(exp_missing, bool) and meta.get("missing_indicators_enabled") != exp_missing:
                 semantic_errors.append(
-                    f"{run_id}: identity corruption (meta missing_indicators_enabled={meta.get('missing_indicators_enabled')!r} does not match manifest.experiment.missing_indicators_enabled={exp_missing!r})."
+                    f"{run_id}: identity corruption (meta missing_indicators_enabled={meta.get('missing_indicators_enabled')!r} does not match manifest.experiment.factors.missing_indicators_enabled={exp_missing!r})."
                 )
             if isinstance(exp_semantic_label, str) and exp_semantic_label.strip():
                 if meta.get("semantic_label") != exp_semantic_label:

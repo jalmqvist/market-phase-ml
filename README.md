@@ -81,6 +81,9 @@ Key outputs (written inside that run directory):
 - `walkforward_results_per_fold.csv` — walk-forward deltas per fold (debuggable)
 - `walkforward_tau_sweep_summary.csv` — τ sweep summary (optional)
 - `walkforward_policy_sweep_summary.csv` — policy sweep summary (optional)
+- `logs/run_summary.log` — deterministic runtime metadata log
+- `analysis/report.md` — auto-generated analysis report for this run
+- `analysis/comparisons.json` — auto-generated factor and cohort comparisons
 
 The notebook (`notebooks/01_regime_gating_walkforward.ipynb`) reads these artifacts to generate figures and fold-level case studies.
 
@@ -104,7 +107,7 @@ This automatically:
 - Parses CSV outputs, one canonical run manifest, and (as fallback) log files
 - Validates provenance/semantic/manifest integrity (duplicates, malformed manifests, incomplete cohorts)
 - Generates normalised summary JSON per run
-- Generates sentiment ON/OFF, Gen1 vs Gen2, and selector-uplift comparisons
+- Generates sentiment/generation comparisons and generalized factor-conditioned cohorts
 - Renders a unified markdown report
 
 Outputs are written to `analysis/output/` by default:
@@ -135,30 +138,60 @@ Integrity notes:
 - each run directory must contain exactly one manifest
 - semantic attribution is **manifest `experiment`-driven only** — no inference from folder names, DL flags, or runtime state
 
-Experiment semantics (canonical, immutable):
+Experiment metadata (factor-first, canonical):
 
-| Variant | Generation | Sentiment ON | Missing Indicators ON |
-|---------|-----------|-------------|----------------------|
-| A | Gen1 | ✓ | ✗ |
-| B | Gen1 | ✗ | ✗ |
-| C | Gen2 | ✓ | ✓ |
-| D | Gen2 | ✗ | ✓ |
+| Field | Meaning |
+|---------|---------|
+| `experiment.run_family` | Comparison ontology version (`factorial_v1`) |
+| `experiment.generation` | Legacy generation label (backward compatibility) |
+| `experiment.variant` | Legacy shorthand label (A/B/C/D) |
+| `experiment.factors` | Source of truth for cohort filtering and comparisons |
 
 Each run manifest must contain an explicit `experiment` block:
 
 ```json
 {
   "experiment": {
+    "run_family": "factorial_v1",
     "generation": "gen1",
     "variant": "B",
     "sentiment_enabled": false,
     "missing_indicators_enabled": false,
+    "factors": {
+      "dl_enabled": false,
+      "sentiment_enabled": false,
+      "missing_indicators_enabled": false,
+      "msml_regime": "LVTF",
+      "overlap_only": false,
+      "selector_enabled": true
+    },
     "semantic_label": "Gen1_B",
     "legacy_semantics": false,
-    "semantics_version": 2
+    "semantics_version": 3
   }
 }
 ```
+
+### Baseline no-DL runs
+
+Use:
+
+```bash
+DL_SIGNALS_ENABLED=false python main.py --experiment-variant B
+```
+
+The run remains fully analyzable and will be grouped under `factors.dl_enabled=false`.
+
+### Alternative MSML regimes
+
+MSML regime metadata is now explicit and comparison-ready:
+
+```bash
+MSML_REGIME=HTF python main.py --experiment-variant C
+MSML_REGIME=LV  python main.py --experiment-variant A
+```
+
+This only updates run metadata/cohorting in this cleanup PR; strategy logic is unchanged.
 
 Run the analysis test suite with:
 

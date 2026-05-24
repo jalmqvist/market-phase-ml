@@ -10,7 +10,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-from experiment_semantics import LEGACY_RUN_MEANING, LEGACY_VARIANT, VALID_EXPERIMENT_VARIANTS
+from experiment_semantics import (
+    LEGACY_RUN_MEANING,
+    LEGACY_VARIANT,
+    VALID_EXPERIMENT_VARIANTS,
+    normalize_experiment_factors,
+)
 
 _TS_RE = re.compile(r"(\d{8}T\d{6}Z)")
 
@@ -117,11 +122,18 @@ def infer_run_identity(
     experiment_block = (manifest or {}).get("experiment") or {}
     explicit_gen = _normalize_gen(experiment_block.get("generation"))
     explicit_variant = _normalize_variant(experiment_block.get("variant"))
-    sentiment_enabled_raw = experiment_block.get("sentiment_enabled")
-    sentiment_enabled = sentiment_enabled_raw if isinstance(sentiment_enabled_raw, bool) else None
-    missing_indicators_raw = experiment_block.get("missing_indicators_enabled")
+    factors = normalize_experiment_factors(
+        experiment_block.get("factors"),
+        fallback_sentiment_enabled=experiment_block.get("sentiment_enabled"),
+        fallback_missing_indicators_enabled=experiment_block.get("missing_indicators_enabled"),
+        fallback_dl_enabled=experiment_block.get("dl_enabled", (manifest or {}).get("dl_enabled")),
+        fallback_msml_regime=experiment_block.get("msml_regime"),
+    )
+    sentiment_enabled = factors.get("sentiment_enabled") if isinstance(factors.get("sentiment_enabled"), bool) else None
     missing_indicators_enabled = (
-        missing_indicators_raw if isinstance(missing_indicators_raw, bool) else None
+        factors.get("missing_indicators_enabled")
+        if isinstance(factors.get("missing_indicators_enabled"), bool)
+        else None
     )
     semantic_label = experiment_block.get("semantic_label")
     semantic_label = (
@@ -140,8 +152,8 @@ def infer_run_identity(
     legacy_semantics = not (
         explicit_gen in {"gen1", "gen2"}
         and explicit_variant in VALID_EXPERIMENT_VARIANTS
-        and isinstance(sentiment_enabled, bool)
-        and isinstance(missing_indicators_enabled, bool)
+        and isinstance(factors.get("sentiment_enabled"), bool)
+        and isinstance(factors.get("missing_indicators_enabled"), bool)
         and semantic_label is not None
     )
 
@@ -149,6 +161,8 @@ def infer_run_identity(
         identity_warnings.append("Experiment generation invalid or missing in manifest experiment block.")
     if explicit_variant is None and experiment_block:
         identity_warnings.append("Experiment variant invalid or missing in manifest experiment block.")
+    if experiment_block and "factors" not in experiment_block:
+        identity_warnings.append("Experiment factors block missing; using compatibility fallbacks from legacy fields.")
     if sentiment_enabled is None and experiment_block:
         identity_warnings.append("Experiment sentiment_enabled missing or non-boolean in manifest experiment block.")
     if missing_indicators_enabled is None and experiment_block:
@@ -192,6 +206,8 @@ def infer_run_identity(
         "run_variant": variant,
         "sentiment_enabled": sentiment_enabled,
         "missing_indicators_enabled": missing_indicators_enabled,
+        "factors": factors,
+        "run_family": experiment_block.get("run_family"),
         "semantic_label": semantic_label,
         "legacy_semantics": legacy_semantics,
         "run_meaning": _build_run_meaning(
