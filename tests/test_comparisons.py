@@ -9,6 +9,7 @@ Run with:
 
 import sys
 import unittest
+import warnings
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -281,51 +282,53 @@ class TestCompareSelectorUplift(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Gen1 vs Gen2 comparison tests
+# Training-family effect comparison tests
 # ---------------------------------------------------------------------------
 
 
-class TestCompareGen1Gen2(unittest.TestCase):
+class TestCompareTrainingFamilyEffect(unittest.TestCase):
 
     def test_empty_has_warnings(self):
-        result = compare_gen1_gen2([])
+        result = compare_training_family_effect([])
         self.assertIn("warnings", result)
         self.assertTrue(len(result["warnings"]) > 0)
 
-    def test_gen_split(self):
+    def test_legacy_generation_split_compatibility_keys(self):
         summaries = [
             _make_summary("run_g1", experiment_gen="gen1"),
             _make_summary("run_g2", experiment_gen="gen2"),
         ]
-        result = compare_gen1_gen2(summaries)
+        result = compare_training_family_effect(summaries)
         self.assertIn("run_g1", result["gen1"])
         self.assertIn("run_g2", result["gen2"])
+        self.assertIn("run_g1", result["legacy_generation_gen1"])
+        self.assertIn("run_g2", result["legacy_generation_gen2"])
 
-    def test_delta_table(self):
+    def test_legacy_generation_delta_table_compatibility(self):
         summaries = [
             _make_summary("run_g1", experiment_gen="gen1", run_variant="A", sharpe_delta=0.10),
             _make_summary("run_g2", experiment_gen="gen2", run_variant="F", sharpe_delta=0.20),
         ]
-        result = compare_gen1_gen2(summaries)
+        result = compare_training_family_effect(summaries)
         delta_rows = result["delta_table"]
         self.assertTrue(len(delta_rows) > 0)
         row = next((r for r in delta_rows if r["metric"] == "sharpe_delta"), None)
         self.assertIsNotNone(row)
         self.assertAlmostEqual(row["delta_gen2_minus_gen1"], 0.10, places=5)
 
-    def test_no_gen1_warning(self):
+    def test_legacy_generation_incomplete_warning(self):
         summaries = [_make_summary("run_g2", experiment_gen="gen2")]
-        result = compare_gen1_gen2(summaries)
+        result = compare_training_family_effect(summaries)
         self.assertTrue(
             any("incomplete" in w.lower() or "invalid" in w.lower() for w in result["warnings"])
         )
 
-    def test_coverage_comparison(self):
+    def test_legacy_generation_coverage_comparison_compatibility(self):
         summaries = [
             _make_summary("run_g1", experiment_gen="gen1", run_variant="A", dl_coverage={"EURUSD": 80.0}),
             _make_summary("run_g2", experiment_gen="gen2", run_variant="F", dl_coverage={"EURUSD": 85.0}),
         ]
-        result = compare_gen1_gen2(summaries)
+        result = compare_training_family_effect(summaries)
         cov = result["coverage_comparison"]
         self.assertTrue(len(cov) >= 1)
         eurusd = next((r for r in cov if r["pair"] == "EURUSD"), None)
@@ -333,12 +336,12 @@ class TestCompareGen1Gen2(unittest.TestCase):
         self.assertAlmostEqual(eurusd["dl_coverage_gen1"], 80.0)
         self.assertAlmostEqual(eurusd["dl_coverage_gen2"], 85.0)
 
-    def test_gen_comparison_respects_sentiment_cohorts(self):
+    def test_legacy_generation_comparison_respects_sentiment_cohorts(self):
         summaries = [
             _make_summary("run_g1_on", experiment_gen="gen1", dl_enabled=True, sharpe_delta=0.10),
             _make_summary("run_g2_off", experiment_gen="gen2", dl_enabled=False, sharpe_delta=0.30),
         ]
-        result = compare_gen1_gen2(summaries)
+        result = compare_training_family_effect(summaries)
         self.assertEqual(result["delta_table"], [])
         self.assertTrue(
             any("incomplete" in w.lower() or "invalid" in w.lower() for w in result["warnings"])
@@ -369,6 +372,41 @@ class TestCompareGen1Gen2(unittest.TestCase):
         self.assertEqual(result["gen2"], [])
 
 
+class TestCompareGen1Gen2Compatibility(unittest.TestCase):
+
+    def test_compare_gen1_gen2_emits_deprecation_warning(self):
+        with self.assertWarnsRegex(
+            DeprecationWarning,
+            "compare_gen1_gen2 is deprecated; use compare_training_family_effect instead.",
+        ):
+            compare_gen1_gen2([])
+
+    def test_compare_gen1_gen2_matches_training_family_effect(self):
+        summaries = [
+            _make_v5_summary(
+                "run_persistent",
+                training_pair_family="persistent",
+                sentiment_surface=True,
+                missing_indicators_enabled=False,
+                run_variant="A",
+                sharpe_delta=0.10,
+            ),
+            _make_v5_summary(
+                "run_reactive",
+                training_pair_family="reactive",
+                sentiment_surface=True,
+                missing_indicators_enabled=False,
+                run_variant="F",
+                sharpe_delta=0.20,
+            ),
+        ]
+        direct = compare_training_family_effect(summaries)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            compat = compare_gen1_gen2(summaries)
+        self.assertEqual(compat, direct)
+
+
 # ---------------------------------------------------------------------------
 # Analysis matrix completeness tests
 # ---------------------------------------------------------------------------
@@ -389,7 +427,7 @@ class TestAnalysisMatrixCompleteness(unittest.TestCase):
     def test_full_matrix_has_no_warnings(self):
         """A/B/C/D subset yields complete sentiment strata but incomplete strict gen strata."""
         result_s = compare_sentiment_variants(self._full_matrix())
-        result_g = compare_gen1_gen2(self._full_matrix())
+        result_g = compare_training_family_effect(self._full_matrix())
         self.assertEqual(result_s["incomplete_comparisons"], [])
         self.assertGreater(len(result_g["incomplete_comparisons"]), 0)
         self.assertEqual(result_g["valid_comparisons"], [])
@@ -397,7 +435,7 @@ class TestAnalysisMatrixCompleteness(unittest.TestCase):
     def test_full_matrix_all_valid_comparisons(self):
         """Scoped A/B/C/D subset keeps deterministic conditioned comparisons."""
         result_s = compare_sentiment_variants(self._full_matrix())
-        result_g = compare_gen1_gen2(self._full_matrix())
+        result_g = compare_training_family_effect(self._full_matrix())
         # Legacy runs use "legacy:generation=<gen>/imputation_awareness=<bool>" keys.
         self.assertIn("legacy:generation=gen1/imputation_awareness=false", result_s["valid_comparisons"])
         self.assertIn("legacy:generation=gen2/imputation_awareness=true", result_s["valid_comparisons"])

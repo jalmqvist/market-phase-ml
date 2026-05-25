@@ -52,7 +52,10 @@ By default, each invocation now writes into a dedicated immutable run directory:
 
 `results_archive/<generation>_<variant>__<timestamp>/`
 
-Variant is the canonical runtime identity and must be selected explicitly:
+`<generation>/<variant>` are legacy compatibility labels in run identity metadata.
+`experiment_surface` is the canonical provenance layer for analysis semantics.
+
+Experiment variant selection remains required runtime cohort metadata:
 
 ```bash
 # CLI overrides env when both are set
@@ -68,7 +71,7 @@ export EXPERIMENT_VARIANT=B
 python main.py
 ```
 
-Canonical variant matrix (source of truth: `experiment_semantics.EXPERIMENT_VARIANTS`):
+Legacy compatibility variant matrix (source of truth: `experiment_semantics.EXPERIMENT_VARIANTS`):
 
 | Variant | Generation | Sentiment | Missing Indicators |
 |---|---|---|---|
@@ -228,7 +231,7 @@ Meaning of `"unknown"`:
 
 Architecture note:
 
-- `experiment` = runtime cohort configuration (legacy compatibility metadata included)
+- `experiment` = runtime cohort configuration metadata (includes legacy compatibility labels)
 - `experiment_surface` = actual artifact/training provenance at runtime (canonical provenance semantics)
 
 These are related but intentionally independent. Analysis trusts `experiment_surface`

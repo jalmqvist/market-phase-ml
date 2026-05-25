@@ -19,6 +19,7 @@ architectural mechanism.
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 from experiment_semantics import EXPERIMENT_VARIANTS
@@ -234,6 +235,11 @@ def compare_gen1_gen2(
 
     Prefer ``compare_training_family_effect`` for v5 ontology usage.
     """
+    warnings.warn(
+        "compare_gen1_gen2 is deprecated; use compare_training_family_effect instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return compare_training_family_effect(summaries)
 
 
