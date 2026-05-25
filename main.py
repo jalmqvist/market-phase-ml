@@ -52,6 +52,7 @@ from src.experiment_surface_runtime import build_runtime_experiment_surface
 from experiment_semantics import (
     VALID_EXPERIMENT_VARIANTS,
     build_experiment_metadata_from_variant,
+    infer_imputation_awareness_from_name,
     normalize_variant,
 )
 
@@ -1479,11 +1480,23 @@ def main(
     overlap_only = os.getenv("OVERLAP_ONLY", "false").strip().lower() in {"1", "true", "yes", "on"}
     base_experiment_meta = _build_experiment_metadata(variant=selected_variant)
     base_factors = dict(base_experiment_meta.get("factors") or {})
+    run_name_hint = str(
+        output_dir
+        or os.getenv("MPML_OUTPUT_DIR")
+        or ""
+    ).strip()
+    awareness_hint = infer_imputation_awareness_from_name(
+        Path(run_name_hint).name if run_name_hint else None
+    )
     factor_overrides = {
         # Baseline no-DL runs are first-class factor cohorts.
         "dl_enabled": dl_runtime_enabled,
         "sentiment_enabled": bool(base_factors.get("sentiment_enabled")) and dl_runtime_enabled,
-        "missing_indicators_enabled": bool(base_factors.get("missing_indicators_enabled")) and dl_runtime_enabled,
+        "missing_indicators_enabled": (
+            awareness_hint
+            if isinstance(awareness_hint, bool)
+            else bool(base_factors.get("missing_indicators_enabled"))
+        ),
         "msml_regime": requested_msml_regime,
         "overlap_only": overlap_only,
         "selector_enabled": bool(RUN_WALKFORWARD),

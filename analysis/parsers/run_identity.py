@@ -14,6 +14,7 @@ from experiment_semantics import (
     LEGACY_RUN_MEANING,
     LEGACY_VARIANT,
     VALID_EXPERIMENT_VARIANTS,
+    infer_imputation_awareness_from_name,
     normalize_experiment_factors,
     is_v5_surface,
 )
@@ -189,6 +190,17 @@ def infer_run_identity(
         fallback_dl_enabled=experiment_block.get("dl_enabled", (manifest or {}).get("dl_enabled")),
         fallback_msml_regime=experiment_block.get("msml_regime"),
     )
+    awareness_hint = None
+    for candidate in (
+        run_dir.name,
+        manifest_run_id,
+        run_section.get("run_id"),
+    ):
+        awareness_hint = infer_imputation_awareness_from_name(candidate)
+        if isinstance(awareness_hint, bool):
+            break
+    if isinstance(awareness_hint, bool):
+        factors["missing_indicators_enabled"] = awareness_hint
     sentiment_enabled = factors.get("sentiment_enabled") if isinstance(factors.get("sentiment_enabled"), bool) else None
     missing_indicators_enabled = (
         factors.get("missing_indicators_enabled")
