@@ -39,6 +39,7 @@ EXPERIMENT_FACTOR_KEYS: tuple[str, ...] = (
 # Surface factor keys — describe the parquet / artifact / training configuration.
 # These are the canonical v5 factor dimensions for analysis attribution.
 EXPERIMENT_SURFACE_FACTOR_KEYS: tuple[str, ...] = (
+    "surface_source",
     "sentiment_surface",
     "training_pair_family",
     "evaluation_pair_family",
@@ -283,6 +284,7 @@ def normalize_experiment_surface(
         return None
 
     return {
+        "surface_source": _str_or_none(raw_surface.get("surface_source")),
         "sentiment_surface": _bool_or_none(raw_surface.get("sentiment_surface")),
         "training_pair_family": _str_or_none(raw_surface.get("training_pair_family")),
         "evaluation_pair_family": _str_or_none(raw_surface.get("evaluation_pair_family")),
