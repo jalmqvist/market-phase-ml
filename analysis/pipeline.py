@@ -153,11 +153,18 @@ def build_run_summary(
             "Analysis provenance corruption detected: identity surface_source does not match "
             "manifest surface_source."
         )
-    if manifest and is_v5_surface(manifest_surface) and identity_surface_source != "manifest":
-        raise RuntimeError(
-            "Analysis provenance corruption detected: v5 experiment_surface present but identity "
-            "surface_source is not 'manifest'."
-        )
+    if manifest and is_v5_surface(manifest_surface):
+        if identity_surface_source in {
+            None,
+            "",
+            "missing_experiment_surface",
+            "legacy_variant_fallback",
+        }:
+            raise RuntimeError(
+                "Analysis provenance corruption detected: canonical v5 "
+                "experiment_surface present but identity surface_source "
+                "resolved to a legacy/missing fallback state."
+            )
     run_id = identity["run_id"]
     experiment = (manifest or {}).get("experiment") or {}
     factors = experiment.get("factors") or {}
