@@ -1297,14 +1297,15 @@ class TestPipelineIntegration(unittest.TestCase):
                 ("reactive_nodl_blind", "gen1", "B", "reactive"),
                 ("reactive_nodl_aware", "gen2", "D", "reactive"),
             ]
-            for run_name, generation, variant, family in runs:
+            for idx, (run_name, generation, variant, family) in enumerate(runs, start=1):
                 run_dir = archive / run_name
                 run_dir.mkdir()
+                ts = f"20260521T02020{idx}Z"
                 manifest = {
                     "run": {
                         "run_id": run_name,
                         "git_sha": "abc123",
-                        "timestamp_utc": "20260521T020202Z",
+                        "timestamp_utc": ts,
                     },
                     "experiment": {
                         "generation": generation,
