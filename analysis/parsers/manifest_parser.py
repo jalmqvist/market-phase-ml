@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from experiment_semantics import normalize_experiment_factors
+from experiment_semantics import normalize_experiment_factors, normalize_experiment_surface, is_v5_surface
 
 
 def _manifest_files(run_dir: Path) -> list[Path]:
@@ -68,6 +68,21 @@ def _parse_experiment_block(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _parse_experiment_surface(data: dict[str, Any]) -> dict[str, Any]:
+    """
+    Parse the ``experiment_surface`` block from a manifest.
+
+    This block is the canonical v5 source of truth for parquet/artifact/training
+    semantic attribution.  It is NOT inferred from variant, generation, DL flags,
+    or directory names.
+
+    Returns a normalized surface dict (see ``normalize_experiment_surface``).
+    If the block is absent or malformed, returns an all-None surface dict.
+    """
+    raw_surface = data.get("experiment_surface")
+    return normalize_experiment_surface(raw_surface if isinstance(raw_surface, dict) else None)
+
+
 def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
     """
     Parse the canonical manifest in *run_dir*.
@@ -99,9 +114,13 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
     reproducibility_section = data.get("reproducibility") or {}
     feature_ordering_section = data.get("feature_ordering") or {}
     experiment_block = _parse_experiment_block(data)
+    experiment_surface = _parse_experiment_surface(data)
     dl_enabled = dl_section.get("dl_enabled")
     if dl_enabled is None:
         dl_enabled = experiment_block.get("factors", {}).get("dl_enabled")
+
+    # Determine surface source: explicit v5 manifest block vs legacy variant fallback.
+    surface_source = "manifest" if is_v5_surface(experiment_surface) else "legacy_variant_fallback"
 
     return {
         "manifest_count": 1,
@@ -121,5 +140,7 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
         "python_version": run_section.get("python_version"),
         "run": run_section,
         "experiment": experiment_block,
+        "experiment_surface": experiment_surface,
+        "surface_source": surface_source,
         "raw": data,
     }

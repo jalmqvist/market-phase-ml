@@ -15,6 +15,7 @@ from experiment_semantics import (
     LEGACY_VARIANT,
     VALID_EXPERIMENT_VARIANTS,
     normalize_experiment_factors,
+    is_v5_surface,
 )
 
 _TS_RE = re.compile(r"(\d{8}T\d{6}Z)")
@@ -76,6 +77,41 @@ def _build_run_meaning(
     return f"{sentiment} + {missing} ({generation})"
 
 
+def _build_surface_run_meaning(surface: dict[str, Any]) -> str:
+    """
+    Build a human-readable run meaning from v5 ``experiment_surface`` metadata.
+
+    This avoids cross-referencing variant letters or generation labels — the
+    description is self-contained and directly readable.
+
+    Example output:
+        "persistent training family + sentiment surface + blind runtime (DL)"
+    """
+    parts: list[str] = []
+
+    training_family = surface.get("training_pair_family")
+    eval_family = surface.get("evaluation_pair_family")
+    if training_family:
+        family_str = f"{training_family} training family"
+        if eval_family and eval_family != training_family:
+            family_str += f" → {eval_family} evaluation"
+        parts.append(family_str)
+
+    sentiment = surface.get("sentiment_surface")
+    if sentiment is True:
+        parts.append("sentiment surface")
+    elif sentiment is False:
+        parts.append("no-sentiment surface")
+
+    feature_surface = surface.get("feature_surface")
+    if feature_surface:
+        parts.append(f"{feature_surface} features")
+
+    if not parts:
+        return LEGACY_RUN_MEANING
+    return " + ".join(parts)
+
+
 def _validate_archive_sentinel(
     archive_dir_name: str,
     generation: str | None,
@@ -120,6 +156,9 @@ def infer_run_identity(
         )
 
     experiment_block = (manifest or {}).get("experiment") or {}
+    experiment_surface = (manifest or {}).get("experiment_surface") or {}
+    surface_source = (manifest or {}).get("surface_source", "legacy_variant_fallback")
+
     explicit_gen = _normalize_gen(experiment_block.get("generation"))
     explicit_variant = _normalize_variant(experiment_block.get("variant"))
     factors = normalize_experiment_factors(
@@ -183,6 +222,13 @@ def infer_run_identity(
             "Variant unresolved from canonical manifest experiment metadata; assigned variant='U'."
         )
 
+    # Warn when v5 experiment_surface is absent from an otherwise valid manifest.
+    if manifest and not is_v5_surface(experiment_surface):
+        identity_warnings.append(
+            "experiment_surface block absent or incomplete; run will use legacy_variant_fallback semantics. "
+            "Add experiment_surface to the manifest for factor-first attribution."
+        )
+
     archive_root = archive_root.resolve()
     run_dir = run_dir.resolve()
     try:
@@ -198,6 +244,18 @@ def infer_run_identity(
     semantic_run_id = f"{semantic_name}__{timestamp}"
     canonical_run_id = f"{semantic_run_id}__{archive_slug}"
 
+    # Build human-readable run meaning:
+    # For v5 manifests, derive from experiment_surface (self-describing).
+    # For legacy manifests, fall back to old variant-based description.
+    if is_v5_surface(experiment_surface):
+        run_meaning = _build_surface_run_meaning(experiment_surface)
+    else:
+        run_meaning = _build_run_meaning(
+            final_gen if final_gen != "unknown" else None,
+            sentiment_enabled,
+            missing_indicators_enabled,
+        )
+
     return {
         "run_id": canonical_run_id,
         "semantic_run_name": semantic_name,
@@ -207,14 +265,12 @@ def infer_run_identity(
         "sentiment_enabled": sentiment_enabled,
         "missing_indicators_enabled": missing_indicators_enabled,
         "factors": factors,
+        "experiment_surface": experiment_surface,
+        "surface_source": surface_source,
         "run_family": experiment_block.get("run_family"),
         "semantic_label": semantic_label,
         "legacy_semantics": legacy_semantics,
-        "run_meaning": _build_run_meaning(
-            final_gen if final_gen != "unknown" else None,
-            sentiment_enabled,
-            missing_indicators_enabled,
-        ),
+        "run_meaning": run_meaning,
         "archive_relpath": archive_relpath,
         "archive_slug": archive_slug,
         "timestamp_utc": timestamp,

@@ -1,5 +1,18 @@
 """
-Canonical MPML experiment semantics (variant-first).
+Canonical MPML experiment semantics (factor-first).
+
+Architecture note
+-----------------
+As of the v5 factorial matrix, experiment semantics are sourced from an explicit
+``experiment_surface`` manifest block — NOT inferred from variant letters, generation
+labels, DL flags, or directory names.
+
+* ``experiment_surface`` is the canonical source of truth for analysis attribution.
+* Variant letters are now only runtime architecture selectors (missing-indicator ON/OFF,
+  selector enabled, DL-capable runtime).  They do NOT imply parquet-level properties
+  such as sentiment surface or training-pair family.
+* Legacy manifests (pre-v5) retain old variant-based semantics and are flagged with
+  ``legacy_semantics=True``; they emit a warning banner in reports.
 """
 
 from __future__ import annotations
@@ -7,10 +20,13 @@ from __future__ import annotations
 from typing import Any
 
 CURRENT_EXPERIMENT_SEMANTICS_VERSION = 3
+# Surface-level ontology version (independent of runtime semantics_version).
+EXPERIMENT_SURFACE_VERSION = 5
 LEGACY_VARIANT = "U"
 VALID_EXPERIMENT_VARIANTS = {"A", "B", "C", "D", "E", "F"}
 EXPERIMENT_RUN_FAMILY = "factorial_v1"
 
+# Runtime factor keys — describe runtime architecture configuration.
 EXPERIMENT_FACTOR_KEYS: tuple[str, ...] = (
     "dl_enabled",
     "sentiment_enabled",
@@ -18,6 +34,17 @@ EXPERIMENT_FACTOR_KEYS: tuple[str, ...] = (
     "msml_regime",
     "overlap_only",
     "selector_enabled",
+)
+
+# Surface factor keys — describe the parquet / artifact / training configuration.
+# These are the canonical v5 factor dimensions for analysis attribution.
+EXPERIMENT_SURFACE_FACTOR_KEYS: tuple[str, ...] = (
+    "sentiment_surface",
+    "training_pair_family",
+    "evaluation_pair_family",
+    "feature_surface",
+    "artifact_source",
+    "surface_semantics_version",
 )
 
 DEFAULT_EXPERIMENT_FACTORS: dict[str, Any] = {
@@ -204,3 +231,72 @@ def build_experiment_metadata_from_variant(
         "legacy_semantics": False,
         "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
     }
+
+
+# ---------------------------------------------------------------------------
+# v5 experiment surface — canonical source of truth for analysis attribution
+# ---------------------------------------------------------------------------
+
+
+def normalize_experiment_surface(
+    raw_surface: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Canonicalize an ``experiment_surface`` manifest block.
+
+    This is the ONLY source of truth for parquet/artifact/training-level
+    semantic attribution in the v5 factorial framework.  It is NOT derived
+    from variant letters, generation labels, DL flags, or directory names.
+
+    Parameters
+    ----------
+    raw_surface:
+        The raw ``experiment_surface`` dict from a manifest.  ``None`` or
+        non-dict values are treated as absent (returns an empty dict with
+        ``surface_semantics_version=None``).
+
+    Returns
+    -------
+    dict with keys from ``EXPERIMENT_SURFACE_FACTOR_KEYS``.
+    All string fields are stripped; absent fields are ``None``.
+    ``sentiment_surface`` is coerced to ``bool | None``.
+    ``surface_semantics_version`` is coerced to ``int | None``.
+    """
+    if not isinstance(raw_surface, dict):
+        return {key: None for key in EXPERIMENT_SURFACE_FACTOR_KEYS}
+
+    def _str_or_none(val: Any) -> str | None:
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+        return None
+
+    def _bool_or_none(val: Any) -> bool | None:
+        if isinstance(val, bool):
+            return val
+        return None
+
+    def _int_or_none(val: Any) -> int | None:
+        if isinstance(val, int):
+            return val
+        if isinstance(val, str) and val.strip().isdigit():
+            return int(val.strip())
+        return None
+
+    return {
+        "sentiment_surface": _bool_or_none(raw_surface.get("sentiment_surface")),
+        "training_pair_family": _str_or_none(raw_surface.get("training_pair_family")),
+        "evaluation_pair_family": _str_or_none(raw_surface.get("evaluation_pair_family")),
+        "feature_surface": _str_or_none(raw_surface.get("feature_surface")),
+        "artifact_source": _str_or_none(raw_surface.get("artifact_source")),
+        "surface_semantics_version": _int_or_none(raw_surface.get("surface_semantics_version")),
+    }
+
+
+def is_v5_surface(surface: dict[str, Any] | None) -> bool:
+    """Return True when *surface* is a well-formed v5 experiment surface block."""
+    if not isinstance(surface, dict):
+        return False
+    # Must have at least the version marker and one substantive field.
+    has_version = surface.get("surface_semantics_version") is not None
+    has_sentiment = surface.get("sentiment_surface") is not None
+    return has_version and has_sentiment
