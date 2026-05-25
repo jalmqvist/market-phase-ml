@@ -163,7 +163,8 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         exp_semantic_label = experiment.get("semantic_label")
         if exp_generation is not None and exp_generation not in {"gen1", "gen2"}:
             semantic_errors.append(
-                f"{run_id}: invalid experiment generation {exp_generation!r} (expected gen1|gen2)."
+                f"{run_id}: invalid experiment generation {exp_generation!r} "
+                "(legacy_generation compatibility label; expected gen1|gen2)."
             )
         if exp_variant is not None and exp_variant not in VALID_EXPERIMENT_VARIANTS:
             semantic_warnings.append(
@@ -276,7 +277,7 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
                     f"{run_id}: missing strategy selector feature ordering metadata."
                 )
 
-    # Check for duplicate semantic variant within same generation cohort
+    # Check for duplicate semantic variant within same legacy_generation compatibility cohort.
     semantic_variant_groups: dict[str, list[str]] = {}
     for summary in summaries:
         run_id = summary.get("run_id", "unknown")
@@ -291,7 +292,8 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     for cohort_key, run_ids in sorted(semantic_variant_groups.items()):
         if len(run_ids) > 1:
             semantic_warnings.append(
-                f"Duplicate semantic variant detected within cohort '{cohort_key}': "
+                f"Duplicate semantic variant detected within cohort '{cohort_key}' "
+                "(legacy compatibility metadata): "
                 + ", ".join(sorted(run_ids))
                 + " — all duplicate runs will be included in comparisons, "
                 "which may produce misleading or non-comparable results. "
