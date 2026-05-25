@@ -8,7 +8,7 @@ Terminology note
 "Imputation Awareness" (``missing_indicators_enabled``) is the precise term for the
 runtime architecture in which the model receives an explicit indicator that a feature
 value was *imputed* rather than genuinely observed.  This is more accurate than the
-informal "missing awareness" label used in earlier documentation.
+informal historical terminology used in earlier documentation.
 """
 
 from __future__ import annotations
@@ -240,6 +240,8 @@ def build_gen_delta_table(
                     "metric": metric,
                     "gen1": g1_val,
                     "gen2": g2_val,
+                    "legacy_generation_gen1": g1_val,
+                    "legacy_generation_gen2": g2_val,
                     "delta_gen2_minus_gen1": (g2_val - g1_val) if (g1_val is not None and g2_val is not None) else None,
                 }
             )

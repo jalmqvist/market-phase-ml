@@ -116,11 +116,11 @@ python analysis/pipeline.py results_archive/     # multi-run archive
 This automatically:
 
 - Discovers run directories with strict manifest-centric provenance rules
-- Builds canonical run identities that include generation, variant, timestamp, and archive path context
+- Builds canonical run identities that include legacy_generation, legacy_variant, timestamp, and archive path context
 - Parses CSV outputs, one canonical run manifest, and (as fallback) log files
 - Validates provenance/semantic/manifest integrity (duplicates, malformed manifests, incomplete cohorts)
 - Generates normalised summary JSON per run
-- Generates sentiment/generation comparisons and generalized factor-conditioned cohorts
+- Generates sentiment-surface/training-family comparisons and generalized factor-conditioned cohorts
 - Renders a unified markdown report
 
 Outputs are written to `analysis/output/` by default:
@@ -140,8 +140,8 @@ Run identity format (example):
 
 Where:
 
-- `gen1/gen2` = generation label from canonical semantics
-- `A/B/C/D/E/F` = experiment variant semantics
+- `gen1/gen2` = **legacy_generation** compatibility label
+- `A/B/C/D/E/F` = **legacy_variant** compatibility label
 - timestamp = canonical manifest timestamp (fallback: run_id timestamp, else `unknown_ts`)
 - archive suffix = discovered directory identity to prevent collisions
 
@@ -149,16 +149,17 @@ Integrity notes:
 
 - run discovery trusts exactly one run manifest (`run_manifest.json` preferred; legacy `run_manifest_*.json` supported)
 - each run directory must contain exactly one manifest
-- semantic attribution is **manifest `experiment`-driven only** — no inference from folder names, DL flags, or runtime state
+- semantic attribution is **manifest `experiment_surface`-driven** for modern runs — no inference from folder names, DL flags, or runtime state
 
 Experiment metadata (factor-first, canonical):
 
 | Field | Meaning |
 |---------|---------|
 | `experiment.run_family` | Comparison ontology version (`factorial_v1`) |
-| `experiment.generation` | Legacy generation label (backward compatibility) |
-| `experiment.variant` | Canonical variant label (`A`..`F`) |
-| `experiment.factors` | Source of truth for cohort filtering and comparisons |
+| `experiment.generation` | `legacy_generation` compatibility label (backward compatibility) |
+| `experiment.variant` | `legacy_variant` compatibility label (`A`..`F`) |
+| `experiment.semantic_label` | `legacy_semantic_label` compatibility label (e.g. `Gen1_B`) |
+| `experiment.factors` | Runtime cohort configuration metadata |
 
 Each run manifest must contain an explicit `experiment` block:
 
@@ -209,6 +210,7 @@ for parquet/training attribution in analysis:
 ```
 
 Analysis still reports run `surface_source="manifest"` when this v5 block is present.
+For ontology purposes, this is the canonical provenance source.
 
 Runtime provenance precedence (highest to lowest):
 
@@ -226,8 +228,8 @@ Meaning of `"unknown"`:
 
 Architecture note:
 
-- `experiment` = intended runtime cohort semantics (generation/variant/factors)
-- `experiment_surface` = actual artifact/training provenance at runtime
+- `experiment` = runtime cohort configuration (legacy compatibility metadata included)
+- `experiment_surface` = actual artifact/training provenance at runtime (canonical provenance semantics)
 
 These are related but intentionally independent. Analysis trusts `experiment_surface`
 for surface attribution and does not derive surface semantics from variant letters.
@@ -244,8 +246,9 @@ The run remains fully analyzable and will be grouped under `factors.dl_enabled=f
 
 ### Factor-conditioned comparisons
 
-Cross-run analysis is factor-conditioned (generation/sentiment/missing-indicators) and does not assume only four variants.  
-Comparisons derive from `experiment.factors` + `experiment_semantics.EXPERIMENT_VARIANTS`, not from folder names or DL flags.
+Cross-run analysis is factor-conditioned and surface-first (`training_pair_family`, `evaluation_pair_family`, `sentiment_surface`, `feature_surface`, imputation awareness).  
+`legacy_generation` / `legacy_variant` are retained for backward-compatible metadata and legacy manifests only.
+Comparisons derive from `experiment_surface` (canonical) plus `experiment.factors` runtime metadata, not from folder names or DL flags.
 
 ### Alternative MSML regimes
 

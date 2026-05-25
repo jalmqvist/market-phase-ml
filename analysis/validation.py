@@ -65,6 +65,7 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     manifest_warnings: list[str] = []
     reproducibility_errors: list[str] = []
     reproducibility_warnings: list[str] = []
+    modern_v5_summaries: list[dict[str, Any]] = []
 
     run_ids = [s.get("run_id") for s in summaries if s.get("run_id")]
     for rid, count in Counter(run_ids).items():
@@ -229,6 +230,8 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
             semantic_errors.append(
                 f"{run_id}: surface_source mismatch (surface_source='manifest' but experiment_surface is not v5-valid)."
             )
+        if is_v5_surface(experiment_surface):
+            modern_v5_summaries.append(summary)
 
         if variant == LEGACY_VARIANT:
             semantic_warnings.append(
@@ -293,6 +296,36 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
                 + " — all duplicate runs will be included in comparisons, "
                 "which may produce misleading or non-comparable results. "
                 "Verify this is intentional (re-run vs distinct experiment)."
+            )
+
+    if modern_v5_summaries:
+        semantic_warnings.append(
+            "Modern v5 manifests detected: treat generation/variant/semantic_label as legacy compatibility metadata "
+            "only; canonical provenance grouping must use experiment_surface."
+        )
+        modern_variants = sorted(
+            {
+                ((s.get("meta") or {}).get("run_variant"))
+                for s in modern_v5_summaries
+                if isinstance(((s.get("meta") or {}).get("run_variant")), str)
+            }
+        )
+        modern_training_families = sorted(
+            {
+                (((s.get("meta") or {}).get("experiment_surface") or {}).get("training_pair_family"))
+                for s in modern_v5_summaries
+                if ((s.get("meta") or {}).get("experiment_surface") or {}).get("training_pair_family") is not None
+            }
+        )
+        if len(modern_variants) > 1:
+            semantic_warnings.append(
+                "Modern summaries contain multiple legacy_variant labels. Ensure comparisons are surface-conditioned "
+                "(training_pair_family/evaluation_pair_family/sentiment_surface), not variant-conditioned."
+            )
+        if len(modern_training_families) <= 1 and len(modern_variants) > 1:
+            semantic_warnings.append(
+                "Potential ontology leakage: multiple legacy_variant labels but insufficient training_pair_family diversity "
+                "for modern surface-based transfer analysis."
             )
 
     if not summaries:

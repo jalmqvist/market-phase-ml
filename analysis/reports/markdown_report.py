@@ -12,7 +12,7 @@ The report is structured as:
 5. Ablation summary
 6. Vol guard diagnostics
 7. Backtest / in-sample ML accuracy (legacy / fallback)
-8. Comparison section (sentiment ON/OFF, Gen1 vs Gen2)
+8. Comparison section (sentiment surface ON/OFF, training-family transfer)
 9. Warnings and missing sections
 
 Each section degrades gracefully: if the underlying data is absent, the
@@ -60,6 +60,12 @@ def render_markdown_report(
         "> **Factor-first attribution**: experiment semantics are sourced from `experiment_surface` manifest metadata,\n"
         "> not inferred from variant letters, generation labels, DL flags, or directory names.\n"
     )
+    lines.append(
+        "> **Runtime architecture vs artifact provenance**:\n"
+        "> `experiment` = runtime cohort configuration (legacy compatibility metadata),\n"
+        "> `experiment_surface` = actual parquet/training provenance.\n"
+        "> These are intentionally independent.\n"
+    )
 
     # ------------------------------------------------------------------
     # Legacy banner — shown when any run uses legacy_variant_fallback semantics
@@ -71,7 +77,7 @@ def render_markdown_report(
     if legacy_runs:
         lines.append(
             "> ⚠ **LEGACY SEMANTICS ACTIVE** — "
-            f"{len(legacy_runs)} run(s) are using variant-based attribution "
+            f"{len(legacy_runs)} run(s) are using legacy_variant/legacy_generation compatibility attribution "
             "(no `experiment_surface` block in manifest). "
             "Sentiment and training-family comparisons for these runs may be incorrect. "
             "Add `experiment_surface` to the manifest to enable factor-first attribution.\n"
@@ -155,8 +161,8 @@ def render_markdown_report(
 
     # Legacy run overview (always rendered for backward compat).
     lines.append("### Run Overview (all runs)\n")
-    lines.append("| Canonical Run ID | Semantic Run | Meaning | DL Enabled | MSML Regime | Gen | Variant | Surface Source | Archive Path | Git SHA | Timestamp UTC |")
-    lines.append("|------------------|--------------|---------|-----------|-------------|-----|---------|----------------|--------------|---------|---------------|")
+    lines.append("| Canonical Run ID | Semantic Run | Meaning | DL Enabled | MSML Regime | Legacy Generation | Legacy Variant | Surface Source | Archive Path | Git SHA | Timestamp UTC |")
+    lines.append("|------------------|--------------|---------|-----------|-------------|-------------------|----------------|----------------|--------------|---------|---------------|")
     for s in summaries:
         meta = s.get("meta") or {}
         factors = ((meta.get("experiment") or {}).get("factors") or {})
@@ -175,9 +181,9 @@ def render_markdown_report(
             f"| {meta.get('timestamp_utc', '—')} |"
         )
     lines.append("")
-    lines.append("### Experiment Semantics (canonical)\n")
-    lines.append("| Run ID | Generation | Variant | Run Family | Legacy Semantics | dl_enabled | sentiment_enabled | Imputation Awareness | msml_regime | overlap_only | selector_enabled | Semantic Label |")
-    lines.append("|--------|-----------|---------|------------|------------------|------------|-------------------|----------------------|-------------|-------------|------------------|----------------|")
+    lines.append("### Runtime Cohort Metadata (`manifest.experiment`, compatibility)\n")
+    lines.append("| Run ID | Legacy Generation | Legacy Variant | Run Family | Legacy Semantics | dl_enabled | sentiment_enabled | Imputation Awareness | msml_regime | overlap_only | selector_enabled | Legacy Semantic Label |")
+    lines.append("|--------|-------------------|----------------|------------|------------------|------------|-------------------|----------------------|-------------|-------------|------------------|-----------------------|")
     for s in summaries:
         meta = s.get("meta") or {}
         experiment = meta.get("experiment") or {}
@@ -215,9 +221,9 @@ def render_markdown_report(
             f"| {sem_label} |"
         )
     lines.append("")
-    lines.append("### Experiment Semantics Reference (legacy variant legend)\n")
-    lines.append("| Variant | Generation | Sentiment ON | Imputation Awareness | Meaning |")
-    lines.append("|---------|-----------|-------------|----------------------|---------|")
+    lines.append("### Legacy Compatibility Reference (legacy variant legend)\n")
+    lines.append("| Legacy Variant | Legacy Generation | Sentiment ON | Imputation Awareness | Meaning |")
+    lines.append("|----------------|-------------------|-------------|----------------------|---------|")
     for variant in sorted(EXPERIMENT_VARIANTS):
         semantics = EXPERIMENT_VARIANTS[variant]
         lines.append(
@@ -228,8 +234,9 @@ def render_markdown_report(
             f"| {semantics['run_meaning']} |"
         )
     lines.append("")
-    lines.append("> Experiment semantics are canonical: read from `manifest.experiment_surface` (v5) or `manifest.experiment` (legacy).")
-    lines.append("> Never inferred from DL flags, folder names, or runtime variant letters.")
+    lines.append("> Canonical provenance semantics are read from `manifest.experiment_surface` (v5).")
+    lines.append("> `manifest.experiment` generation/variant/semantic_label fields are legacy compatibility metadata.")
+    lines.append("> Never infer surface semantics from DL flags, folder names, or runtime variant letters.")
     lines.append("")
 
     # ------------------------------------------------------------------
@@ -256,7 +263,10 @@ def render_markdown_report(
     if comparisons:
         lines.append("---\n\n## Cross-Run Comparisons\n")
         _render_sentiment_comparison(lines, comparisons.get("sentiment"))
-        _render_gen_comparison(lines, comparisons.get("gen"))
+        _render_training_family_comparison(
+            lines,
+            comparisons.get("training_family_effect") or comparisons.get("gen"),
+        )
         _render_factor_comparison(lines, comparisons.get("factors"))
         _render_selector_aggregate(lines, comparisons.get("selector"))
 
@@ -450,13 +460,13 @@ def _render_sentiment_comparison(
     lines.append("")
 
 
-def _render_gen_comparison(
+def _render_training_family_comparison(
     lines: list[str], gen: dict[str, Any] | None
 ) -> None:
-    # LEGACY NAME: this section renders both training-family (v5) and Gen1/Gen2 (legacy).
-    lines.append("### Training-Family Transfer Effect / Gen1 vs Gen2 (factor-conditioned)\n")
+    # This section prioritizes v5 training-family semantics and shows legacy_generation only as compatibility metadata.
+    lines.append("### Training-Family and Surface-Transfer Effect (factor-conditioned)\n")
     if not gen:
-        lines.append("⚠ Training-family / Gen1/Gen2 comparison not computed.")
+        lines.append("⚠ Training-family comparison not computed.")
         lines.append("")
         return
     for w in gen.get("warnings") or []:
@@ -474,8 +484,9 @@ def _render_gen_comparison(
     g1_ids = ", ".join(gen.get("gen1") or []) or "—"
     g2_ids = ", ".join(gen.get("gen2") or []) or "—"
     if gen.get("gen1") or gen.get("gen2"):
-        lines.append(f"- **Gen1 runs (legacy):** {g1_ids}")
-        lines.append(f"- **Gen2 runs (legacy):** {g2_ids}")
+        lines.append("- **Legacy compatibility metadata:**")
+        lines.append(f"  - legacy_generation=gen1 runs: {g1_ids}")
+        lines.append(f"  - legacy_generation=gen2 runs: {g2_ids}")
     lines.append(f"- **Valid comparisons:** {', '.join(gen.get('valid_comparisons') or []) or '—'}")
     lines.append(f"- **Incomplete comparisons:** {', '.join(gen.get('incomplete_comparisons') or []) or '—'}")
     lines.append(f"- **Invalid comparisons:** {', '.join(gen.get('invalid_comparisons') or []) or '—'}")
@@ -485,7 +496,7 @@ def _render_gen_comparison(
         lines.append("**Delta Table:**\n")
         _table_from_rows(lines, delta_rows)
     else:
-        lines.append("⚠ Delta table empty (need multiple training-family or Gen1/Gen2 runs).")
+        lines.append("⚠ Delta table empty (need multiple training-family cohorts; legacy cohorts are compatibility-only).")
     lines.append("")
 
 
@@ -522,6 +533,8 @@ def _render_factor_comparison(
         lines.append("⚠ Generalized factor comparison not computed.")
         lines.append("")
         return
+    for w in factors_payload.get("warnings") or []:
+        lines.append(f"- ⚠ {w}")
     crosstab = factors_payload.get("factor_crosstab") or {}
     if crosstab:
         lines.append("**Factor cohorts (run IDs by factor value):**\n")
@@ -581,6 +594,10 @@ def _render_manifest_metadata(lines: list[str], summary: dict[str, Any]) -> None
     lines.append(f"- Manifest present: {'yes' if meta.get('manifest_present') else 'no'}")
     lines.append(f"- Legacy mode: {'yes' if meta.get('legacy_mode') else 'no'}")
     lines.append(f"- Surface source: {surface_source}")
+    lines.append(
+        "- Semantics model: `experiment`=runtime cohort config (legacy compatibility), "
+        "`experiment_surface`=artifact provenance."
+    )
     lines.append(f"- Canonical manifest path: {md.get('manifest_path') or '—'}")
     lines.append(f"- Canonical manifest run_id: {md.get('manifest_run_id') or '—'}")
     lines.append(f"- Canonical manifest timestamp: {md.get('manifest_timestamp') or '—'}")
