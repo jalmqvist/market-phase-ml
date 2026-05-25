@@ -6,7 +6,8 @@ Sentiment surface ON/OFF comparison logic.
 For v5 manifests (``surface_source="manifest"``), sentiment attribution comes from
 ``experiment_surface.sentiment_surface`` — the parquet-level property.
 
-For legacy manifests, the old variant-based ``factors.sentiment_enabled`` is used.
+For legacy manifests, compatibility-only ``legacy_variant`` semantics
+(``factors.sentiment_enabled``) are used.
 
 The comparison is conditioned on:
   * same training_pair_family (surface)
@@ -44,7 +45,7 @@ def compare_sentiment_variants(
 
     For v5 summaries, uses ``experiment_surface.sentiment_surface`` as the
     distinguishing dimension (parquet-level property).  For legacy summaries,
-    falls back to ``factors.sentiment_enabled`` (variant-based).
+    falls back to ``factors.sentiment_enabled`` (legacy_variant compatibility metadata).
     """
     warnings: list[str] = []
     unresolved: list[str] = []
@@ -63,7 +64,7 @@ def compare_sentiment_variants(
     if legacy_summaries:
         warnings.append(
             f"{len(legacy_summaries)} legacy run(s) use variant-based sentiment attribution "
-            "(no experiment_surface): " + ", ".join(
+            "(legacy_variant compatibility metadata; no experiment_surface): " + ", ".join(
                 s.get("run_id", "unknown") for s in legacy_summaries
             )
         )

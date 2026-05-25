@@ -7,7 +7,7 @@ For v5 manifests, compares runs by ``experiment_surface.training_pair_family``
 (e.g. "persistent" vs "reactive"), conditioned on same imputation awareness and
 sentiment surface.
 
-For legacy manifests (pre-v5), falls back to the old Gen1 vs Gen2 semantics.
+For legacy manifests (pre-v5), falls back to legacy generation compatibility semantics.
 
 Imputation Awareness terminology
 ---------------------------------
@@ -37,23 +37,22 @@ from analysis.comparisons.factors import (
 )
 
 
-# LEGACY NAME:
-# compare_gen1_gen2 now performs training-family comparisons when
+# Primary API name (v5 ontology):
+# compare_training_family_effect performs training-family comparisons when
 # experiment_surface metadata is available (v5 manifests).
-# For legacy manifests it falls back to the old Gen1 vs Gen2 semantics.
-# The function name is preserved to avoid import breakage in callers.
-def compare_gen1_gen2(
+# For legacy manifests it falls back to legacy_generation compatibility semantics.
+def compare_training_family_effect(
     summaries: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """
-    Compare generation/training-family cohorts using generalized factor metadata.
+    Compare training-family cohorts using generalized factor metadata.
 
     v5 path (``surface_source="manifest"``):
         * Compares ``training_pair_family`` cohorts (e.g. persistent vs reactive).
         * Conditioned on same sentiment_surface + same imputation_awareness.
 
     Legacy path (``surface_source="legacy_variant_fallback"``):
-        * Compares Gen1 vs Gen2 using ``factors.sentiment_enabled`` +
+        * Compares legacy_generation=gen1 vs legacy_generation=gen2 using ``factors.sentiment_enabled`` +
           ``factors.missing_indicators_enabled``.
     """
     warnings: list[str] = []
@@ -71,7 +70,7 @@ def compare_gen1_gen2(
 
     if legacy_summaries:
         warnings.append(
-            f"{len(legacy_summaries)} legacy run(s) use variant-based Gen1/Gen2 semantics: "
+            f"{len(legacy_summaries)} legacy run(s) use compatibility-only legacy_generation semantics: "
             + ", ".join(s.get("run_id", "unknown") for s in legacy_summaries)
         )
 
@@ -157,10 +156,10 @@ def compare_gen1_gen2(
                     )
 
     # -------------------------------------------------------------------
-    # Legacy path: Gen1 vs Gen2 (old variant-based semantics)
+    # Legacy path: legacy_generation=gen1 vs legacy_generation=gen2 (old variant-based semantics)
     # -------------------------------------------------------------------
     if legacy_summaries:
-        _compare_gen1_gen2_legacy(
+        _compare_legacy_generation_effect(
             legacy_summaries,
             delta_table=delta_table,
             valid_comparisons=valid_comparisons,
@@ -172,8 +171,9 @@ def compare_gen1_gen2(
     if not valid_comparisons:
         invalid_comparisons.append("training_family_matrix")
         warnings.append(
-            "No valid training-family or Gen1/Gen2 comparisons found (all cohorts incomplete or invalid). "
-            "Ensure matching training_pair_family / generation cohorts exist."
+            "No valid training-family or legacy_generation comparisons found (all cohorts incomplete or invalid). "
+            "Ensure matching training_pair_family cohorts exist for modern runs; "
+            "legacy_generation comparisons are compatibility-only."
         )
 
     # Populate flat family/gen slices for report rendering.
@@ -182,7 +182,7 @@ def compare_gen1_gen2(
         family_slices[family] = run_ids(
             filter_summaries(v5_summaries, surface={"training_pair_family": family})
         )
-    # Legacy gen slices (for backward-compat keys in output).
+    # Legacy generation slices (for backward-compat keys in output).
     from analysis.comparisons.factors import filter_summaries as _fs, summary_generation as _sg
     gen1_group = [s for s in legacy_summaries if _sg(s) == "gen1"]
     gen2_group = [s for s in legacy_summaries if _sg(s) == "gen2"]
@@ -195,12 +195,14 @@ def compare_gen1_gen2(
     )
 
     if not summaries:
-        warnings.append("No run summaries provided for generation/training-family comparison.")
+        warnings.append(        "No run summaries provided for training-family/legacy-generation comparison.")
 
     return {
         # Legacy compat keys.
         "gen1": gen1_runs,
         "gen2": gen2_runs,
+        "legacy_generation_gen1": gen1_runs,
+        "legacy_generation_gen2": gen2_runs,
         # v5 factor-first keys.
         "training_families": family_slices,
         "delta_table": delta_table,
@@ -224,7 +226,18 @@ def compare_gen1_gen2(
     }
 
 
-def _compare_gen1_gen2_legacy(
+def compare_gen1_gen2(
+    summaries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Backward-compatible wrapper for older callers.
+
+    Prefer ``compare_training_family_effect`` for v5 ontology usage.
+    """
+    return compare_training_family_effect(summaries)
+
+
+def _compare_legacy_generation_effect(
     legacy_summaries: list[dict[str, Any]],
     *,
     delta_table: list[dict[str, Any]],
@@ -234,7 +247,7 @@ def _compare_gen1_gen2_legacy(
     warnings: list[str],
 ) -> None:
     """
-    Legacy Gen1 vs Gen2 comparison using variant-based ``sentiment_enabled`` /
+    Legacy generation comparison using variant-based ``sentiment_enabled`` /
     ``missing_indicators_enabled`` factors.
 
     This function is called only for runs whose ``surface_source`` is
@@ -290,7 +303,12 @@ def _compare_gen1_gen2_legacy(
                 f"legacy:sentiment_enabled={str(sentiment_enabled).lower()}/"
                 f"imputation_awareness={str(missing_enabled).lower()}"
             )
-            cohorts[cohort_key] = {"gen1": run_ids(g1_runs), "gen2": run_ids(g2_runs)}
+            cohorts[cohort_key] = {
+                "gen1": run_ids(g1_runs),
+                "gen2": run_ids(g2_runs),
+                "legacy_generation_gen1": run_ids(g1_runs),
+                "legacy_generation_gen2": run_ids(g2_runs),
+            }
             if g1_runs and g2_runs:
                 delta_table.extend(build_gen_delta_table(g1_runs, g2_runs, cohort=cohort_key))
                 valid_comparisons.append(cohort_key)
@@ -302,7 +320,7 @@ def _compare_gen1_gen2_legacy(
                 if not g2_runs:
                     missing_parts.append("gen2")
                 warnings.append(
-                    "Legacy gen comparison incomplete for " + cohort_key
+                    "Legacy generation comparison incomplete for " + cohort_key
                     + ": missing cohort(s) " + ", ".join(missing_parts) + "."
                 )
 

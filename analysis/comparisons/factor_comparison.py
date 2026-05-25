@@ -10,8 +10,7 @@ v5 additions
 * **Training-family effect**: conditions on same awareness + sentiment_surface;
   varies ``training_pair_family``.
 
-"Imputation Awareness" is the canonical term for what was previously called
-"missing awareness".  It reflects that the model receives an explicit indicator
+"Imputation Awareness" is the canonical term. It reflects that the model receives an explicit indicator
 that a value was *imputed* rather than genuinely observed.
 """
 
@@ -29,6 +28,7 @@ from analysis.comparisons.factors import (
     summary_factors,
     summary_generation,
     summary_surface,
+    is_legacy_summary,
 )
 
 
@@ -249,11 +249,17 @@ def compare_training_family_effect(
 
 
 def build_factor_comparisons(summaries: list[dict[str, Any]]) -> dict[str, Any]:
-    generations = sorted({g for g in (summary_generation(s) for s in summaries) if isinstance(g, str)})
-    # "Imputation Awareness" conditioned by generation (legacy label preserved for backward compat).
+    warnings: list[str] = []
+    legacy_summaries = [s for s in summaries if is_legacy_summary(s)]
+    v5_summaries = [s for s in summaries if is_v5_summary(s)]
+
+    generations = sorted(
+        {g for g in (summary_generation(s) for s in legacy_summaries) if isinstance(g, str)}
+    )
+    # Generation-conditioned slices are legacy compatibility only.
     conditioned_sentiment = [
         compare_binary_factor(
-            summaries,
+            legacy_summaries,
             factor="sentiment_enabled",
             conditioned_on={"generation": generation},
         )
@@ -262,13 +268,40 @@ def build_factor_comparisons(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     # "Imputation Awareness" = missing_indicators_enabled (canonical term).
     conditioned_imputation_awareness = [
         compare_binary_factor(
-            summaries,
+            legacy_summaries,
             factor="missing_indicators_enabled",
             conditioned_on={"generation": generation},
         )
         for generation in generations
     ]
+
+    if v5_summaries:
+        warnings.append(
+            "Modern v5 summaries detected: generation-conditioned factor slices are legacy compatibility metadata only. "
+            "Prefer experiment_surface dimensions (training_pair_family, evaluation_pair_family, sentiment_surface, feature_surface)."
+        )
+        modern_variants = sorted(
+            {
+                (s.get("meta") or {}).get("run_variant")
+                for s in v5_summaries
+                if isinstance((s.get("meta") or {}).get("run_variant"), str)
+            }
+        )
+        modern_families = sorted(
+            {
+                summary_surface(s).get("training_pair_family")
+                for s in v5_summaries
+                if summary_surface(s).get("training_pair_family") is not None
+            }
+        )
+        if len(modern_variants) > 1 and len(modern_families) > 1:
+            warnings.append(
+                "Variant diversity detected in v5 summaries. Do not group modern comparisons by legacy_variant; "
+                "group by experiment_surface keys instead."
+            )
+
     return {
+        "warnings": warnings,
         "factor_crosstab": factor_crosstab(summaries),
         "slices": {
             "dl_enabled_true": run_ids(filter_summaries(summaries, factors={"dl_enabled": True})),
@@ -283,6 +316,8 @@ def build_factor_comparisons(summaries: list[dict[str, Any]]) -> dict[str, Any]:
             "imputation_awareness": compare_binary_factor(summaries, factor="missing_indicators_enabled"),
             "dl_enabled": compare_binary_factor(summaries, factor="dl_enabled"),
             "overlap_only": compare_binary_factor(summaries, factor="overlap_only"),
+            "legacy_sentiment_by_generation": conditioned_sentiment,
+            "legacy_imputation_awareness_by_generation": conditioned_imputation_awareness,
             "sentiment_enabled_by_generation": conditioned_sentiment,
             # Canonical term: imputation_awareness_by_generation (was "missing_indicators_by_generation").
             "imputation_awareness_by_generation": conditioned_imputation_awareness,
@@ -291,4 +326,3 @@ def build_factor_comparisons(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         "awareness_effect": compare_imputation_awareness_effect(summaries),
         "training_family_effect": compare_training_family_effect(summaries),
     }
-

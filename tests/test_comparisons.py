@@ -17,8 +17,12 @@ if str(_ROOT) not in sys.path:
 
 from analysis.comparisons.sentiment import compare_sentiment_variants
 from analysis.comparisons.selector import compare_selector_uplift
-from analysis.comparisons.gen_comparison import compare_gen1_gen2
+from analysis.comparisons.gen_comparison import (
+    compare_gen1_gen2,
+    compare_training_family_effect,
+)
 from analysis.comparisons.factor_comparison import build_factor_comparisons
+from analysis.reports.markdown_report import render_markdown_report
 from experiment_semantics import EXPERIMENT_VARIANTS
 
 
@@ -105,6 +109,38 @@ def _make_summary(
         "coverage": {},
         "warnings": [],
     }
+
+
+def _make_v5_summary(
+    run_id: str,
+    *,
+    training_pair_family: str,
+    sentiment_surface: bool,
+    missing_indicators_enabled: bool,
+    run_variant: str = "A",
+    sharpe_delta: float | None = None,
+    pair: str = "EURUSD",
+) -> dict:
+    summary = _make_summary(
+        run_id=run_id,
+        experiment_gen="gen1",
+        run_variant=run_variant,
+        sharpe_delta=sharpe_delta,
+        pair=pair,
+    )
+    summary["meta"]["surface_source"] = "manifest"
+    summary["meta"]["manifest_present"] = True
+    summary["meta"]["legacy_semantics"] = False
+    summary["meta"]["experiment_surface"] = {
+        "surface_semantics_version": 5,
+        "training_pair_family": training_pair_family,
+        "evaluation_pair_family": training_pair_family,
+        "sentiment_surface": sentiment_surface,
+        "feature_surface": "trend_vol_only",
+    }
+    summary["meta"]["experiment"]["factors"]["missing_indicators_enabled"] = missing_indicators_enabled
+    summary["meta"]["experiment"]["factors"]["sentiment_enabled"] = sentiment_surface
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +344,30 @@ class TestCompareGen1Gen2(unittest.TestCase):
             any("incomplete" in w.lower() or "invalid" in w.lower() for w in result["warnings"])
         )
 
+    def test_v5_comparison_is_surface_driven(self):
+        summaries = [
+            _make_v5_summary(
+                "run_persistent",
+                training_pair_family="persistent",
+                sentiment_surface=True,
+                missing_indicators_enabled=False,
+                run_variant="A",
+                sharpe_delta=0.10,
+            ),
+            _make_v5_summary(
+                "run_reactive",
+                training_pair_family="reactive",
+                sentiment_surface=True,
+                missing_indicators_enabled=False,
+                run_variant="F",
+                sharpe_delta=0.20,
+            ),
+        ]
+        result = compare_training_family_effect(summaries)
+        self.assertTrue(any(key.startswith("persistent_vs_reactive/") for key in result["valid_comparisons"]))
+        self.assertEqual(result["gen1"], [])
+        self.assertEqual(result["gen2"], [])
+
 
 # ---------------------------------------------------------------------------
 # Analysis matrix completeness tests
@@ -427,6 +487,52 @@ class TestGeneralizedFactorComparisons(unittest.TestCase):
         conditioned = result["comparisons"]["sentiment_enabled_by_generation"]
         self.assertEqual(len(conditioned), 2)
         self.assertTrue(all(entry["valid"] for entry in conditioned))
+
+    def test_modern_factor_payload_warns_against_legacy_variant_grouping(self):
+        summaries = [
+            _make_v5_summary(
+                "run_a",
+                training_pair_family="persistent",
+                sentiment_surface=True,
+                missing_indicators_enabled=False,
+                run_variant="A",
+            ),
+            _make_v5_summary(
+                "run_f",
+                training_pair_family="reactive",
+                sentiment_surface=False,
+                missing_indicators_enabled=False,
+                run_variant="F",
+            ),
+        ]
+        result = build_factor_comparisons(summaries)
+        warnings = result.get("warnings") or []
+        self.assertTrue(any("legacy compatibility metadata only" in w for w in warnings))
+        self.assertIn("legacy_sentiment_by_generation", result["comparisons"])
+
+
+class TestMarkdownReportOntologyLanguage(unittest.TestCase):
+
+    def test_legacy_manifest_sections_render_with_compatibility_language(self):
+        summaries = [
+            _make_summary("legacy_run_a", experiment_gen="gen1", run_variant="A", sharpe_delta=0.1),
+            _make_summary("legacy_run_c", experiment_gen="gen2", run_variant="C", sharpe_delta=0.2),
+        ]
+        for s in summaries:
+            s["meta"]["surface_source"] = "legacy_variant_fallback"
+            s["meta"]["manifest_present"] = True
+            s["meta"]["legacy_semantics"] = True
+            s["meta"]["semantic_label"] = f"GenCompat_{s['meta']['run_variant']}"
+        comparisons = {
+            "sentiment": compare_sentiment_variants(summaries),
+            "training_family_effect": compare_training_family_effect(summaries),
+            "factors": build_factor_comparisons(summaries),
+            "selector": compare_selector_uplift(summaries),
+        }
+        report = render_markdown_report(summaries, comparisons, validation={"errors": [], "warnings": [], "diagnostics": [], "sections": {}})
+        self.assertIn("Runtime architecture vs artifact provenance", report)
+        self.assertIn("legacy_generation=gen1 runs", report)
+        self.assertIn("Legacy Semantic Label", report)
 
 
 if __name__ == "__main__":

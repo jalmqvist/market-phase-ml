@@ -22,7 +22,7 @@ What it does
 1. **Discover** all run directories under the archive root.
 2. **Parse** CSV outputs, run manifests, and (as fallback) log files.
 3. **Build** a normalised summary JSON per run.
-4. **Generate** comparisons: sentiment ON/OFF, Gen1 vs Gen2, selector uplift, and factor slices.
+4. **Generate** comparisons: sentiment-surface ON/OFF, training-family effect, selector uplift, and factor slices.
 5. **Render** a unified markdown report.
 6. **Write** outputs to the ``--output-dir`` directory.
 
@@ -47,7 +47,8 @@ Architecture
 
 Experiment semantics
 ---------------------
-Comparisons are factor-first and read from ``manifest.experiment.factors``.
+Comparisons are surface-first and read canonical provenance from ``manifest.experiment_surface``.
+Runtime cohort metadata from ``manifest.experiment.factors`` is used as secondary conditioning.
 Generation/variant fields are retained as legacy compatibility labels only.
 """
 
@@ -76,7 +77,9 @@ from analysis.parsers.run_identity import infer_run_identity
 from analysis.parsers.log_parser import parse_log
 from analysis.comparisons.sentiment import compare_sentiment_variants
 from analysis.comparisons.selector import compare_selector_uplift
-from analysis.comparisons.gen_comparison import compare_gen1_gen2
+from analysis.comparisons.gen_comparison import (
+    compare_training_family_effect,
+)
 from analysis.comparisons.factor_comparison import build_factor_comparisons
 from analysis.reports.markdown_report import render_markdown_report
 from analysis.validation import validate_summaries, sort_summaries_deterministically
@@ -408,8 +411,13 @@ def run_pipeline(
     comparisons["selector"] = compare_selector_uplift(summaries)
     _log(f"   selector: {len(comparisons['selector'].get('aggregate', {}))} pairs")
 
-    comparisons["gen"] = compare_gen1_gen2(summaries)
-    _log(f"   gen1vs2: {len(comparisons['gen'].get('delta_table', []))} delta rows")
+    training_family_effect = compare_training_family_effect(summaries)
+    comparisons["training_family_effect"] = training_family_effect
+    comparisons["gen"] = training_family_effect  # backward-compatible key
+    _log(
+        f"   training_family_effect: "
+        f"{len(comparisons['training_family_effect'].get('delta_table', []))} delta rows"
+    )
     comparisons["factors"] = build_factor_comparisons(summaries)
     _log("   factors: generalized cohort slices computed")
     comparisons["validation"] = validation
