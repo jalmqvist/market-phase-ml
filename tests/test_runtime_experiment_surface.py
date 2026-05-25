@@ -123,6 +123,28 @@ class TestRuntimeExperimentSurfaceEmission(unittest.TestCase):
         self.assertEqual(surface["evaluation_pair_family"], "reactive")
         self.assertEqual(surface["feature_surface"], "trend_vol_only")
 
+    def test_missing_provenance_fields_emit_unknown(self):
+        surface = build_runtime_experiment_surface(
+            dl_runtime_enabled=True,
+            dl_surface={
+                "model": "mlp",
+                "target_horizon": 24,
+                "feature_set": "trend_vol_only",
+                "dl_regime": "LVTF",
+            },
+            dl_artifact_path=None,
+            experiment_factors={
+                "selector_enabled": True,
+                "overlap_only": False,
+                "msml_regime": "LVTF",
+            },
+            artifact_metadata={},
+        )
+        self.assertEqual(surface["training_pair_family"], "unknown")
+        self.assertEqual(surface["evaluation_pair_family"], "unknown")
+        self.assertEqual(surface["feature_surface"], "unknown")
+        self.assertEqual(surface["artifact_source"], "unknown")
+
     def test_legacy_manifest_without_surface_still_parses(self):
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
@@ -141,6 +163,7 @@ class TestRuntimeExperimentSurfaceEmission(unittest.TestCase):
                                 "overlap_only": False,
                                 "selector_enabled": True,
                             },
+                            "legacy_semantics": True,
                         },
                     }
                 ),

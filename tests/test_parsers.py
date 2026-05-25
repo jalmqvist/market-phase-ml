@@ -1006,6 +1006,14 @@ class TestPipelineIntegration(unittest.TestCase):
                     "legacy_semantics": False,
                     "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
                 },
+                "experiment_surface": {
+                    "surface_semantics_version": 5,
+                    "sentiment_surface": dl_enabled,
+                    "training_pair_family": "persistent",
+                    "evaluation_pair_family": "persistent",
+                    "feature_surface": "unknown",
+                    "artifact_source": "unknown",
+                },
                 "dl": {
                     "dl_enabled": dl_enabled,
                     "dl_mode_tag": "__dl_enabled" if dl_enabled else "__baseline",
@@ -1095,6 +1103,14 @@ class TestPipelineIntegration(unittest.TestCase):
                         "legacy_semantics": False,
                         "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
                     },
+                    "experiment_surface": {
+                        "surface_semantics_version": 5,
+                        "sentiment_surface": semantics["sentiment_enabled"],
+                        "training_pair_family": "persistent",
+                        "evaluation_pair_family": "persistent",
+                        "feature_surface": "unknown",
+                        "artifact_source": "unknown",
+                    },
                     "dl": {"dl_enabled": True, "dl_mode_tag": "__dl_enabled"},
                 }
                 (run_dir / "run_manifest.json").write_text(json.dumps(manifest))
@@ -1172,6 +1188,14 @@ class TestPipelineIntegration(unittest.TestCase):
                         "semantic_label": f"{generation.capitalize()}_{variant}",
                         "legacy_semantics": False,
                         "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
+                    },
+                    "experiment_surface": {
+                        "surface_semantics_version": 5,
+                        "sentiment_surface": sentiment_enabled,
+                        "training_pair_family": "persistent",
+                        "evaluation_pair_family": "persistent",
+                        "feature_surface": "unknown",
+                        "artifact_source": "unknown",
                     },
                     "dl": {
                         "dl_enabled": True,

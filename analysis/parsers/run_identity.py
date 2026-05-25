@@ -224,10 +224,16 @@ def infer_run_identity(
 
     # Warn when v5 experiment_surface is absent from an otherwise valid manifest.
     if manifest and not is_v5_surface(experiment_surface):
-        identity_warnings.append(
-            "experiment_surface block absent or incomplete; run will use legacy_variant_fallback semantics. "
-            "Add experiment_surface to the manifest for factor-first attribution."
-        )
+        if surface_source == "missing_experiment_surface":
+            identity_warnings.append(
+                "experiment_surface block missing in a modern manifest; semantic attribution is invalid "
+                "until an explicit v5 experiment_surface block is emitted."
+            )
+        else:
+            identity_warnings.append(
+                "experiment_surface block absent or incomplete; run will use legacy_variant_fallback semantics. "
+                "Add experiment_surface to the manifest for factor-first attribution."
+            )
 
     archive_root = archive_root.resolve()
     run_dir = run_dir.resolve()
@@ -249,12 +255,14 @@ def infer_run_identity(
     # For legacy manifests, fall back to old variant-based description.
     if is_v5_surface(experiment_surface):
         run_meaning = _build_surface_run_meaning(experiment_surface)
-    else:
+    elif surface_source == "legacy_variant_fallback":
         run_meaning = _build_run_meaning(
             final_gen if final_gen != "unknown" else None,
             sentiment_enabled,
             missing_indicators_enabled,
         )
+    else:
+        run_meaning = LEGACY_RUN_MEANING
 
     return {
         "run_id": canonical_run_id,

@@ -80,6 +80,7 @@ from analysis.comparisons.gen_comparison import compare_gen1_gen2
 from analysis.comparisons.factor_comparison import build_factor_comparisons
 from analysis.reports.markdown_report import render_markdown_report
 from analysis.validation import validate_summaries, sort_summaries_deterministically
+from experiment_semantics import is_v5_surface
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +136,25 @@ def build_run_summary(
         experiment_gen=experiment_gen,
         manifest=manifest,
     )
+    manifest_surface = (manifest or {}).get("experiment_surface") or {}
+    identity_surface = identity.get("experiment_surface") or {}
+    if manifest and manifest_surface != identity_surface:
+        raise RuntimeError(
+            "Analysis provenance corruption detected: identity experiment_surface does not match "
+            "manifest experiment_surface."
+        )
+    manifest_surface_source = (manifest or {}).get("surface_source")
+    identity_surface_source = identity.get("surface_source")
+    if manifest and manifest_surface_source != identity_surface_source:
+        raise RuntimeError(
+            "Analysis provenance corruption detected: identity surface_source does not match "
+            "manifest surface_source."
+        )
+    if manifest and is_v5_surface(manifest_surface) and identity_surface_source != "manifest":
+        raise RuntimeError(
+            "Analysis provenance corruption detected: v5 experiment_surface present but identity "
+            "surface_source is not 'manifest'."
+        )
     run_id = identity["run_id"]
     experiment = (manifest or {}).get("experiment") or {}
     factors = experiment.get("factors") or {}

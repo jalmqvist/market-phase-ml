@@ -56,13 +56,42 @@ def summary_surface(summary: dict[str, Any]) -> dict[str, Any]:
 
 
 def summary_surface_source(summary: dict[str, Any]) -> str:
-    """Return the surface_source tag: ``"manifest"`` or ``"legacy_variant_fallback"``."""
+    """Return the surface_source tag (manifest / legacy fallback / invalid-modern-missing)."""
     return (summary.get("meta") or {}).get("surface_source", "legacy_variant_fallback")
 
 
 def is_v5_summary(summary: dict[str, Any]) -> bool:
     """Return True when *summary* carries a valid v5 experiment_surface block."""
-    return is_v5_surface(summary_surface(summary))
+    v5 = is_v5_surface(summary_surface(summary))
+    if v5 and summary_surface_source(summary) != "manifest":
+        raise RuntimeError(
+            "Semantic integrity violation: v5 experiment_surface is present but surface_source "
+            "is not 'manifest'."
+        )
+    return v5
+
+
+def is_legacy_summary(summary: dict[str, Any]) -> bool:
+    if is_v5_summary(summary):
+        return False
+    meta = summary.get("meta") or {}
+    manifest_present = meta.get("manifest_present")
+    if manifest_present is False:
+        return True
+    if manifest_present is None:
+        return True
+    if bool(meta.get("legacy_semantics")):
+        return True
+    return summary_surface_source(summary) == "legacy_variant_fallback"
+
+
+def is_invalid_modern_surface_summary(summary: dict[str, Any]) -> bool:
+    if is_v5_summary(summary):
+        return False
+    meta = summary.get("meta") or {}
+    if meta.get("manifest_present") is not True:
+        return False
+    return not bool(meta.get("legacy_semantics"))
 
 
 def _value_matches(actual: Any, expected: Any) -> bool:
@@ -305,4 +334,3 @@ def factor_crosstab(
         if any(k != "legacy" or v for k, v in grouped.items()):
             table[sf] = {k: sorted(v) for k, v in sorted(grouped.items())}
     return table
-

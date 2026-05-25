@@ -83,6 +83,16 @@ def _parse_experiment_surface(data: dict[str, Any]) -> dict[str, Any]:
     return normalize_experiment_surface(raw_surface if isinstance(raw_surface, dict) else None)
 
 
+def _is_legacy_manifest(experiment_block: dict[str, Any]) -> bool:
+    if not isinstance(experiment_block, dict) or not experiment_block:
+        return True
+    if bool(experiment_block.get("legacy_semantics")):
+        return True
+    generation = experiment_block.get("generation")
+    variant = experiment_block.get("variant")
+    return not (isinstance(generation, str) and generation and isinstance(variant, str) and variant)
+
+
 def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
     """
     Parse the canonical manifest in *run_dir*.
@@ -119,8 +129,13 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
     if dl_enabled is None:
         dl_enabled = experiment_block.get("factors", {}).get("dl_enabled")
 
-    # Determine surface source: explicit v5 manifest block vs legacy variant fallback.
-    surface_source = "manifest" if is_v5_surface(experiment_surface) else "legacy_variant_fallback"
+    # Determine surface source with strict modern/legacy separation.
+    if is_v5_surface(experiment_surface):
+        surface_source = "manifest"
+    elif _is_legacy_manifest(experiment_block):
+        surface_source = "legacy_variant_fallback"
+    else:
+        surface_source = "missing_experiment_surface"
 
     return {
         "manifest_count": 1,
