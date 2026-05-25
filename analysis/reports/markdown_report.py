@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from experiment_semantics import EXPERIMENT_VARIANTS
+from experiment_semantics import EXPERIMENT_VARIANTS, is_v5_surface
 
 
 def render_markdown_report(
@@ -119,7 +119,11 @@ def render_markdown_report(
     lines.append("## Run Overview\n")
 
     # v5 factor-first table.
-    v5_summaries = [s for s in summaries if (s.get("meta") or {}).get("surface_source") == "manifest"]
+    v5_summaries = [
+        s
+        for s in summaries
+        if is_v5_surface(((s.get("meta") or {}).get("experiment_surface") or {}))
+    ]
     if v5_summaries:
         lines.append("### Factor-First Run Matrix (v5)\n")
         lines.append(

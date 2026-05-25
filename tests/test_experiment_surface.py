@@ -842,8 +842,13 @@ class TestValidationAntiCorruption(unittest.TestCase):
         self.assertFalse(is_v5_summary(legacy))
 
     def test_is_v5_summary_true_for_surface_run(self):
-        v5 = _make_summary_with_surface("v5_run")
-        self.assertTrue(is_v5_summary(v5))
+        for surface_source in ["manifest", "artifact_introspection", "sidecar_manifest"]:
+            with self.subTest(surface_source=surface_source):
+                v5 = _make_summary_with_surface(
+                    "v5_run",
+                    surface=_v5_surface(surface_source=surface_source),
+                )
+                self.assertTrue(is_v5_summary(v5))
 
     def test_validate_summaries_accepts_repaired_v5_nested_surface_source(self):
         for surface_source in ["manifest", "artifact_introspection", "sidecar_manifest"]:

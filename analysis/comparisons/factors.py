@@ -17,6 +17,13 @@ from typing import Any
 
 from experiment_semantics import normalize_experiment_factors, is_v5_surface
 
+_LEGACY_OR_MISSING_SURFACE_SOURCES = {
+    None,
+    "",
+    "missing_experiment_surface",
+    "legacy_variant_fallback",
+}
+
 
 def summary_experiment(summary: dict[str, Any]) -> dict[str, Any]:
     return ((summary.get("meta") or {}).get("experiment") or {})
@@ -56,17 +63,17 @@ def summary_surface(summary: dict[str, Any]) -> dict[str, Any]:
 
 
 def summary_surface_source(summary: dict[str, Any]) -> str:
-    """Return the surface_source tag (manifest / legacy fallback / invalid-modern-missing)."""
+    """Return the surface_source provenance tag."""
     return (summary.get("meta") or {}).get("surface_source", "legacy_variant_fallback")
 
 
 def is_v5_summary(summary: dict[str, Any]) -> bool:
     """Return True when *summary* carries a valid v5 experiment_surface block."""
     v5 = is_v5_surface(summary_surface(summary))
-    if v5 and summary_surface_source(summary) != "manifest":
+    if v5 and summary_surface_source(summary) in _LEGACY_OR_MISSING_SURFACE_SOURCES:
         raise RuntimeError(
             "Semantic integrity violation: v5 experiment_surface is present but surface_source "
-            "is not 'manifest'."
+            "resolved to a legacy/missing fallback state."
         )
     return v5
 
