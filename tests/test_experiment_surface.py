@@ -69,7 +69,7 @@ def _v5_surface(**kwargs) -> dict:
     base = {
         "surface_source": "manifest",
         "surface_semantics_version": EXPERIMENT_SURFACE_VERSION,
-        "sentiment_surface": True,
+        "sentiment_surface": "sentiment",
         "training_pair_family": "persistent",
         "evaluation_pair_family": "persistent",
         "feature_surface": "trend_vol_only",
@@ -146,16 +146,31 @@ class TestNormalizeExperimentSurface(unittest.TestCase):
     def test_basic_v5_surface(self):
         raw = _v5_surface()
         result = normalize_experiment_surface(raw)
-        self.assertEqual(result["sentiment_surface"], True)
+        self.assertEqual(result["sentiment_surface"], "sentiment")
         self.assertEqual(result["training_pair_family"], "persistent")
         self.assertEqual(result["evaluation_pair_family"], "persistent")
         self.assertEqual(result["feature_surface"], "trend_vol_only")
         self.assertEqual(result["surface_semantics_version"], EXPERIMENT_SURFACE_VERSION)
 
     def test_nosentiment_surface(self):
+        raw = _v5_surface(sentiment_surface="no_sentiment")
+        result = normalize_experiment_surface(raw)
+        self.assertEqual(result["sentiment_surface"], "no_sentiment")
+
+    def test_none_sentiment_surface(self):
+        raw = _v5_surface(sentiment_surface="none")
+        result = normalize_experiment_surface(raw)
+        self.assertEqual(result["sentiment_surface"], "none")
+
+    def test_legacy_bool_sentiment_surface_true_is_supported(self):
+        raw = _v5_surface(sentiment_surface=True)
+        result = normalize_experiment_surface(raw)
+        self.assertEqual(result["sentiment_surface"], "sentiment")
+
+    def test_legacy_bool_sentiment_surface_false_is_supported(self):
         raw = _v5_surface(sentiment_surface=False)
         result = normalize_experiment_surface(raw)
-        self.assertIs(result["sentiment_surface"], False)
+        self.assertEqual(result["sentiment_surface"], "no_sentiment")
 
     def test_none_input_returns_all_none(self):
         result = normalize_experiment_surface(None)
@@ -192,6 +207,10 @@ class TestNormalizeExperimentSurface(unittest.TestCase):
         )
         self.assertFalse(is_v5_surface(surface))
 
+    def test_is_v5_surface_false_for_invalid_sentiment_string(self):
+        surface = normalize_experiment_surface(_v5_surface(sentiment_surface="invalid"))
+        self.assertFalse(is_v5_surface(surface))
+
 
 # ---------------------------------------------------------------------------
 # manifest_parser tests
@@ -221,12 +240,12 @@ class TestManifestParserExperimentSurface(unittest.TestCase):
                 },
                 "semantic_label": "Gen1_A",
             },
-            "experiment_surface": _v5_surface(sentiment_surface=False),
+            "experiment_surface": _v5_surface(sentiment_surface="no_sentiment"),
         }
         result = self._parse(data)
         surface = result["experiment_surface"]
-        self.assertIs(surface["sentiment_surface"], False,
-                      "persistent_dl_nosentiment_blind: sentiment_surface must be False "
+        self.assertEqual(surface["sentiment_surface"], "no_sentiment",
+                      "persistent_dl_nosentiment_blind: sentiment_surface must be 'no_sentiment' "
                       "(not inferred from variant=A)")
         self.assertEqual(surface["training_pair_family"], "persistent")
         self.assertEqual(surface["surface_semantics_version"], EXPERIMENT_SURFACE_VERSION)
@@ -314,19 +333,19 @@ class TestAntiCorruptionSentimentSurface(unittest.TestCase):
     """
 
     def test_persistent_dl_nosentiment_blind_has_sentiment_surface_false(self):
-        """CRITICAL: persistent_dl_nosentiment_blind → sentiment_surface=False."""
+        """CRITICAL: persistent_dl_nosentiment_blind → sentiment_surface='no_sentiment'."""
         surface = normalize_experiment_surface(
-            _v5_surface(sentiment_surface=False, training_pair_family="persistent")
+            _v5_surface(sentiment_surface="no_sentiment", training_pair_family="persistent")
         )
-        self.assertIs(surface["sentiment_surface"], False,
-                      "persistent_dl_nosentiment_blind must have sentiment_surface=False")
+        self.assertEqual(surface["sentiment_surface"], "no_sentiment",
+                      "persistent_dl_nosentiment_blind must have sentiment_surface='no_sentiment'")
 
     def test_persistent_dl_sentiment_blind_has_sentiment_surface_true(self):
-        """persistent_dl_sentiment_blind → sentiment_surface=True."""
+        """persistent_dl_sentiment_blind → sentiment_surface='sentiment'."""
         surface = normalize_experiment_surface(
-            _v5_surface(sentiment_surface=True, training_pair_family="persistent")
+            _v5_surface(sentiment_surface="sentiment", training_pair_family="persistent")
         )
-        self.assertIs(surface["sentiment_surface"], True)
+        self.assertEqual(surface["sentiment_surface"], "sentiment")
         self.assertEqual(surface["training_pair_family"], "persistent")
 
     def test_reactive_dl_sentiment_aware_correct_family_and_awareness(self):
@@ -334,7 +353,7 @@ class TestAntiCorruptionSentimentSurface(unittest.TestCase):
         summary = _make_summary_with_surface(
             "reactive_dl_sentiment_aware",
             surface=_v5_surface(
-                sentiment_surface=True,
+                sentiment_surface="sentiment",
                 training_pair_family="reactive",
                 evaluation_pair_family="reactive",
             ),
@@ -346,7 +365,7 @@ class TestAntiCorruptionSentimentSurface(unittest.TestCase):
         meta = summary.get("meta") or {}
         factors = (meta.get("experiment") or {}).get("factors") or {}
         self.assertIs(factors["missing_indicators_enabled"], True)
-        self.assertIs(surface["sentiment_surface"], True)
+        self.assertEqual(surface["sentiment_surface"], "sentiment")
 
     def test_variant_A_does_not_imply_sentiment_surface_true(self):
         """
@@ -403,7 +422,7 @@ class TestRunIdentityWithSurface(unittest.TestCase):
                 "semantic_label": "Gen1_A",
                 "legacy_semantics": False,
             },
-            "experiment_surface": surface or _v5_surface(sentiment_surface=False),
+            "experiment_surface": surface or _v5_surface(sentiment_surface="no_sentiment"),
         }
         return infer_run_identity(
             archive_root=archive_root,
@@ -415,7 +434,7 @@ class TestRunIdentityWithSurface(unittest.TestCase):
     def test_v5_run_meaning_is_surface_derived(self):
         identity = self._build_identity(
             _v5_surface(
-                sentiment_surface=False,
+                sentiment_surface="no_sentiment",
                 training_pair_family="persistent",
                 evaluation_pair_family="persistent",
             )
@@ -492,7 +511,7 @@ class TestRunIdentityWithSurface(unittest.TestCase):
 
     def test_surface_run_meaning_with_transfer_learning(self):
         meaning = _build_surface_run_meaning({
-            "sentiment_surface": True,
+            "sentiment_surface": "sentiment",
             "training_pair_family": "persistent",
             "evaluation_pair_family": "reactive",
             "feature_surface": "trend_vol_only",
@@ -517,12 +536,12 @@ class TestSentimentComparisonV5Surface(unittest.TestCase):
         summaries = [
             _make_summary_with_surface(
                 "persistent_sentiment",
-                surface=_v5_surface(sentiment_surface=True, training_pair_family="persistent"),
+                surface=_v5_surface(sentiment_surface="sentiment", training_pair_family="persistent"),
                 sharpe_delta=0.15,
             ),
             _make_summary_with_surface(
                 "persistent_nosentiment",
-                surface=_v5_surface(sentiment_surface=False, training_pair_family="persistent"),
+                surface=_v5_surface(sentiment_surface="no_sentiment", training_pair_family="persistent"),
                 sharpe_delta=0.05,
             ),
         ]
@@ -535,12 +554,12 @@ class TestSentimentComparisonV5Surface(unittest.TestCase):
         summaries = [
             _make_summary_with_surface(
                 "run_sentiment_on",
-                surface=_v5_surface(sentiment_surface=True, training_pair_family="persistent"),
+                surface=_v5_surface(sentiment_surface="sentiment", training_pair_family="persistent"),
                 sharpe_delta=0.20,
             ),
             _make_summary_with_surface(
                 "run_sentiment_off",
-                surface=_v5_surface(sentiment_surface=False, training_pair_family="persistent"),
+                surface=_v5_surface(sentiment_surface="none", training_pair_family="persistent"),
                 sharpe_delta=0.10,
             ),
         ]
@@ -562,12 +581,12 @@ class TestSentimentComparisonV5Surface(unittest.TestCase):
         summaries = [
             _make_summary_with_surface(
                 "persistent_sentiment_on",
-                surface=_v5_surface(sentiment_surface=True, training_pair_family="persistent"),
+                surface=_v5_surface(sentiment_surface="sentiment", training_pair_family="persistent"),
                 sharpe_delta=0.20,
             ),
             _make_summary_with_surface(
                 "reactive_sentiment_off",
-                surface=_v5_surface(sentiment_surface=False, training_pair_family="reactive"),
+                surface=_v5_surface(sentiment_surface="no_sentiment", training_pair_family="reactive"),
                 sharpe_delta=0.05,
             ),
         ]
@@ -588,13 +607,13 @@ class TestImputationAwarenessEffect(unittest.TestCase):
         summaries = [
             _make_summary_with_surface(
                 "aware_run",
-                surface=_v5_surface(sentiment_surface=True, training_pair_family="persistent"),
+                surface=_v5_surface(sentiment_surface="sentiment", training_pair_family="persistent"),
                 missing_indicators_enabled=True,
                 sharpe_delta=0.12,
             ),
             _make_summary_with_surface(
                 "blind_run",
-                surface=_v5_surface(sentiment_surface=True, training_pair_family="persistent"),
+                surface=_v5_surface(sentiment_surface="sentiment", training_pair_family="persistent"),
                 missing_indicators_enabled=False,
                 sharpe_delta=0.08,
             ),
@@ -648,12 +667,12 @@ class TestTrainingFamilyEffect(unittest.TestCase):
         summaries = [
             _make_summary_with_surface(
                 "persistent_run",
-                surface=_v5_surface(sentiment_surface=True, training_pair_family="persistent"),
+                surface=_v5_surface(sentiment_surface="sentiment", training_pair_family="persistent"),
                 sharpe_delta=0.15,
             ),
             _make_summary_with_surface(
                 "reactive_run",
-                surface=_v5_surface(sentiment_surface=True, training_pair_family="reactive"),
+                surface=_v5_surface(sentiment_surface="sentiment", training_pair_family="reactive"),
                 sharpe_delta=0.10,
             ),
         ]
@@ -665,7 +684,7 @@ class TestTrainingFamilyEffect(unittest.TestCase):
         summaries = [
             _make_summary_with_surface(
                 "persistent_run",
-                surface=_v5_surface(sentiment_surface=True, training_pair_family="persistent"),
+                surface=_v5_surface(sentiment_surface="sentiment", training_pair_family="persistent"),
             ),
         ]
         result = compare_training_family_effect(summaries)
@@ -685,17 +704,17 @@ class TestFactorCrosstabSurfaceKeys(unittest.TestCase):
         summaries = [
             _make_summary_with_surface(
                 "run_on",
-                surface=_v5_surface(sentiment_surface=True),
+                surface=_v5_surface(sentiment_surface="sentiment"),
             ),
             _make_summary_with_surface(
                 "run_off",
-                surface=_v5_surface(sentiment_surface=False),
+                surface=_v5_surface(sentiment_surface="none"),
             ),
         ]
         crosstab = factor_crosstab(summaries)
         self.assertIn("sentiment_surface", crosstab)
-        self.assertIn("True", crosstab["sentiment_surface"])
-        self.assertIn("False", crosstab["sentiment_surface"])
+        self.assertIn("sentiment", crosstab["sentiment_surface"])
+        self.assertIn("none", crosstab["sentiment_surface"])
 
     def test_crosstab_includes_training_pair_family(self):
         summaries = [
@@ -868,7 +887,8 @@ class TestValidationAntiCorruption(unittest.TestCase):
                     },
                     "experiment_surface": _v5_surface(
                         surface_source=surface_source,
-                        sentiment_surface=True,
+                        sentiment_surface="sentiment",
+                        imputation_awareness="blind",
                         training_pair_family="persistent",
                         evaluation_pair_family="persistent",
                     ),

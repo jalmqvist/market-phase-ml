@@ -47,6 +47,9 @@ EXPERIMENT_SURFACE_FACTOR_KEYS: tuple[str, ...] = (
     "artifact_source",
     "surface_semantics_version",
 )
+CANONICAL_SENTIMENT_SURFACES: frozenset[str] = frozenset(
+    {"sentiment", "no_sentiment", "none"}
+)
 
 DEFAULT_EXPERIMENT_FACTORS: dict[str, Any] = {
     "dl_enabled": True,
@@ -260,7 +263,10 @@ def normalize_experiment_surface(
     -------
     dict with keys from ``EXPERIMENT_SURFACE_FACTOR_KEYS``.
     All string fields are stripped; absent fields are ``None``.
-    ``sentiment_surface`` is coerced to ``bool | None``.
+    ``sentiment_surface`` preserves canonical v5 string ontology:
+    ``"sentiment"`` | ``"no_sentiment"`` | ``"none"``.
+    Legacy bool values are accepted for backward compatibility and mapped to
+    ``"sentiment"`` (True) / ``"no_sentiment"`` (False).
     ``surface_semantics_version`` is coerced to ``int | None``.
     """
     if not isinstance(raw_surface, dict):
@@ -271,9 +277,14 @@ def normalize_experiment_surface(
             return val.strip()
         return None
 
-    def _bool_or_none(val: Any) -> bool | None:
+    def _sentiment_surface_or_none(val: Any) -> str | None:
+        if isinstance(val, str):
+            normalized = val.strip().lower()
+            if normalized in CANONICAL_SENTIMENT_SURFACES:
+                return normalized
+            return None
         if isinstance(val, bool):
-            return val
+            return "sentiment" if val else "no_sentiment"
         return None
 
     def _int_or_none(val: Any) -> int | None:
@@ -285,7 +296,7 @@ def normalize_experiment_surface(
 
     return {
         "surface_source": _str_or_none(raw_surface.get("surface_source")),
-        "sentiment_surface": _bool_or_none(raw_surface.get("sentiment_surface")),
+        "sentiment_surface": _sentiment_surface_or_none(raw_surface.get("sentiment_surface")),
         "training_pair_family": _str_or_none(raw_surface.get("training_pair_family")),
         "evaluation_pair_family": _str_or_none(raw_surface.get("evaluation_pair_family")),
         "feature_surface": _str_or_none(raw_surface.get("feature_surface")),
@@ -300,5 +311,12 @@ def is_v5_surface(surface: dict[str, Any] | None) -> bool:
         return False
     # Must have at least the version marker and one substantive field.
     has_version = surface.get("surface_semantics_version") is not None
-    has_sentiment = surface.get("sentiment_surface") is not None
+    sentiment_surface = surface.get("sentiment_surface")
+    if isinstance(sentiment_surface, str):
+        has_sentiment = sentiment_surface.strip().lower() in CANONICAL_SENTIMENT_SURFACES
+    elif isinstance(sentiment_surface, bool):
+        # Backward compatibility for transitional manifests.
+        has_sentiment = True
+    else:
+        has_sentiment = False
     return has_version and has_sentiment

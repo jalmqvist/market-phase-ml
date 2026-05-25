@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from experiment_semantics import CANONICAL_SENTIMENT_SURFACES
+
 from analysis.comparisons.factors import (
     build_family_delta_table,
     build_on_off_delta_table,
@@ -30,6 +32,14 @@ from analysis.comparisons.factors import (
     summary_surface,
     is_legacy_summary,
 )
+
+
+def _is_valid_sentiment_surface(value: Any) -> bool:
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in CANONICAL_SENTIMENT_SURFACES
+    return False
 
 
 def compare_binary_factor(
@@ -97,7 +107,7 @@ def compare_imputation_awareness_effect(
         {
             summary_surface(s).get("sentiment_surface")
             for s in v5_summaries
-            if isinstance(summary_surface(s).get("sentiment_surface"), bool)
+            if _is_valid_sentiment_surface(summary_surface(s).get("sentiment_surface"))
         }
     )
 
@@ -191,7 +201,7 @@ def compare_training_family_effect(
         {
             summary_surface(s).get("sentiment_surface")
             for s in v5_summaries
-            if isinstance(summary_surface(s).get("sentiment_surface"), bool)
+            if _is_valid_sentiment_surface(summary_surface(s).get("sentiment_surface"))
         }
     )
     awareness_values = sorted(

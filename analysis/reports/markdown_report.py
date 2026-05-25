@@ -145,7 +145,13 @@ def render_markdown_report(
             feat_surf = surface.get("feature_surface") or "unknown"
             surf_ver = surface.get("surface_semantics_version")
             meaning = meta.get("run_meaning") or "—"
-            sentiment_str = ("yes" if sentiment_surf else "no") if sentiment_surf is not None else "unknown"
+            if isinstance(sentiment_surf, str):
+                sentiment_str = sentiment_surf
+            elif isinstance(sentiment_surf, bool):
+                # Legacy transitional compatibility.
+                sentiment_str = "sentiment" if sentiment_surf else "no_sentiment"
+            else:
+                sentiment_str = "unknown"
             imputation_str = ("aware" if imputation else "blind") if imputation is not None else "—"
             dl_str = ("✓" if dl else "✗") if dl is not None else "—"
             surf_ver_str = str(surf_ver) if surf_ver is not None else "unknown"
