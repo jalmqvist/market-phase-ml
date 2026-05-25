@@ -146,7 +146,7 @@ def build_run_summary(
             "Analysis provenance corruption detected: identity experiment_surface does not match "
             "manifest experiment_surface."
         )
-    manifest_surface_source = (manifest or {}).get("surface_source")
+    manifest_surface_source = manifest_surface.get("surface_source")
     identity_surface_source = identity.get("surface_source")
     if manifest and manifest_surface_source != identity_surface_source:
         raise RuntimeError(

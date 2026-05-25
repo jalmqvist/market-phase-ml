@@ -129,9 +129,10 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
     if dl_enabled is None:
         dl_enabled = experiment_block.get("factors", {}).get("dl_enabled")
 
-    # Determine surface source with strict modern/legacy separation.
-    if is_v5_surface(experiment_surface):
-        surface_source = "manifest"
+    # Determine analysis surface source from canonical nested experiment_surface provenance.
+    nested_surface_source = experiment_surface.get("surface_source")
+    if isinstance(nested_surface_source, str) and nested_surface_source.strip():
+        surface_source = nested_surface_source.strip()
     elif _is_legacy_manifest(experiment_block):
         surface_source = "legacy_variant_fallback"
     else:

@@ -1007,6 +1007,7 @@ class TestPipelineIntegration(unittest.TestCase):
                     "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
                 },
                 "experiment_surface": {
+                    "surface_source": "manifest",
                     "surface_semantics_version": 5,
                     "sentiment_surface": dl_enabled,
                     "training_pair_family": "persistent",
@@ -1104,6 +1105,7 @@ class TestPipelineIntegration(unittest.TestCase):
                         "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
                     },
                     "experiment_surface": {
+                        "surface_source": "manifest",
                         "surface_semantics_version": 5,
                         "sentiment_surface": semantics["sentiment_enabled"],
                         "training_pair_family": "persistent",
@@ -1190,6 +1192,7 @@ class TestPipelineIntegration(unittest.TestCase):
                         "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
                     },
                     "experiment_surface": {
+                        "surface_source": "manifest",
                         "surface_semantics_version": 5,
                         "sentiment_surface": sentiment_enabled,
                         "training_pair_family": "persistent",

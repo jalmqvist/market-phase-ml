@@ -157,7 +157,22 @@ def infer_run_identity(
 
     experiment_block = (manifest or {}).get("experiment") or {}
     experiment_surface = (manifest or {}).get("experiment_surface") or {}
-    surface_source = (manifest or {}).get("surface_source", "legacy_variant_fallback")
+    nested_surface_source = experiment_surface.get("surface_source") if isinstance(experiment_surface, dict) else None
+    if isinstance(nested_surface_source, str) and nested_surface_source.strip():
+        surface_source = nested_surface_source.strip()
+    elif manifest:
+        if is_v5_surface(experiment_surface):
+            surface_source = "missing_experiment_surface"
+        else:
+            legacy_semantics_flag = bool(experiment_block.get("legacy_semantics"))
+            has_generation = isinstance(experiment_block.get("generation"), str) and bool(experiment_block.get("generation"))
+            has_variant = isinstance(experiment_block.get("variant"), str) and bool(experiment_block.get("variant"))
+            if legacy_semantics_flag or not experiment_block or not (has_generation and has_variant):
+                surface_source = "legacy_variant_fallback"
+            else:
+                surface_source = "missing_experiment_surface"
+    else:
+        surface_source = "legacy_variant_fallback"
 
     explicit_gen = _normalize_gen(experiment_block.get("generation"))
     explicit_variant = _normalize_variant(experiment_block.get("variant"))

@@ -67,6 +67,7 @@ def _make_run_dir() -> Path:
 def _v5_surface(**kwargs) -> dict:
     """Build a minimal valid v5 experiment_surface block."""
     base = {
+        "surface_source": "manifest",
         "surface_semantics_version": EXPERIMENT_SURFACE_VERSION,
         "sentiment_surface": True,
         "training_pair_family": "persistent",
@@ -229,6 +230,7 @@ class TestManifestParserExperimentSurface(unittest.TestCase):
                       "(not inferred from variant=A)")
         self.assertEqual(surface["training_pair_family"], "persistent")
         self.assertEqual(surface["surface_semantics_version"], EXPERIMENT_SURFACE_VERSION)
+        self.assertEqual(surface["surface_source"], "manifest")
         self.assertEqual(result["surface_source"], "manifest")
 
     def test_surface_source_legacy_when_no_surface(self):
@@ -402,7 +404,6 @@ class TestRunIdentityWithSurface(unittest.TestCase):
                 "legacy_semantics": False,
             },
             "experiment_surface": surface or _v5_surface(sentiment_surface=False),
-            "surface_source": "manifest" if surface is not None or True else "legacy_variant_fallback",
         }
         return infer_run_identity(
             archive_root=archive_root,
@@ -429,6 +430,35 @@ class TestRunIdentityWithSurface(unittest.TestCase):
         self.assertIsNotNone(surface)
         self.assertEqual(identity["surface_source"], "manifest")
 
+    def test_identity_reads_surface_source_from_nested_surface(self):
+        run_dir = _make_run_dir()
+        archive_root = run_dir.parent
+        manifest = {
+            "run_id": "gen1_A__20240101T120000Z",
+            "timestamp_utc": "20240101T120000Z",
+            "experiment": {
+                "generation": "gen1", "variant": "A",
+                "sentiment_enabled": True, "missing_indicators_enabled": False,
+                "dl_enabled": True, "msml_regime": "LVTF",
+                "factors": {
+                    "dl_enabled": True, "sentiment_enabled": True,
+                    "missing_indicators_enabled": False, "msml_regime": "LVTF",
+                    "overlap_only": False, "selector_enabled": True,
+                },
+                "semantic_label": "Gen1_A",
+                "legacy_semantics": False,
+            },
+            "experiment_surface": _v5_surface(surface_source="manifest"),
+            "surface_source": "missing_experiment_surface",
+        }
+        identity = infer_run_identity(
+            archive_root=archive_root,
+            run_dir=run_dir,
+            experiment_gen="gen1",
+            manifest=manifest,
+        )
+        self.assertEqual(identity["surface_source"], "manifest")
+
     def test_legacy_warning_emitted_without_surface(self):
         run_dir = _make_run_dir()
         archive_root = run_dir.parent
@@ -446,7 +476,6 @@ class TestRunIdentityWithSurface(unittest.TestCase):
                 },
                 "semantic_label": "Gen1_A",
             },
-            "surface_source": "missing_experiment_surface",
         }
         identity = infer_run_identity(
             archive_root=archive_root,
@@ -815,6 +844,56 @@ class TestValidationAntiCorruption(unittest.TestCase):
     def test_is_v5_summary_true_for_surface_run(self):
         v5 = _make_summary_with_surface("v5_run")
         self.assertTrue(is_v5_summary(v5))
+
+    def test_validate_summaries_accepts_repaired_v5_nested_surface_source(self):
+        run_dir = _make_run_dir()
+        _write_manifest(run_dir, {
+            "run": {"run_id": "gen1_A__20240101T120000Z", "timestamp_utc": "20240101T120000Z"},
+            "experiment": {
+                "generation": "gen1", "variant": "A",
+                "sentiment_enabled": True, "missing_indicators_enabled": False,
+                "dl_enabled": True,
+                "factors": {"dl_enabled": True, "sentiment_enabled": True,
+                            "missing_indicators_enabled": False, "msml_regime": "LVTF",
+                            "overlap_only": False, "selector_enabled": True},
+                "semantic_label": "Gen1_A",
+                "legacy_semantics": False,
+            },
+            "experiment_surface": _v5_surface(
+                surface_source="manifest",
+                sentiment_surface=True,
+                training_pair_family="persistent",
+                evaluation_pair_family="persistent",
+            ),
+        })
+        manifest = parse_manifest(run_dir)
+        identity = infer_run_identity(
+            archive_root=run_dir.parent,
+            run_dir=run_dir,
+            experiment_gen="gen1",
+            manifest=manifest,
+        )
+        summary = {
+            "run_id": identity["run_id"],
+            "meta": {
+                **identity,
+                "manifest_present": True,
+                "legacy_mode": False,
+                "legacy_semantics": identity["legacy_semantics"],
+                "manifest_diagnostics": {"manifest_count": 1},
+                "experiment": manifest["experiment"],
+                "experiment_surface": identity["experiment_surface"],
+                "surface_source": identity["surface_source"],
+                "reproducibility": {},
+                "feature_ordering": {},
+                "files_found": [],
+            },
+            "csvs": {"walkforward_summary": [], "walkforward_per_fold": []},
+            "log": {},
+            "warnings": [],
+        }
+        result = validate_summaries([summary])
+        self.assertEqual(result["errors"], [])
 
 
 if __name__ == "__main__":
