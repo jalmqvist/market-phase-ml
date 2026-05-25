@@ -48,6 +48,7 @@ from src.repro import (
 from src.dl_config import resolve_dl_prediction_artifact_path
 from src.dl_surface_loader import VALID_DL_REGIMES
 from src.dl_daily_features import load_and_aggregate_d1, D1_FEATURE_COLS
+from src.experiment_surface_runtime import build_runtime_experiment_surface
 from experiment_semantics import (
     VALID_EXPERIMENT_VARIANTS,
     build_experiment_metadata_from_variant,
@@ -1491,6 +1492,12 @@ def main(
         variant=selected_variant,
         factor_overrides=factor_overrides,
     )
+    experiment_surface = build_runtime_experiment_surface(
+        dl_runtime_enabled=dl_runtime_enabled,
+        dl_surface=dl_surface,
+        dl_artifact_path=dl_artifact_path,
+        experiment_factors=experiment_meta.get("factors") or {},
+    )
     generation_hint = (
         experiment_generation
         if experiment_generation is not None
@@ -1540,6 +1547,7 @@ def main(
             "run_variant": experiment_meta["variant"],
         },
         "experiment": experiment_meta,
+        "experiment_surface": experiment_surface,
         "reproducibility": reproducibility_block,
         "feature_ordering": {
             "dl_feature_columns": [],

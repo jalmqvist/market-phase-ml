@@ -185,6 +185,32 @@ Each run manifest must contain an explicit `experiment` block:
 }
 ```
 
+Each new run manifest also emits an explicit canonical `experiment_surface` block
+from runtime artifact introspection (parquet metadata and artifact sidecar, with
+configuration fallbacks), for parquet/training attribution in analysis:
+
+```json
+{
+  "experiment_surface": {
+    "surface_semantics_version": 5,
+    "surface_source": "artifact_introspection",
+    "training_pair_family": "persistent",
+    "evaluation_pair_family": "persistent",
+    "sentiment_surface": false,
+    "feature_surface": "trend_vol_only",
+    "artifact_source": "path/to/artifact.parquet",
+    "dl_enabled": true,
+    "selector_enabled": true,
+    "overlap_only": false,
+    "msml_regime": "LVTF",
+    "target_horizon": 24,
+    "artifact_model": "mlp"
+  }
+}
+```
+
+Analysis still reports run `surface_source="manifest"` when this v5 block is present.
+
 ### Baseline no-DL runs
 
 Use:
