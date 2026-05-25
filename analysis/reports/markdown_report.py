@@ -126,19 +126,19 @@ def render_markdown_report(
             meta = s.get("meta") or {}
             surface = meta.get("experiment_surface") or {}
             factors = ((meta.get("experiment") or {}).get("factors") or {})
-            train_fam = surface.get("training_pair_family") or "—"
-            eval_fam = surface.get("evaluation_pair_family") or "—"
+            train_fam = surface.get("training_pair_family") or "unknown"
+            eval_fam = surface.get("evaluation_pair_family") or "unknown"
             sentiment_surf = surface.get("sentiment_surface")
             imputation = factors.get("missing_indicators_enabled")
             dl = meta.get("dl_enabled")
             regime = factors.get("msml_regime") or "—"
-            feat_surf = surface.get("feature_surface") or "—"
+            feat_surf = surface.get("feature_surface") or "unknown"
             surf_ver = surface.get("surface_semantics_version")
             meaning = meta.get("run_meaning") or "—"
-            sentiment_str = ("yes" if sentiment_surf else "no") if sentiment_surf is not None else "—"
+            sentiment_str = ("yes" if sentiment_surf else "no") if sentiment_surf is not None else "unknown"
             imputation_str = ("aware" if imputation else "blind") if imputation is not None else "—"
             dl_str = ("✓" if dl else "✗") if dl is not None else "—"
-            surf_ver_str = str(surf_ver) if surf_ver is not None else "—"
+            surf_ver_str = str(surf_ver) if surf_ver is not None else "unknown"
             lines.append(
                 f"| {s.get('run_id', '—')} "
                 f"| {train_fam} "
@@ -590,13 +590,13 @@ def _render_manifest_metadata(lines: list[str], summary: dict[str, Any]) -> None
     surf_version = surface.get("surface_semantics_version")
     if surf_version is not None or surface.get("sentiment_surface") is not None:
         lines.append("- Experiment surface (v5 factor-first):")
-        lines.append(f"  - surface_semantics_version: {surf_version if surf_version is not None else '—'}")
+        lines.append(f"  - surface_semantics_version: {surf_version if surf_version is not None else 'unknown'}")
         sentiment_surf = surface.get("sentiment_surface")
-        lines.append(f"  - sentiment_surface: {'yes' if sentiment_surf else 'no' if sentiment_surf is not None else '—'}")
-        lines.append(f"  - training_pair_family: {surface.get('training_pair_family') or '—'}")
-        lines.append(f"  - evaluation_pair_family: {surface.get('evaluation_pair_family') or '—'}")
-        lines.append(f"  - feature_surface: {surface.get('feature_surface') or '—'}")
-        lines.append(f"  - artifact_source: {surface.get('artifact_source') or '—'}")
+        lines.append(f"  - sentiment_surface: {'yes' if sentiment_surf else 'no' if sentiment_surf is not None else 'unknown'}")
+        lines.append(f"  - training_pair_family: {surface.get('training_pair_family') or 'unknown'}")
+        lines.append(f"  - evaluation_pair_family: {surface.get('evaluation_pair_family') or 'unknown'}")
+        lines.append(f"  - feature_surface: {surface.get('feature_surface') or 'unknown'}")
+        lines.append(f"  - artifact_source: {surface.get('artifact_source') or 'unknown'}")
     if reproducibility:
         lines.append("- Reproducibility seed metadata:")
         lines.append(f"  - experiment_seed: {reproducibility.get('experiment_seed', '—')}")

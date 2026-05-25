@@ -28,6 +28,8 @@ from analysis.comparisons.factors import (
     build_gen_delta_table,
     factor_crosstab,
     filter_summaries,
+    is_invalid_modern_surface_summary,
+    is_legacy_summary,
     is_v5_summary,
     run_ids,
     summary_factors,
@@ -57,7 +59,15 @@ def compare_gen1_gen2(
     warnings: list[str] = []
 
     v5_summaries = [s for s in summaries if is_v5_summary(s)]
-    legacy_summaries = [s for s in summaries if not is_v5_summary(s)]
+    legacy_summaries = [s for s in summaries if is_legacy_summary(s)]
+    invalid_modern_summaries = [s for s in summaries if is_invalid_modern_surface_summary(s)]
+
+    if invalid_modern_summaries:
+        raise RuntimeError(
+            "Semantic integrity violation: modern manifest summaries missing valid experiment_surface "
+            "(surface_source='missing_experiment_surface'): "
+            + ", ".join(sorted(run_ids(invalid_modern_summaries)))
+        )
 
     if legacy_summaries:
         warnings.append(

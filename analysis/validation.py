@@ -18,8 +18,8 @@ reproducibility warnings.
 
 Anti-corruption assertions
 --------------------------
-If a non-legacy run has no ``experiment_surface`` block, a semantic warning is
-emitted.  If a v5 run's sentiment attribution was reconstructed from variant alone,
+If a non-legacy run has no ``experiment_surface`` block, a semantic error is
+emitted.  If sentiment attribution was reconstructed from variant alone,
 a semantic error is raised.
 """
 
@@ -204,24 +204,31 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         if manifest_present and not legacy_semantics:
             # Non-legacy manifests should carry experiment_surface.
             if not is_v5_surface(experiment_surface):
-                semantic_warnings.append(
+                semantic_errors.append(
                     f"{run_id}: non-legacy manifest is missing a valid experiment_surface block "
-                    "(surface_source='legacy_variant_fallback'). Add experiment_surface to the "
-                    "manifest for factor-first attribution."
+                    f"(surface_source={surface_source!r}). Modern manifests must emit "
+                    "experiment_surface and cannot downgrade to legacy fallback semantics."
                 )
             # Anti-corruption: sentiment must not be inferred from variant alone in non-legacy runs
             # that claim to have v5 surface data but the surface block is absent/incomplete.
             if (
-                surface_source == "legacy_variant_fallback"
+                surface_source != "manifest"
                 and exp_variant in VALID_EXPERIMENT_VARIANTS
                 and not is_v5_surface(experiment_surface)
             ):
-                # This is a warning (not an error) during the transition period.
-                semantic_warnings.append(
+                semantic_errors.append(
                     f"{run_id}: sentiment_surface attribution was not sourced from experiment_surface "
                     f"(surface_source={surface_source!r}); variant={exp_variant!r} should not imply "
                     "parquet-level sentiment. Add experiment_surface to avoid attribution corruption."
                 )
+        if is_v5_surface(experiment_surface) and surface_source != "manifest":
+            semantic_errors.append(
+                f"{run_id}: surface_source mismatch (is_v5_surface=True but surface_source={surface_source!r})."
+            )
+        if not is_v5_surface(experiment_surface) and surface_source == "manifest":
+            semantic_errors.append(
+                f"{run_id}: surface_source mismatch (surface_source='manifest' but experiment_surface is not v5-valid)."
+            )
 
         if variant == LEGACY_VARIANT:
             semantic_warnings.append(
@@ -304,7 +311,7 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         if experiment_seed is None:
             continue
         experiment_surface = meta.get("experiment_surface") or {}
-        feature_surface = experiment_surface.get("feature_surface") or "default"
+        feature_surface = experiment_surface.get("feature_surface") or "unknown"
         group_key = f"{experiment_seed}::{feature_surface}"
         reproducibility_groups.setdefault(group_key, []).append(summary)
 

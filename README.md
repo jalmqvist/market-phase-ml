@@ -186,8 +186,7 @@ Each run manifest must contain an explicit `experiment` block:
 ```
 
 Each new run manifest also emits an explicit canonical `experiment_surface` block
-from runtime artifact introspection (parquet metadata and artifact sidecar, with
-configuration fallbacks), for parquet/training attribution in analysis:
+for parquet/training attribution in analysis:
 
 ```json
 {
@@ -210,6 +209,28 @@ configuration fallbacks), for parquet/training attribution in analysis:
 ```
 
 Analysis still reports run `surface_source="manifest"` when this v5 block is present.
+
+Runtime provenance precedence (highest to lowest):
+
+1. artifact parquet metadata
+2. artifact sidecar metadata
+3. explicit runtime env/config overrides
+
+No variant/generation/runtime-state inference is allowed for `experiment_surface`.
+
+Meaning of `"unknown"`:
+
+- `"unknown"` is an explicit provenance state, not a default semantic replacement.
+- It means runtime could not prove a value from allowed provenance inputs.
+- Analysis/reporting preserves `"unknown"` as-is (no silent reconstruction).
+
+Architecture note:
+
+- `experiment` = intended runtime cohort semantics (generation/variant/factors)
+- `experiment_surface` = actual artifact/training provenance at runtime
+
+These are related but intentionally independent. Analysis trusts `experiment_surface`
+for surface attribution and does not derive surface semantics from variant letters.
 
 ### Baseline no-DL runs
 

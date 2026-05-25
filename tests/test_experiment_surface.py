@@ -244,10 +244,30 @@ class TestManifestParserExperimentSurface(unittest.TestCase):
                     "overlap_only": False, "selector_enabled": True,
                 },
                 "semantic_label": "Gen1_A",
+                "legacy_semantics": True,
             },
         }
         result = self._parse(data)
         self.assertEqual(result["surface_source"], "legacy_variant_fallback")
+
+    def test_surface_source_missing_for_modern_manifest_without_surface(self):
+        data = {
+            "run": {"run_id": "gen1_A__20240101T120000Z", "timestamp_utc": "20240101T120000Z"},
+            "experiment": {
+                "generation": "gen1", "variant": "A",
+                "sentiment_enabled": True, "missing_indicators_enabled": False,
+                "dl_enabled": True,
+                "factors": {
+                    "dl_enabled": True, "sentiment_enabled": True,
+                    "missing_indicators_enabled": False, "msml_regime": "LVTF",
+                    "overlap_only": False, "selector_enabled": True,
+                },
+                "semantic_label": "Gen1_A",
+                "legacy_semantics": False,
+            },
+        }
+        result = self._parse(data)
+        self.assertEqual(result["surface_source"], "missing_experiment_surface")
 
     def test_evaluation_pair_family_in_parsed_surface(self):
         data = {
@@ -329,7 +349,7 @@ class TestAntiCorruptionSentimentSurface(unittest.TestCase):
     def test_variant_A_does_not_imply_sentiment_surface_true(self):
         """
         Anti-corruption: variant=A must NOT imply sentiment_surface=True when
-        experiment_surface is absent.  The run should be flagged as legacy_variant_fallback.
+        experiment_surface is absent.
         """
         run_dir = _make_run_dir()
         _write_manifest(run_dir, {
@@ -349,7 +369,7 @@ class TestAntiCorruptionSentimentSurface(unittest.TestCase):
         })
         result = parse_manifest(run_dir)
         # Surface block must not infer sentiment_surface from variant A.
-        self.assertEqual(result["surface_source"], "legacy_variant_fallback")
+        self.assertEqual(result["surface_source"], "missing_experiment_surface")
         surface = result["experiment_surface"]
         self.assertIsNone(surface["sentiment_surface"],
                           "Without experiment_surface, sentiment_surface must be None "
@@ -426,7 +446,7 @@ class TestRunIdentityWithSurface(unittest.TestCase):
                 },
                 "semantic_label": "Gen1_A",
             },
-            "surface_source": "legacy_variant_fallback",
+            "surface_source": "missing_experiment_surface",
         }
         identity = infer_run_identity(
             archive_root=archive_root,
@@ -740,8 +760,8 @@ class TestReproducibilityFeatureSurface(unittest.TestCase):
 
 class TestValidationAntiCorruption(unittest.TestCase):
 
-    def test_non_legacy_manifest_without_surface_emits_semantic_warning(self):
-        """A manifest without experiment_surface should emit a semantic warning."""
+    def test_non_legacy_manifest_without_surface_emits_semantic_error(self):
+        """A modern manifest without experiment_surface should emit a semantic error."""
         run_dir = _make_run_dir()
         _write_manifest(run_dir, {
             "run": {"run_id": "gen1_A__20240101T120000Z", "timestamp_utc": "20240101T120000Z"},
@@ -781,10 +801,10 @@ class TestValidationAntiCorruption(unittest.TestCase):
             "warnings": [],
         }
         result = validate_summaries([summary])
-        semantic_warnings = result["sections"]["semantic_integrity"]["warnings"]
+        semantic_errors = result["sections"]["semantic_integrity"]["errors"]
         self.assertTrue(
-            any("experiment_surface" in w.lower() for w in semantic_warnings),
-            f"Expected experiment_surface warning, got: {semantic_warnings}"
+            any("experiment_surface" in w.lower() for w in semantic_errors),
+            f"Expected experiment_surface error, got: {semantic_errors}"
         )
 
     def test_is_v5_summary_false_for_legacy(self):

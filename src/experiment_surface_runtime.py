@@ -143,8 +143,6 @@ def build_runtime_experiment_surface(
     )
     if sentiment_surface is None:
         sentiment_surface = _env_bool("MPML_SENTIMENT_SURFACE")
-    if sentiment_surface is None:
-        sentiment_surface = bool(dl_runtime_enabled and dl_artifact_path is not None)
 
     training_pair_family = _decode_str(
         _lookup(
@@ -155,7 +153,7 @@ def build_runtime_experiment_surface(
             "mpml.training_pair_family",
             "pair_family.train",
         )
-    ) or _env_str("MPML_TRAINING_PAIR_FAMILY") or "persistent"
+    ) or _env_str("MPML_TRAINING_PAIR_FAMILY") or "unknown"
 
     evaluation_pair_family = _decode_str(
         _lookup(
@@ -167,7 +165,7 @@ def build_runtime_experiment_surface(
             "pair_family.eval",
             "pair_family.evaluation",
         )
-    ) or _env_str("MPML_EVALUATION_PAIR_FAMILY") or training_pair_family
+    ) or _env_str("MPML_EVALUATION_PAIR_FAMILY") or "unknown"
 
     feature_surface = _decode_str(
         _lookup(
@@ -179,7 +177,7 @@ def build_runtime_experiment_surface(
             "feature_set",
             "surface.feature_set",
         )
-    ) or _env_str("MPML_FEATURE_SURFACE") or _decode_str(dl_surface.get("feature_set")) or "default"
+    ) or _env_str("MPML_FEATURE_SURFACE") or "unknown"
 
     artifact_source = _decode_str(
         _lookup(
@@ -191,7 +189,7 @@ def build_runtime_experiment_surface(
             "artifact_path",
             "source_path",
         )
-    ) or _env_str("MPML_ARTIFACT_SOURCE") or (_decode_str(str(dl_artifact_path)) if dl_artifact_path else "none")
+    ) or _env_str("MPML_ARTIFACT_SOURCE") or (_decode_str(str(dl_artifact_path)) if dl_artifact_path else "unknown")
 
     surface_semantics_version = _decode_int(
         _lookup(
