@@ -98,7 +98,13 @@ def _build_surface_run_meaning(surface: dict[str, Any]) -> str:
         parts.append(family_str)
 
     sentiment = surface.get("sentiment_surface")
-    if sentiment is True:
+    if isinstance(sentiment, str):
+        normalized = sentiment.strip().lower()
+        if normalized == "sentiment":
+            parts.append("sentiment surface")
+        elif normalized in {"no_sentiment", "none"}:
+            parts.append("no-sentiment surface")
+    elif sentiment is True:
         parts.append("sentiment surface")
     elif sentiment is False:
         parts.append("no-sentiment surface")

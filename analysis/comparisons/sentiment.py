@@ -37,6 +37,27 @@ from analysis.comparisons.factors import (
     summary_surface,
 )
 
+
+def _is_sentiment_surface_on(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() == "sentiment"
+    return False
+
+
+def _is_sentiment_surface_off(value: Any) -> bool:
+    if value is False:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"no_sentiment", "none"}
+    return False
+
+
+def _has_resolved_sentiment_surface(value: Any) -> bool:
+    return _is_sentiment_surface_on(value) or _is_sentiment_surface_off(value)
+
+
 def compare_sentiment_variants(
     summaries: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -79,7 +100,7 @@ def compare_sentiment_variants(
     # For v5 summaries: validate that sentiment_surface is present.
     for summary in v5_summaries:
         sentiment = summary_surface(summary).get("sentiment_surface")
-        if not isinstance(sentiment, bool):
+        if not _has_resolved_sentiment_surface(sentiment):
             unresolved.append(summary.get("run_id", "unknown"))
 
     if unresolved:
@@ -127,12 +148,12 @@ def compare_sentiment_variants(
             on_runs = filter_summaries(
                 v5_summaries,
                 factors={"missing_indicators_enabled": imputation_aware},
-                surface={"sentiment_surface": True, "training_pair_family": family},
+                surface={"sentiment_surface": {"sentiment", True}, "training_pair_family": family},
             )
             off_runs = filter_summaries(
                 v5_summaries,
                 factors={"missing_indicators_enabled": imputation_aware},
-                surface={"sentiment_surface": False, "training_pair_family": family},
+                surface={"sentiment_surface": {"no_sentiment", "none", False}, "training_pair_family": family},
             )
             cohort_key = f"imputation_awareness={str(imputation_aware).lower()}"
             comparison_key = (
@@ -155,9 +176,9 @@ def compare_sentiment_variants(
                 incomplete_comparisons.append(comparison_key)
                 missing_parts: list[str] = []
                 if not on_runs:
-                    missing_parts.append("sentiment_surface=True")
+                    missing_parts.append("sentiment_surface=sentiment")
                 if not off_runs:
-                    missing_parts.append("sentiment_surface=False")
+                    missing_parts.append("sentiment_surface=no_sentiment|none")
                 warnings.append(
                     f"Sentiment comparison incomplete for training_family={family!r}, "
                     f"imputation_awareness={str(imputation_aware).lower()}: missing cohort(s) "
@@ -223,17 +244,18 @@ def compare_sentiment_variants(
         invalid_comparisons.append("sentiment_matrix")
         warnings.append(
             "No valid sentiment comparisons found (all cohorts incomplete or invalid). "
-            "Ensure matching sentiment_surface=True and sentiment_surface=False runs exist "
+            "Ensure matching sentiment_surface=sentiment and "
+            "sentiment_surface=no_sentiment|none runs exist "
             "within the same training_family/imputation_awareness cohort."
         )
 
     # Summary-level on/off slices (union across all).
     sentiment_on = run_ids(
-        filter_summaries(v5_summaries, surface={"sentiment_surface": True})
+        filter_summaries(v5_summaries, surface={"sentiment_surface": {"sentiment", True}})
         + filter_summaries(legacy_summaries, factors={"sentiment_enabled": True})
     )
     sentiment_off = run_ids(
-        filter_summaries(v5_summaries, surface={"sentiment_surface": False})
+        filter_summaries(v5_summaries, surface={"sentiment_surface": {"no_sentiment", "none", False}})
         + filter_summaries(legacy_summaries, factors={"sentiment_enabled": False})
     )
     if not summaries:
