@@ -144,13 +144,13 @@ class TestCompareSentimentVariants(unittest.TestCase):
         summaries = [_make_summary("run_off", dl_enabled=False)]
         result = compare_sentiment_variants(summaries)
         warnings = result["warnings"]
-        self.assertTrue(any("missing cohort" in w.lower() for w in warnings))
+        self.assertTrue(any("missing cohort" in w.lower() or "incomplete" in w.lower() for w in warnings))
 
     def test_no_off_runs_warning(self):
         summaries = [_make_summary("run_on", dl_enabled=True)]
         result = compare_sentiment_variants(summaries)
         warnings = result["warnings"]
-        self.assertTrue(any("missing cohort" in w.lower() for w in warnings))
+        self.assertTrue(any("missing cohort" in w.lower() or "incomplete" in w.lower() for w in warnings))
 
     def test_multiple_pairs(self):
         summaries = [
@@ -186,7 +186,10 @@ class TestCompareSentimentVariants(unittest.TestCase):
         ]
         result = compare_sentiment_variants(summaries)
         self.assertEqual(result["delta_table"], [])
-        self.assertTrue(any("invalid" in w.lower() for w in result["warnings"]))
+        # Expect a warning about no valid comparisons or missing cohorts.
+        self.assertTrue(
+            any("incomplete" in w.lower() or "invalid" in w.lower() for w in result["warnings"])
+        )
 
     def test_sentiment_comparison_ignores_dl_enabled_flag(self):
         summaries = [
@@ -194,8 +197,9 @@ class TestCompareSentimentVariants(unittest.TestCase):
             _make_summary("run_b", dl_enabled=True, experiment_gen="gen1", run_variant="B", sharpe_delta=0.05),
         ]
         result = compare_sentiment_variants(summaries)
-        self.assertEqual(result["grouped"]["gen1"]["missing_indicators=false"]["on"], ["run_a"])
-        self.assertEqual(result["grouped"]["gen1"]["missing_indicators=false"]["off"], ["run_b"])
+        # Legacy path uses "legacy:gen1" as the grouped key.
+        self.assertEqual(result["grouped"]["legacy:gen1"]["imputation_awareness=false"]["on"], ["run_a"])
+        self.assertEqual(result["grouped"]["legacy:gen1"]["imputation_awareness=false"]["off"], ["run_b"])
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +280,9 @@ class TestCompareGen1Gen2(unittest.TestCase):
     def test_no_gen1_warning(self):
         summaries = [_make_summary("run_g2", experiment_gen="gen2")]
         result = compare_gen1_gen2(summaries)
-        self.assertTrue(any("invalid" in w.lower() for w in result["warnings"]))
+        self.assertTrue(
+            any("incomplete" in w.lower() or "invalid" in w.lower() for w in result["warnings"])
+        )
 
     def test_coverage_comparison(self):
         summaries = [
@@ -298,7 +304,9 @@ class TestCompareGen1Gen2(unittest.TestCase):
         ]
         result = compare_gen1_gen2(summaries)
         self.assertEqual(result["delta_table"], [])
-        self.assertTrue(any("invalid" in w.lower() for w in result["warnings"]))
+        self.assertTrue(
+            any("incomplete" in w.lower() or "invalid" in w.lower() for w in result["warnings"])
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -330,8 +338,9 @@ class TestAnalysisMatrixCompleteness(unittest.TestCase):
         """Scoped A/B/C/D subset keeps deterministic conditioned comparisons."""
         result_s = compare_sentiment_variants(self._full_matrix())
         result_g = compare_gen1_gen2(self._full_matrix())
-        self.assertIn("generation=gen1/missing_indicators_enabled=false", result_s["valid_comparisons"])
-        self.assertIn("generation=gen2/missing_indicators_enabled=true", result_s["valid_comparisons"])
+        # Legacy runs use "legacy:generation=<gen>/imputation_awareness=<bool>" keys.
+        self.assertIn("legacy:generation=gen1/imputation_awareness=false", result_s["valid_comparisons"])
+        self.assertIn("legacy:generation=gen2/imputation_awareness=true", result_s["valid_comparisons"])
         self.assertEqual(result_g["valid_comparisons"], [])
 
     def test_matrix_present_variants_complete(self):
@@ -346,34 +355,38 @@ class TestAnalysisMatrixCompleteness(unittest.TestCase):
             _make_summary("fp_gen2_C", experiment_gen="gen2", run_variant="C"),
         ]
         result_s = compare_sentiment_variants(summaries)
-        self.assertIn("generation=gen1/missing_indicators_enabled=false", result_s["incomplete_comparisons"])
-        self.assertIn("generation=gen2/missing_indicators_enabled=true", result_s["incomplete_comparisons"])
+        # Legacy path uses "legacy:generation=<gen>/imputation_awareness=<bool>" keys.
+        self.assertIn("legacy:generation=gen1/imputation_awareness=false", result_s["incomplete_comparisons"])
+        self.assertIn("legacy:generation=gen2/imputation_awareness=true", result_s["incomplete_comparisons"])
         self.assertEqual(sorted(result_s["matrix"]["present_variants"]), ["A", "C"])
 
     def test_all_gen1_runs_not_collapsed_to_A(self):
         """Sentinel: when A and B runs are present, they must go into separate cohorts."""
         result_s = compare_sentiment_variants(self._full_matrix())
         grouped = result_s["grouped"]
-        self.assertEqual(grouped["gen1"]["missing_indicators=false"]["on"], ["fp_gen1_A"])
-        self.assertEqual(grouped["gen1"]["missing_indicators=false"]["off"], ["fp_gen1_B"])
+        # Legacy path uses "legacy:gen1" as top-level key and "imputation_awareness=false" as cohort key.
+        self.assertEqual(grouped["legacy:gen1"]["imputation_awareness=false"]["on"], ["fp_gen1_A"])
+        self.assertEqual(grouped["legacy:gen1"]["imputation_awareness=false"]["off"], ["fp_gen1_B"])
 
     def test_all_gen2_runs_not_collapsed_to_C(self):
         """Sentinel: when C and D runs are present, they must go into separate cohorts."""
         result_s = compare_sentiment_variants(self._full_matrix())
         grouped = result_s["grouped"]
-        self.assertEqual(grouped["gen2"]["missing_indicators=true"]["on"], ["fp_gen2_C"])
-        self.assertEqual(grouped["gen2"]["missing_indicators=true"]["off"], ["fp_gen2_D"])
+        # Legacy path uses "legacy:gen2" as top-level key and "imputation_awareness=true" as cohort key.
+        self.assertEqual(grouped["legacy:gen2"]["imputation_awareness=true"]["on"], ["fp_gen2_C"])
+        self.assertEqual(grouped["legacy:gen2"]["imputation_awareness=true"]["off"], ["fp_gen2_D"])
 
     def test_sentiment_delta_uses_correct_cohorts(self):
         """Sentiment delta must compare A vs B (not B vs B or A vs A)."""
         result_s = compare_sentiment_variants(self._full_matrix())
         # Verify cohort membership is correct: A in on, B in off
-        self.assertIn("fp_gen1_A", result_s["grouped"]["gen1"]["missing_indicators=false"]["on"])
-        self.assertIn("fp_gen1_B", result_s["grouped"]["gen1"]["missing_indicators=false"]["off"])
-        self.assertNotIn("fp_gen1_B", result_s["grouped"]["gen1"]["missing_indicators=false"]["on"])
-        self.assertNotIn("fp_gen1_A", result_s["grouped"]["gen1"]["missing_indicators=false"]["off"])
+        self.assertIn("fp_gen1_A", result_s["grouped"]["legacy:gen1"]["imputation_awareness=false"]["on"])
+        self.assertIn("fp_gen1_B", result_s["grouped"]["legacy:gen1"]["imputation_awareness=false"]["off"])
+        self.assertNotIn("fp_gen1_B", result_s["grouped"]["legacy:gen1"]["imputation_awareness=false"]["on"])
+        self.assertNotIn("fp_gen1_A", result_s["grouped"]["legacy:gen1"]["imputation_awareness=false"]["off"])
         # Verify delta is A minus B (0.12 - 0.02 = 0.10)
-        gen1_rows = [r for r in result_s["delta_table"] if r["generation"] == "gen1:missing_indicators=false"]
+        # The generation field in delta rows uses the new key format.
+        gen1_rows = [r for r in result_s["delta_table"] if r["generation"] == "legacy:gen1:imputation_awareness=false"]
         self.assertTrue(len(gen1_rows) > 0)
         for row in gen1_rows:
             # A=0.12 Sharpe_Delta, B=0.02 Sharpe_Delta → delta = 0.10

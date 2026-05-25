@@ -56,6 +56,26 @@ def render_markdown_report(
     lines.append(
         "> Integrity-first mode: canonical run identities, semantic attribution, and structural validation enabled.\n"
     )
+    lines.append(
+        "> **Factor-first attribution**: experiment semantics are sourced from `experiment_surface` manifest metadata,\n"
+        "> not inferred from variant letters, generation labels, DL flags, or directory names.\n"
+    )
+
+    # ------------------------------------------------------------------
+    # Legacy banner — shown when any run uses legacy_variant_fallback semantics
+    # ------------------------------------------------------------------
+    legacy_runs = [
+        s for s in summaries
+        if (s.get("meta") or {}).get("surface_source", "legacy_variant_fallback") == "legacy_variant_fallback"
+    ]
+    if legacy_runs:
+        lines.append(
+            "> ⚠ **LEGACY SEMANTICS ACTIVE** — "
+            f"{len(legacy_runs)} run(s) are using variant-based attribution "
+            "(no `experiment_surface` block in manifest). "
+            "Sentiment and training-family comparisons for these runs may be incorrect. "
+            "Add `experiment_surface` to the manifest to enable factor-first attribution.\n"
+        )
 
     # ------------------------------------------------------------------
     # 0. Validation / trustworthiness section
@@ -88,14 +108,59 @@ def render_markdown_report(
     lines.append("")
 
     # ------------------------------------------------------------------
-    # 1. Run metadata overview
+    # 1. Run metadata overview — factor-first table (v5)
     # ------------------------------------------------------------------
     lines.append("## Run Overview\n")
-    lines.append("| Canonical Run ID | Semantic Run | Meaning | DL Enabled | MSML Regime | Gen | Variant | Archive Path | Git SHA | Timestamp UTC |")
-    lines.append("|------------------|--------------|---------|-----------|-------------|-----|---------|--------------|---------|---------------|")
+
+    # v5 factor-first table.
+    v5_summaries = [s for s in summaries if (s.get("meta") or {}).get("surface_source") == "manifest"]
+    if v5_summaries:
+        lines.append("### Factor-First Run Matrix (v5)\n")
+        lines.append(
+            "| Canonical Run ID | Training Family | Eval Family | Sentiment Surface | Imputation Awareness | DL | Regime | Feature Surface | Surface Version | Meaning |"
+        )
+        lines.append(
+            "|------------------|-----------------|-------------|-------------------|----------------------|----|--------|-----------------|-----------------|---------|"
+        )
+        for s in v5_summaries:
+            meta = s.get("meta") or {}
+            surface = meta.get("experiment_surface") or {}
+            factors = ((meta.get("experiment") or {}).get("factors") or {})
+            train_fam = surface.get("training_pair_family") or "—"
+            eval_fam = surface.get("evaluation_pair_family") or "—"
+            sentiment_surf = surface.get("sentiment_surface")
+            imputation = factors.get("missing_indicators_enabled")
+            dl = meta.get("dl_enabled")
+            regime = factors.get("msml_regime") or "—"
+            feat_surf = surface.get("feature_surface") or "—"
+            surf_ver = surface.get("surface_semantics_version")
+            meaning = meta.get("run_meaning") or "—"
+            sentiment_str = ("yes" if sentiment_surf else "no") if sentiment_surf is not None else "—"
+            imputation_str = ("aware" if imputation else "blind") if imputation is not None else "—"
+            dl_str = ("✓" if dl else "✗") if dl is not None else "—"
+            surf_ver_str = str(surf_ver) if surf_ver is not None else "—"
+            lines.append(
+                f"| {s.get('run_id', '—')} "
+                f"| {train_fam} "
+                f"| {eval_fam} "
+                f"| {sentiment_str} "
+                f"| {imputation_str} "
+                f"| {dl_str} "
+                f"| {regime} "
+                f"| {feat_surf} "
+                f"| {surf_ver_str} "
+                f"| {meaning} |"
+            )
+        lines.append("")
+
+    # Legacy run overview (always rendered for backward compat).
+    lines.append("### Run Overview (all runs)\n")
+    lines.append("| Canonical Run ID | Semantic Run | Meaning | DL Enabled | MSML Regime | Gen | Variant | Surface Source | Archive Path | Git SHA | Timestamp UTC |")
+    lines.append("|------------------|--------------|---------|-----------|-------------|-----|---------|----------------|--------------|---------|---------------|")
     for s in summaries:
         meta = s.get("meta") or {}
         factors = ((meta.get("experiment") or {}).get("factors") or {})
+        surface_source = meta.get("surface_source", "legacy_variant_fallback")
         lines.append(
             f"| {s.get('run_id', '—')} "
             f"| {meta.get('semantic_run_name', '—')} "
@@ -104,14 +169,15 @@ def render_markdown_report(
             f"| {factors.get('msml_regime', '—')} "
             f"| {meta.get('experiment_gen', '—')} "
             f"| {meta.get('run_variant', '—')} "
+            f"| {surface_source} "
             f"| {meta.get('archive_relpath', '—')} "
             f"| {(meta.get('git_sha') or '—')[:8]} "
             f"| {meta.get('timestamp_utc', '—')} |"
         )
     lines.append("")
     lines.append("### Experiment Semantics (canonical)\n")
-    lines.append("| Run ID | Generation | Variant | Run Family | Legacy Semantics | dl_enabled | sentiment_enabled | missing_indicators_enabled | msml_regime | overlap_only | selector_enabled | Semantic Label |")
-    lines.append("|--------|-----------|---------|------------|------------------|------------|-------------------|----------------------------|-------------|-------------|------------------|----------------|")
+    lines.append("| Run ID | Generation | Variant | Run Family | Legacy Semantics | dl_enabled | sentiment_enabled | Imputation Awareness | msml_regime | overlap_only | selector_enabled | Semantic Label |")
+    lines.append("|--------|-----------|---------|------------|------------------|------------|-------------------|----------------------|-------------|-------------|------------------|----------------|")
     for s in summaries:
         meta = s.get("meta") or {}
         experiment = meta.get("experiment") or {}
@@ -130,7 +196,8 @@ def render_markdown_report(
         run_family = experiment.get("run_family") or "—"
         dl_enabled_str = ("✓" if dl_enabled else "✗") if dl_enabled is not None else "—"
         sentiment_str = ("✓" if sentiment else "✗") if sentiment is not None else "—"
-        missing_str = ("✓" if missing_ind else "✗") if missing_ind is not None else "—"
+        # "Imputation Awareness" is the canonical term (was "Missing Indicators ON").
+        imputation_str = ("aware" if missing_ind else "blind") if missing_ind is not None else "—"
         overlap_str = ("✓" if overlap_only else "✗") if overlap_only is not None else "—"
         selector_str = ("✓" if selector_enabled else "✗") if selector_enabled is not None else "—"
         lines.append(
@@ -141,15 +208,15 @@ def render_markdown_report(
             f"| {'✓' if legacy_semantics else '✗'} "
             f"| {dl_enabled_str} "
             f"| {sentiment_str} "
-            f"| {missing_str} "
+            f"| {imputation_str} "
             f"| {msml_regime} "
             f"| {overlap_str} "
             f"| {selector_str} "
             f"| {sem_label} |"
         )
     lines.append("")
-    lines.append("### Experiment Semantics Reference\n")
-    lines.append("| Variant | Generation | Sentiment ON | Missing Indicators ON | Meaning |")
+    lines.append("### Experiment Semantics Reference (legacy variant legend)\n")
+    lines.append("| Variant | Generation | Sentiment ON | Imputation Awareness | Meaning |")
     lines.append("|---------|-----------|-------------|----------------------|---------|")
     for variant in sorted(EXPERIMENT_VARIANTS):
         semantics = EXPERIMENT_VARIANTS[variant]
@@ -157,12 +224,12 @@ def render_markdown_report(
             f"| {variant} "
             f"| {semantics['generation'].capitalize()} "
             f"| {'✓' if semantics['sentiment_enabled'] else '✗'} "
-            f"| {'✓' if semantics['missing_indicators_enabled'] else '✗'} "
+            f"| {'aware' if semantics['missing_indicators_enabled'] else 'blind'} "
             f"| {semantics['run_meaning']} |"
         )
     lines.append("")
-    lines.append("> Experiment semantics are canonical and immutable: read from `manifest.experiment` only.")
-    lines.append("> Never inferred from DL flags, folder names, or runtime state.")
+    lines.append("> Experiment semantics are canonical: read from `manifest.experiment_surface` (v5) or `manifest.experiment` (legacy).")
+    lines.append("> Never inferred from DL flags, folder names, or runtime variant letters.")
     lines.append("")
 
     # ------------------------------------------------------------------
@@ -356,7 +423,7 @@ def _render_ml_accuracy(lines: list[str], summary: dict[str, Any]) -> None:
 def _render_sentiment_comparison(
     lines: list[str], sentiment: dict[str, Any] | None
 ) -> None:
-    lines.append("### Sentiment ON vs OFF (factor-conditioned)\n")
+    lines.append("### Sentiment Surface ON vs OFF (factor-conditioned)\n")
     if not sentiment:
         lines.append("⚠ Sentiment comparison not computed.")
         lines.append("")
@@ -365,11 +432,14 @@ def _render_sentiment_comparison(
         lines.append(f"- ⚠ {w}")
     on_ids = ", ".join(sentiment.get("sentiment_on") or []) or "—"
     off_ids = ", ".join(sentiment.get("sentiment_off") or []) or "—"
-    lines.append(f"- **Sentiment ON runs:** {on_ids}")
-    lines.append(f"- **Sentiment OFF runs:** {off_ids}")
+    lines.append(f"- **Sentiment surface ON runs:** {on_ids}")
+    lines.append(f"- **Sentiment surface OFF runs:** {off_ids}")
     lines.append(f"- **Valid comparisons:** {', '.join(sentiment.get('valid_comparisons') or []) or '—'}")
     lines.append(f"- **Incomplete comparisons:** {', '.join(sentiment.get('incomplete_comparisons') or []) or '—'}")
     lines.append(f"- **Invalid comparisons:** {', '.join(sentiment.get('invalid_comparisons') or []) or '—'}")
+    lines.append(
+        "> Comparisons are conditioned on: same training_pair_family + same Imputation Awareness + same DL + same regime."
+    )
     lines.append("")
     delta_rows = sentiment.get("delta_table") or []
     if delta_rows:
@@ -383,27 +453,39 @@ def _render_sentiment_comparison(
 def _render_gen_comparison(
     lines: list[str], gen: dict[str, Any] | None
 ) -> None:
-    lines.append("### Gen1 vs Gen2 (factor-conditioned)\n")
+    # LEGACY NAME: this section renders both training-family (v5) and Gen1/Gen2 (legacy).
+    lines.append("### Training-Family Transfer Effect / Gen1 vs Gen2 (factor-conditioned)\n")
     if not gen:
-        lines.append("⚠ Gen1/Gen2 comparison not computed.")
+        lines.append("⚠ Training-family / Gen1/Gen2 comparison not computed.")
         lines.append("")
         return
     for w in gen.get("warnings") or []:
         lines.append(f"- ⚠ {w}")
+
+    # v5: training_families
+    training_families = gen.get("training_families") or {}
+    if training_families:
+        lines.append("**Training families (v5):**")
+        for family, runs in sorted(training_families.items()):
+            lines.append(f"- **{family}:** {', '.join(runs) or '—'}")
+        lines.append("")
+
+    # Legacy: gen1/gen2
     g1_ids = ", ".join(gen.get("gen1") or []) or "—"
     g2_ids = ", ".join(gen.get("gen2") or []) or "—"
-    lines.append(f"- **Gen1 runs:** {g1_ids}")
-    lines.append(f"- **Gen2 runs:** {g2_ids}")
+    if gen.get("gen1") or gen.get("gen2"):
+        lines.append(f"- **Gen1 runs (legacy):** {g1_ids}")
+        lines.append(f"- **Gen2 runs (legacy):** {g2_ids}")
     lines.append(f"- **Valid comparisons:** {', '.join(gen.get('valid_comparisons') or []) or '—'}")
     lines.append(f"- **Incomplete comparisons:** {', '.join(gen.get('incomplete_comparisons') or []) or '—'}")
     lines.append(f"- **Invalid comparisons:** {', '.join(gen.get('invalid_comparisons') or []) or '—'}")
     lines.append("")
     delta_rows = gen.get("delta_table") or []
     if delta_rows:
-        lines.append("**Delta Table (Gen2 − Gen1):**\n")
+        lines.append("**Delta Table:**\n")
         _table_from_rows(lines, delta_rows)
     else:
-        lines.append("⚠ Delta table empty (need both Gen1 and Gen2 runs).")
+        lines.append("⚠ Delta table empty (need multiple training-family or Gen1/Gen2 runs).")
     lines.append("")
 
 
@@ -444,7 +526,13 @@ def _render_factor_comparison(
     if crosstab:
         lines.append("**Factor cohorts (run IDs by factor value):**\n")
         for factor_name, buckets in sorted(crosstab.items()):
-            lines.append(f"- **{factor_name}**")
+            # Use canonical "Imputation Awareness" label for missing_indicators_enabled.
+            display_name = (
+                "imputation_awareness (missing_indicators_enabled)"
+                if factor_name == "missing_indicators_enabled"
+                else factor_name
+            )
+            lines.append(f"- **{display_name}**")
             for value, runs in sorted((buckets or {}).items()):
                 lines.append(f"  - {value}: {', '.join(runs) if runs else '—'}")
     slices = factors_payload.get("slices") or {}
@@ -456,6 +544,29 @@ def _render_factor_comparison(
             else:
                 rendered = ", ".join(value) if isinstance(value, list) else str(value)
             lines.append(f"- {name}: {rendered or '—'}")
+
+    # v5: Imputation Awareness effect.
+    awareness_effect = factors_payload.get("awareness_effect") or {}
+    if awareness_effect.get("comparisons"):
+        lines.append("\n**Imputation Awareness Effect (v5):**\n")
+        for comp in awareness_effect["comparisons"]:
+            valid_str = "✓" if comp.get("valid") else "✗"
+            aware_ids = ", ".join(comp.get("imputation_aware") or []) or "—"
+            blind_ids = ", ".join(comp.get("imputation_blind") or []) or "—"
+            lines.append(f"- **{comp.get('cohort', '?')}** [{valid_str}]")
+            lines.append(f"  - Imputation aware: {aware_ids}")
+            lines.append(f"  - Imputation blind: {blind_ids}")
+
+    # v5: Training-family effect.
+    training_family_effect = factors_payload.get("training_family_effect") or {}
+    if training_family_effect.get("comparisons"):
+        lines.append("\n**Training-Family Transfer Effect (v5):**\n")
+        for comp in training_family_effect["comparisons"]:
+            valid_str = "✓" if comp.get("valid") else "✗"
+            lines.append(f"- **{comp.get('cohort', '?')}** [{valid_str}]")
+        for w in training_family_effect.get("warnings") or []:
+            lines.append(f"  - ⚠ {w}")
+
     lines.append("")
 
 
@@ -465,13 +576,27 @@ def _render_manifest_metadata(lines: list[str], summary: dict[str, Any]) -> None
     md = meta.get("manifest_diagnostics") or {}
     reproducibility = meta.get("reproducibility") or {}
     feature_ordering = meta.get("feature_ordering") or {}
+    surface = meta.get("experiment_surface") or {}
+    surface_source = meta.get("surface_source", "legacy_variant_fallback")
     lines.append(f"- Manifest present: {'yes' if meta.get('manifest_present') else 'no'}")
     lines.append(f"- Legacy mode: {'yes' if meta.get('legacy_mode') else 'no'}")
+    lines.append(f"- Surface source: {surface_source}")
     lines.append(f"- Canonical manifest path: {md.get('manifest_path') or '—'}")
     lines.append(f"- Canonical manifest run_id: {md.get('manifest_run_id') or '—'}")
     lines.append(f"- Canonical manifest timestamp: {md.get('manifest_timestamp') or '—'}")
     lines.append(f"- Canonical manifest mode tag: {md.get('dl_mode_tag') or '—'}")
     lines.append(f"- Manifest count in run root: {md.get('manifest_count', 0)}")
+    # Experiment surface (v5 factor-first block).
+    surf_version = surface.get("surface_semantics_version")
+    if surf_version is not None or surface.get("sentiment_surface") is not None:
+        lines.append("- Experiment surface (v5 factor-first):")
+        lines.append(f"  - surface_semantics_version: {surf_version if surf_version is not None else '—'}")
+        sentiment_surf = surface.get("sentiment_surface")
+        lines.append(f"  - sentiment_surface: {'yes' if sentiment_surf else 'no' if sentiment_surf is not None else '—'}")
+        lines.append(f"  - training_pair_family: {surface.get('training_pair_family') or '—'}")
+        lines.append(f"  - evaluation_pair_family: {surface.get('evaluation_pair_family') or '—'}")
+        lines.append(f"  - feature_surface: {surface.get('feature_surface') or '—'}")
+        lines.append(f"  - artifact_source: {surface.get('artifact_source') or '—'}")
     if reproducibility:
         lines.append("- Reproducibility seed metadata:")
         lines.append(f"  - experiment_seed: {reproducibility.get('experiment_seed', '—')}")

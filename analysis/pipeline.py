@@ -177,6 +177,8 @@ def build_run_summary(
         "sentiment_enabled": factors.get("sentiment_enabled", identity.get("sentiment_enabled")),
         "missing_indicators_enabled": factors.get("missing_indicators_enabled", identity.get("missing_indicators_enabled")),
         "factors": factors,
+        "experiment_surface": identity.get("experiment_surface") or {},
+        "surface_source": identity.get("surface_source", "legacy_variant_fallback"),
         "semantic_label": identity.get("semantic_label"),
         "legacy_semantics": bool(identity.get("legacy_semantics")),
         "experiment": experiment,

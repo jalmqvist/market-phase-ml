@@ -2,6 +2,25 @@
 analysis/validation.py
 =======================
 Integrity validation for analysis framework v2.
+
+Terminology
+-----------
+"Imputation Awareness" (``missing_indicators_enabled``) is the canonical term used
+throughout this module.  It reflects that the model receives an explicit indicator
+that a feature value was *imputed* rather than genuinely observed.
+
+v5 surface integrity
+---------------------
+Reproducibility checks now scope feature-column comparisons to runs that share the
+same ``experiment_surface.feature_surface``.  Different feature surfaces (e.g.
+``trend_vol_only`` vs ``price_trend``) are intentional and must NOT trigger
+reproducibility warnings.
+
+Anti-corruption assertions
+--------------------------
+If a non-legacy run has no ``experiment_surface`` block, a semantic warning is
+emitted.  If a v5 run's sentiment attribution was reconstructed from variant alone,
+a semantic error is raised.
 """
 
 from __future__ import annotations
@@ -13,6 +32,7 @@ from experiment_semantics import (
     LEGACY_VARIANT,
     VALID_EXPERIMENT_VARIANTS,
     normalize_experiment_factors,
+    is_v5_surface,
 )
 
 _REQUIRED_REPRODUCIBILITY_KEYS = (
@@ -21,6 +41,8 @@ _REQUIRED_REPRODUCIBILITY_KEYS = (
     "python_random_seed",
     "torch_seed",
 )
+
+
 def sort_summaries_deterministically(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         summaries,
@@ -85,6 +107,8 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
             fallback_dl_enabled=experiment.get("dl_enabled", meta.get("dl_enabled")),
             fallback_msml_regime=experiment.get("msml_regime"),
         )
+        experiment_surface = meta.get("experiment_surface") or {}
+        surface_source = meta.get("surface_source", "legacy_variant_fallback")
 
         manifest_count = manifest_diag.get("manifest_count") or 0
         if manifest_count > 1:
@@ -160,7 +184,7 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
                 )
             if isinstance(exp_missing, bool) and meta.get("missing_indicators_enabled") != exp_missing:
                 semantic_errors.append(
-                    f"{run_id}: identity corruption (meta missing_indicators_enabled={meta.get('missing_indicators_enabled')!r} does not match manifest.experiment.factors.missing_indicators_enabled={exp_missing!r})."
+                    f"{run_id}: identity corruption (meta missing_indicators_enabled (imputation_awareness)={meta.get('missing_indicators_enabled')!r} does not match manifest.experiment.factors.missing_indicators_enabled={exp_missing!r})."
                 )
             if isinstance(exp_semantic_label, str) and exp_semantic_label.strip():
                 if meta.get("semantic_label") != exp_semantic_label:
@@ -173,6 +197,32 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
                     semantic_errors.append(
                         f"{run_id}: identity corruption (canonical run_id must start with {expected_run_id_prefix!r})."
                     )
+
+        # ------------------------------------------------------------------
+        # v5 anti-corruption assertions
+        # ------------------------------------------------------------------
+        if manifest_present and not legacy_semantics:
+            # Non-legacy manifests should carry experiment_surface.
+            if not is_v5_surface(experiment_surface):
+                semantic_warnings.append(
+                    f"{run_id}: non-legacy manifest is missing a valid experiment_surface block "
+                    "(surface_source='legacy_variant_fallback'). Add experiment_surface to the "
+                    "manifest for factor-first attribution."
+                )
+            # Anti-corruption: sentiment must not be inferred from variant alone in non-legacy runs
+            # that claim to have v5 surface data but the surface block is absent/incomplete.
+            if (
+                surface_source == "legacy_variant_fallback"
+                and exp_variant in VALID_EXPERIMENT_VARIANTS
+                and not is_v5_surface(experiment_surface)
+            ):
+                # This is a warning (not an error) during the transition period.
+                semantic_warnings.append(
+                    f"{run_id}: sentiment_surface attribution was not sourced from experiment_surface "
+                    f"(surface_source={surface_source!r}); variant={exp_variant!r} should not imply "
+                    "parquet-level sentiment. Add experiment_surface to avoid attribution corruption."
+                )
+
         if variant == LEGACY_VARIANT:
             semantic_warnings.append(
                 f"{run_id}: variant unresolved ({LEGACY_VARIANT}); semantic comparisons may be skipped."
@@ -241,6 +291,11 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     if not summaries:
         provenance_errors.append("No summaries available after discovery/parsing.")
 
+    # ------------------------------------------------------------------
+    # Reproducibility checks: feature-surface-scoped (v5)
+    # ------------------------------------------------------------------
+    # Group runs by (experiment_seed, feature_surface) — not just seed.
+    # Different feature surfaces are INTENTIONAL and must NOT trigger warnings.
     reproducibility_groups: dict[str, list[dict[str, Any]]] = {}
     for summary in summaries:
         meta = summary.get("meta") or {}
@@ -248,11 +303,15 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         experiment_seed = reproducibility.get("experiment_seed")
         if experiment_seed is None:
             continue
-        reproducibility_groups.setdefault(str(experiment_seed), []).append(summary)
+        experiment_surface = meta.get("experiment_surface") or {}
+        feature_surface = experiment_surface.get("feature_surface") or "default"
+        group_key = f"{experiment_seed}::{feature_surface}"
+        reproducibility_groups.setdefault(group_key, []).append(summary)
 
-    for seed, grouped in reproducibility_groups.items():
+    for group_key, grouped in reproducibility_groups.items():
         if len(grouped) < 2:
             continue
+        seed, feature_surface = group_key.split("::", 1)
         fingerprints = {
             summary.get("run_id", "unknown"): {
                 key: (summary.get("meta") or {}).get("reproducibility", {}).get(key)
@@ -262,7 +321,8 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         }
         if len({tuple(sorted(fp.items())) for fp in fingerprints.values()}) > 1:
             reproducibility_warnings.append(
-                f"Runs sharing experiment_seed={seed} have differing reproducibility metadata: "
+                f"Runs sharing experiment_seed={seed} and feature_surface={feature_surface!r} "
+                "have differing reproducibility metadata: "
                 + ", ".join(sorted(fingerprints.keys()))
             )
 
@@ -278,8 +338,8 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         for (section_name, pair_name), orders in sorted(pair_feature_orders.items()):
             if len(set(orders.values())) > 1:
                 reproducibility_warnings.append(
-                    f"Runs sharing experiment_seed={seed} have differing feature column order "
-                    f"for {section_name}:{pair_name}."
+                    f"Runs sharing experiment_seed={seed} and feature_surface={feature_surface!r} "
+                    f"have differing feature column order for {section_name}:{pair_name}."
                 )
 
     errors = provenance_errors + semantic_errors + manifest_errors + reproducibility_errors

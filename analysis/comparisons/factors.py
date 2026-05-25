@@ -2,13 +2,20 @@
 analysis/comparisons/factors.py
 ================================
 Generalized factor-based cohort filtering and comparison helpers.
+
+Terminology note
+-----------------
+"Imputation Awareness" (``missing_indicators_enabled``) is the precise term for the
+runtime architecture in which the model receives an explicit indicator that a feature
+value was *imputed* rather than genuinely observed.  This is more accurate than the
+informal "missing awareness" label used in earlier documentation.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from experiment_semantics import normalize_experiment_factors
+from experiment_semantics import normalize_experiment_factors, is_v5_surface
 
 
 def summary_experiment(summary: dict[str, Any]) -> dict[str, Any]:
@@ -37,6 +44,27 @@ def summary_factors(summary: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def summary_surface(summary: dict[str, Any]) -> dict[str, Any]:
+    """
+    Return the canonical ``experiment_surface`` dict for *summary*.
+
+    For v5 manifests this reads the explicit surface block written by the manifest
+    parser.  For legacy manifests an all-None dict is returned and callers should
+    fall back to ``summary_factors()`` for sentiment/awareness attribution.
+    """
+    return (summary.get("meta") or {}).get("experiment_surface") or {}
+
+
+def summary_surface_source(summary: dict[str, Any]) -> str:
+    """Return the surface_source tag: ``"manifest"`` or ``"legacy_variant_fallback"``."""
+    return (summary.get("meta") or {}).get("surface_source", "legacy_variant_fallback")
+
+
+def is_v5_summary(summary: dict[str, Any]) -> bool:
+    """Return True when *summary* carries a valid v5 experiment_surface block."""
+    return is_v5_surface(summary_surface(summary))
+
+
 def _value_matches(actual: Any, expected: Any) -> bool:
     if isinstance(expected, (set, list, tuple, frozenset)):
         return actual in expected
@@ -48,15 +76,39 @@ def filter_summaries(
     *,
     generation: Any = None,
     factors: dict[str, Any] | None = None,
+    surface: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    """
+    Filter summaries by generation, runtime factors, and/or surface factors.
+
+    Parameters
+    ----------
+    generation:
+        If provided, only summaries whose generation matches are returned.
+    factors:
+        Dict of runtime factor conditions (e.g. ``{"dl_enabled": True}``).
+    surface:
+        Dict of ``experiment_surface`` conditions (e.g.
+        ``{"sentiment_surface": True, "training_pair_family": "persistent"}``).
+        Applied only to v5 summaries; legacy summaries are excluded from surface-
+        conditioned queries.
+    """
     out: list[dict[str, Any]] = []
     factors = factors or {}
+    surface = surface or {}
     for summary in summaries:
         if generation is not None and not _value_matches(summary_generation(summary), generation):
             continue
         sf = summary_factors(summary)
         if not all(_value_matches(sf.get(k), v) for k, v in factors.items()):
             continue
+        if surface:
+            # Surface conditions are only meaningful for v5 summaries.
+            if not is_v5_summary(summary):
+                continue
+            sv = summary_surface(summary)
+            if not all(_value_matches(sv.get(k), v) for k, v in surface.items()):
+                continue
         out.append(summary)
     return out
 
@@ -165,18 +217,73 @@ def build_gen_delta_table(
     return rows
 
 
+def build_family_delta_table(
+    family_a_runs: list[dict[str, Any]],
+    family_b_runs: list[dict[str, Any]],
+    *,
+    cohort: str,
+    family_a_label: str = "family_a",
+    family_b_label: str = "family_b",
+) -> list[dict[str, Any]]:
+    """
+    Build a delta table comparing two training-pair-family cohorts.
+
+    Used for training-family transfer effect comparisons (e.g. persistent vs reactive).
+    """
+    a = extract_pair_metrics(family_a_runs, metrics=_GEN_METRICS)
+    b = extract_pair_metrics(family_b_runs, metrics=_GEN_METRICS)
+    rows: list[dict[str, Any]] = []
+    for pair in sorted(set(a) | set(b)):
+        a_pair = a.get(pair, {})
+        b_pair = b.get(pair, {})
+        for metric in sorted(set(a_pair) | set(b_pair)):
+            a_val = a_pair.get(metric)
+            b_val = b_pair.get(metric)
+            rows.append(
+                {
+                    "cohort": cohort,
+                    "pair": pair,
+                    "metric": metric,
+                    family_a_label: a_val,
+                    family_b_label: b_val,
+                    f"delta_{family_b_label}_minus_{family_a_label}": (
+                        (b_val - a_val)
+                        if (a_val is not None and b_val is not None)
+                        else None
+                    ),
+                }
+            )
+    return rows
+
+
 def factor_crosstab(
     summaries: list[dict[str, Any]],
     *,
     factor_keys: list[str] | None = None,
+    surface_keys: list[str] | None = None,
 ) -> dict[str, dict[str, list[str]]]:
+    """
+    Build a factor cross-tabulation across all *summaries*.
+
+    Runtime factors (from ``experiment.factors``) are always included.
+    Surface factors (from ``experiment_surface``) are included for v5 summaries
+    when *surface_keys* is provided or when the default set is used.
+
+    "Imputation Awareness" is the canonical label for ``missing_indicators_enabled``.
+    """
     factor_keys = factor_keys or [
         "dl_enabled",
         "sentiment_enabled",
-        "missing_indicators_enabled",
+        "missing_indicators_enabled",  # imputation awareness
         "msml_regime",
         "overlap_only",
         "selector_enabled",
+    ]
+    surface_keys = surface_keys if surface_keys is not None else [
+        "sentiment_surface",
+        "training_pair_family",
+        "evaluation_pair_family",
+        "feature_surface",
     ]
     table: dict[str, dict[str, list[str]]] = {}
     for factor in factor_keys:
@@ -186,5 +293,16 @@ def factor_crosstab(
             key = str(value)
             grouped.setdefault(key, []).append(summary.get("run_id", "unknown"))
         table[factor] = {k: sorted(v) for k, v in sorted(grouped.items())}
+    for sf in surface_keys:
+        grouped = {}
+        for summary in summaries:
+            if not is_v5_summary(summary):
+                grouped.setdefault("legacy", []).append(summary.get("run_id", "unknown"))
+                continue
+            value = summary_surface(summary).get(sf)
+            key = str(value)
+            grouped.setdefault(key, []).append(summary.get("run_id", "unknown"))
+        if any(k != "legacy" or v for k, v in grouped.items()):
+            table[sf] = {k: sorted(v) for k, v in sorted(grouped.items())}
     return table
 
