@@ -85,6 +85,13 @@ from analysis.reports.markdown_report import render_markdown_report
 from analysis.validation import validate_summaries, sort_summaries_deterministically
 from experiment_semantics import is_v5_surface
 
+_LEGACY_OR_MISSING_SURFACE_SOURCES = {
+    None,
+    "",
+    "missing_experiment_surface",
+    "legacy_variant_fallback",
+}
+
 
 # ---------------------------------------------------------------------------
 # Summary builder
@@ -154,12 +161,13 @@ def build_run_summary(
             "manifest surface_source."
         )
     if manifest and is_v5_surface(manifest_surface):
-        if identity_surface_source in {
-            None,
-            "",
-            "missing_experiment_surface",
-            "legacy_variant_fallback",
-        }:
+        if manifest_surface_source in _LEGACY_OR_MISSING_SURFACE_SOURCES:
+            raise RuntimeError(
+                "Analysis provenance corruption detected: canonical v5 "
+                "experiment_surface present but manifest surface_source "
+                "resolved to a legacy/missing fallback state."
+            )
+        if identity_surface_source in _LEGACY_OR_MISSING_SURFACE_SOURCES:
             raise RuntimeError(
                 "Analysis provenance corruption detected: canonical v5 "
                 "experiment_surface present but identity surface_source "

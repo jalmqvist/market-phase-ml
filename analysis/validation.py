@@ -41,6 +41,12 @@ _REQUIRED_REPRODUCIBILITY_KEYS = (
     "python_random_seed",
     "torch_seed",
 )
+_LEGACY_OR_MISSING_SURFACE_SOURCES = {
+    None,
+    "",
+    "missing_experiment_surface",
+    "legacy_variant_fallback",
+}
 
 
 def sort_summaries_deterministically(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -214,7 +220,7 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
             # Anti-corruption: sentiment must not be inferred from variant alone in non-legacy runs
             # that claim to have v5 surface data but the surface block is absent/incomplete.
             if (
-                surface_source != "manifest"
+                surface_source in _LEGACY_OR_MISSING_SURFACE_SOURCES
                 and exp_variant in VALID_EXPERIMENT_VARIANTS
                 and not is_v5_surface(experiment_surface)
             ):
@@ -223,13 +229,15 @@ def validate_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
                     f"(surface_source={surface_source!r}); variant={exp_variant!r} should not imply "
                     "parquet-level sentiment. Add experiment_surface to avoid attribution corruption."
                 )
-        if is_v5_surface(experiment_surface) and surface_source != "manifest":
+        if is_v5_surface(experiment_surface) and surface_source in _LEGACY_OR_MISSING_SURFACE_SOURCES:
             semantic_errors.append(
-                f"{run_id}: surface_source mismatch (is_v5_surface=True but surface_source={surface_source!r})."
+                f"{run_id}: surface_source mismatch (is_v5_surface=True but surface_source is "
+                f"legacy/missing fallback: {surface_source!r})."
             )
-        if not is_v5_surface(experiment_surface) and surface_source == "manifest":
+        if not is_v5_surface(experiment_surface) and surface_source not in _LEGACY_OR_MISSING_SURFACE_SOURCES:
             semantic_errors.append(
-                f"{run_id}: surface_source mismatch (surface_source='manifest' but experiment_surface is not v5-valid)."
+                f"{run_id}: surface_source mismatch (surface_source={surface_source!r} indicates "
+                "canonical provenance but experiment_surface is not v5-valid)."
             )
         if is_v5_surface(experiment_surface):
             modern_v5_summaries.append(summary)

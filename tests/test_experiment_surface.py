@@ -102,7 +102,7 @@ def _make_summary_with_surface(
             "sentiment_enabled": True,
             "missing_indicators_enabled": missing_indicators_enabled,
             "experiment_surface": surface,
-            "surface_source": "manifest",
+            "surface_source": surface.get("surface_source"),
             "experiment": {
                 "generation": "gen1",
                 "variant": "A",
@@ -846,54 +846,56 @@ class TestValidationAntiCorruption(unittest.TestCase):
         self.assertTrue(is_v5_summary(v5))
 
     def test_validate_summaries_accepts_repaired_v5_nested_surface_source(self):
-        run_dir = _make_run_dir()
-        _write_manifest(run_dir, {
-            "run": {"run_id": "gen1_A__20240101T120000Z", "timestamp_utc": "20240101T120000Z"},
-            "experiment": {
-                "generation": "gen1", "variant": "A",
-                "sentiment_enabled": True, "missing_indicators_enabled": False,
-                "dl_enabled": True,
-                "factors": {"dl_enabled": True, "sentiment_enabled": True,
-                            "missing_indicators_enabled": False, "msml_regime": "LVTF",
-                            "overlap_only": False, "selector_enabled": True},
-                "semantic_label": "Gen1_A",
-                "legacy_semantics": False,
-            },
-            "experiment_surface": _v5_surface(
-                surface_source="manifest",
-                sentiment_surface=True,
-                training_pair_family="persistent",
-                evaluation_pair_family="persistent",
-            ),
-        })
-        manifest = parse_manifest(run_dir)
-        identity = infer_run_identity(
-            archive_root=run_dir.parent,
-            run_dir=run_dir,
-            experiment_gen="gen1",
-            manifest=manifest,
-        )
-        summary = {
-            "run_id": identity["run_id"],
-            "meta": {
-                **identity,
-                "manifest_present": True,
-                "legacy_mode": False,
-                "legacy_semantics": identity["legacy_semantics"],
-                "manifest_diagnostics": {"manifest_count": 1},
-                "experiment": manifest["experiment"],
-                "experiment_surface": identity["experiment_surface"],
-                "surface_source": identity["surface_source"],
-                "reproducibility": {},
-                "feature_ordering": {},
-                "files_found": [],
-            },
-            "csvs": {"walkforward_summary": [], "walkforward_per_fold": []},
-            "log": {},
-            "warnings": [],
-        }
-        result = validate_summaries([summary])
-        self.assertEqual(result["errors"], [])
+        for surface_source in ["manifest", "artifact_introspection", "sidecar_manifest"]:
+            with self.subTest(surface_source=surface_source):
+                run_dir = _make_run_dir()
+                _write_manifest(run_dir, {
+                    "run": {"run_id": "gen1_A__20240101T120000Z", "timestamp_utc": "20240101T120000Z"},
+                    "experiment": {
+                        "generation": "gen1", "variant": "A",
+                        "sentiment_enabled": True, "missing_indicators_enabled": False,
+                        "dl_enabled": True,
+                        "factors": {"dl_enabled": True, "sentiment_enabled": True,
+                                    "missing_indicators_enabled": False, "msml_regime": "LVTF",
+                                    "overlap_only": False, "selector_enabled": True},
+                        "semantic_label": "Gen1_A",
+                        "legacy_semantics": False,
+                    },
+                    "experiment_surface": _v5_surface(
+                        surface_source=surface_source,
+                        sentiment_surface=True,
+                        training_pair_family="persistent",
+                        evaluation_pair_family="persistent",
+                    ),
+                })
+                manifest = parse_manifest(run_dir)
+                identity = infer_run_identity(
+                    archive_root=run_dir.parent,
+                    run_dir=run_dir,
+                    experiment_gen="gen1",
+                    manifest=manifest,
+                )
+                summary = {
+                    "run_id": identity["run_id"],
+                    "meta": {
+                        **identity,
+                        "manifest_present": True,
+                        "legacy_mode": False,
+                        "legacy_semantics": identity["legacy_semantics"],
+                        "manifest_diagnostics": {"manifest_count": 1},
+                        "experiment": manifest["experiment"],
+                        "experiment_surface": identity["experiment_surface"],
+                        "surface_source": identity["surface_source"],
+                        "reproducibility": {},
+                        "feature_ordering": {},
+                        "files_found": [],
+                    },
+                    "csvs": {"walkforward_summary": [], "walkforward_per_fold": []},
+                    "log": {},
+                    "warnings": [],
+                }
+                result = validate_summaries([summary])
+                self.assertEqual(result["errors"], [])
 
 
 if __name__ == "__main__":

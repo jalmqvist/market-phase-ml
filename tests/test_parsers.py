@@ -985,9 +985,9 @@ class TestPipelineIntegration(unittest.TestCase):
         self.output_dir = Path(tempfile.mkdtemp())
 
         # Two synthetic run directories (A/B cohort)
-        for run_name, dl_enabled, run_variant in [
-            ("run_baseline", False, "B"),
-            ("run_dl", True, "A"),
+        for run_name, dl_enabled, run_variant, surface_source in [
+            ("run_baseline", False, "B", "artifact_introspection"),
+            ("run_dl", True, "A", "sidecar_manifest"),
         ]:
             run_dir = self.archive / run_name
             run_dir.mkdir()
@@ -1007,7 +1007,7 @@ class TestPipelineIntegration(unittest.TestCase):
                     "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
                 },
                 "experiment_surface": {
-                    "surface_source": "manifest",
+                    "surface_source": surface_source,
                     "surface_semantics_version": 5,
                     "sentiment_surface": dl_enabled,
                     "training_pair_family": "persistent",
@@ -1227,6 +1227,20 @@ class TestPipelineIntegration(unittest.TestCase):
         finally:
             _rmtree(archive)
             _rmtree(output)
+
+    def test_pipeline_accepts_canonical_v5_provenance_sources(self):
+        from analysis.pipeline import run_pipeline
+
+        run_pipeline(self.archive, self.output_dir, verbose=False)
+        comparison = json.loads((self.output_dir / "comparisons.json").read_text())
+        self.assertEqual(comparison["validation"]["errors"], [])
+
+        summary_sources = {
+            json.loads(path.read_text())["meta"]["surface_source"]
+            for path in (self.output_dir / "summaries").glob("*.summary.json")
+        }
+        self.assertIn("artifact_introspection", summary_sources)
+        self.assertIn("sidecar_manifest", summary_sources)
 
 
 class TestValidationAndOrdering(unittest.TestCase):
