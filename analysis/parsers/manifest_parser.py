@@ -10,7 +10,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from experiment_semantics import normalize_experiment_factors, normalize_experiment_surface, is_v5_surface
+from experiment_semantics import (
+    infer_imputation_awareness_from_name,
+    normalize_experiment_factors,
+    normalize_experiment_surface,
+    is_v5_surface,
+)
 
 
 def _manifest_files(run_dir: Path) -> list[Path]:
@@ -35,7 +40,11 @@ def _manifest_files(run_dir: Path) -> list[Path]:
     return deduped
 
 
-def _parse_experiment_block(data: dict[str, Any]) -> dict[str, Any]:
+def _parse_experiment_block(
+    data: dict[str, Any],
+    *,
+    run_name_hint: str | None = None,
+) -> dict[str, Any]:
     experiment = data.get("experiment") or {}
     if not isinstance(experiment, dict):
         return {}
@@ -46,6 +55,18 @@ def _parse_experiment_block(data: dict[str, Any]) -> dict[str, Any]:
         fallback_dl_enabled=experiment.get("dl_enabled"),
         fallback_msml_regime=experiment.get("msml_regime"),
     )
+    run_section = data.get("run") if isinstance(data.get("run"), dict) else {}
+    awareness_hint = None
+    for candidate in (
+        run_name_hint,
+        run_section.get("run_id"),
+        data.get("run_id"),
+    ):
+        awareness_hint = infer_imputation_awareness_from_name(candidate)
+        if isinstance(awareness_hint, bool):
+            break
+    if isinstance(awareness_hint, bool):
+        factors["missing_indicators_enabled"] = awareness_hint
     generation = experiment.get("generation")
     variant = experiment.get("variant")
     sentiment_enabled = factors.get("sentiment_enabled")
@@ -123,7 +144,7 @@ def parse_manifest(run_dir: Path) -> dict[str, Any] | None:
     flags_section = data.get("flags") or {}
     reproducibility_section = data.get("reproducibility") or {}
     feature_ordering_section = data.get("feature_ordering") or {}
-    experiment_block = _parse_experiment_block(data)
+    experiment_block = _parse_experiment_block(data, run_name_hint=run_dir.name)
     experiment_surface = _parse_experiment_surface(data)
     dl_enabled = dl_section.get("dl_enabled")
     if dl_enabled is None:

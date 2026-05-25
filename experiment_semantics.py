@@ -17,6 +17,7 @@ labels, DL flags, or directory names.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 CURRENT_EXPERIMENT_SEMANTICS_VERSION = 3
@@ -131,6 +132,7 @@ EXPERIMENT_VARIANTS: dict[str, dict[str, Any]] = {
 }
 
 LEGACY_RUN_MEANING = "legacy or unknown experiment semantics"
+_AWARENESS_TOKEN_RE = re.compile(r"(?:^|[_\-/])(?P<label>aware|blind)(?:$|[_\-/])", re.IGNORECASE)
 
 
 def normalize_variant(value: str | None) -> str | None:
@@ -159,6 +161,29 @@ def _as_msml_regime(value: Any, *, default: str) -> str:
     if isinstance(value, str) and value.strip():
         return value.strip().upper()
     return default
+
+
+def infer_imputation_awareness_from_name(name: str | None) -> bool | None:
+    """
+    Infer canonical imputation awareness from a semantic run-name token.
+
+    Canonical rule:
+      *_aware -> True
+      *_blind -> False
+
+    Returns ``None`` when no unambiguous token is present.
+    """
+    if not isinstance(name, str) or not name.strip():
+        return None
+    labels = {
+        m.group("label").strip().lower()
+        for m in _AWARENESS_TOKEN_RE.finditer(name.strip().lower())
+    }
+    if labels == {"aware"}:
+        return True
+    if labels == {"blind"}:
+        return False
+    return None
 
 
 def normalize_experiment_factors(

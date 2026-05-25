@@ -324,6 +324,49 @@ class TestParseManifest(unittest.TestCase):
         finally:
             _rmtree(run_dir)
 
+    def test_run_name_awareness_overrides_repaired_manifest_factor(self):
+        run_dir = _make_run_dir({
+            "run_manifest.json": json.dumps(
+                self._make_manifest(
+                    {
+                        "run": {
+                            "run_id": "persistent_nodl_aware",
+                            "git_sha": "abc123",
+                            "timestamp_utc": "20260512T064904Z",
+                            "python_version": "3.12.3",
+                        },
+                        "experiment": {
+                            "run_family": "factorial_v1",
+                            "generation": "gen2",
+                            "variant": "D",
+                            "sentiment_enabled": False,
+                            # Repaired-manifest inconsistency: value is wrong for *_aware.
+                            "missing_indicators_enabled": False,
+                            "factors": {
+                                "dl_enabled": False,
+                                "sentiment_enabled": False,
+                                "missing_indicators_enabled": False,
+                                "msml_regime": "LVTF",
+                                "overlap_only": False,
+                                "selector_enabled": True,
+                            },
+                            "semantic_label": "Gen2_D",
+                            "legacy_semantics": False,
+                            "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
+                        },
+                    }
+                )
+            ),
+        })
+        try:
+            parsed = parse_manifest(run_dir)
+            self.assertIsNotNone(parsed)
+            factors = parsed["experiment"]["factors"]
+            self.assertIs(factors["missing_indicators_enabled"], True)
+            self.assertIs(parsed["experiment"]["missing_indicators_enabled"], True)
+        finally:
+            _rmtree(run_dir)
+
 
 class TestCanonicalExperimentMetadata(unittest.TestCase):
     def test_variant_b_metadata_keeps_sentiment_disabled(self):
@@ -1241,6 +1284,97 @@ class TestPipelineIntegration(unittest.TestCase):
         }
         self.assertIn("artifact_introspection", summary_sources)
         self.assertIn("sidecar_manifest", summary_sources)
+
+    def test_pipeline_preserves_nodl_aware_vs_blind_from_canonical_run_name(self):
+        from analysis.pipeline import run_pipeline
+
+        archive = Path(tempfile.mkdtemp())
+        output = Path(tempfile.mkdtemp())
+        try:
+            runs = [
+                ("persistent_nodl_blind", "gen1", "B", "persistent"),
+                ("persistent_nodl_aware", "gen2", "D", "persistent"),
+                ("reactive_nodl_blind", "gen1", "B", "reactive"),
+                ("reactive_nodl_aware", "gen2", "D", "reactive"),
+            ]
+            for idx, (run_name, generation, variant, family) in enumerate(runs, start=1):
+                run_dir = archive / run_name
+                run_dir.mkdir()
+                ts = f"20260521T02020{idx}Z"
+                manifest = {
+                    "run": {
+                        "run_id": run_name,
+                        "git_sha": "abc123",
+                        "timestamp_utc": ts,
+                    },
+                    "experiment": {
+                        "generation": generation,
+                        "variant": variant,
+                        "sentiment_enabled": False,
+                        # Simulate repaired inconsistency: aware runs are incorrectly stored as False.
+                        "missing_indicators_enabled": False,
+                        "factors": {
+                            "dl_enabled": False,
+                            "sentiment_enabled": False,
+                            "missing_indicators_enabled": False,
+                            "msml_regime": "LVTF",
+                            "overlap_only": False,
+                            "selector_enabled": True,
+                        },
+                        "semantic_label": f"{generation.capitalize()}_{variant}",
+                        "legacy_semantics": False,
+                        "semantics_version": CURRENT_EXPERIMENT_SEMANTICS_VERSION,
+                    },
+                    "experiment_surface": {
+                        "surface_source": "manifest",
+                        "surface_semantics_version": 5,
+                        "sentiment_surface": "none",
+                        "training_pair_family": family,
+                        "evaluation_pair_family": family,
+                        "feature_surface": "trend_vol_only",
+                        "artifact_source": "none",
+                    },
+                    "dl": {"dl_enabled": False, "dl_mode_tag": "__baseline"},
+                }
+                (run_dir / "run_manifest.json").write_text(json.dumps(manifest))
+                (run_dir / "walkforward_results_summary__baseline.csv").write_text(
+                    "Pair,Sharpe_Dynamic,Sharpe_Baseline,Sharpe_Delta,N_Folds\n"
+                    "EURUSD,0.10,0.08,0.02,10\n"
+                )
+
+            run_pipeline(archive, output, verbose=False)
+            comparisons = json.loads((output / "comparisons.json").read_text())
+            report = (output / "report.md").read_text()
+
+            run_ids_by_relpath: dict[str, str] = {}
+            for summary_path in (output / "summaries").glob("*.summary.json"):
+                summary = json.loads(summary_path.read_text())
+                run_ids_by_relpath[summary["meta"]["archive_relpath"]] = summary["run_id"]
+
+            p_blind = run_ids_by_relpath["persistent_nodl_blind"]
+            p_aware = run_ids_by_relpath["persistent_nodl_aware"]
+            r_blind = run_ids_by_relpath["reactive_nodl_blind"]
+            r_aware = run_ids_by_relpath["reactive_nodl_aware"]
+
+            grouped = comparisons["sentiment"]["grouped"]
+            self.assertIn(p_aware, grouped["family:persistent"]["imputation_awareness=true"]["off"])
+            self.assertIn(p_blind, grouped["family:persistent"]["imputation_awareness=false"]["off"])
+            self.assertIn(r_aware, grouped["family:reactive"]["imputation_awareness=true"]["off"])
+            self.assertIn(r_blind, grouped["family:reactive"]["imputation_awareness=false"]["off"])
+
+            factor_crosstab = comparisons["factors"]["factor_crosstab"]["missing_indicators_enabled"]
+            self.assertIn(p_aware, factor_crosstab["True"])
+            self.assertIn(r_aware, factor_crosstab["True"])
+            self.assertIn(p_blind, factor_crosstab["False"])
+            self.assertIn(r_blind, factor_crosstab["False"])
+
+            self.assertIn("training_family=persistent/imputation_awareness=true", report)
+            self.assertIn("training_family=reactive/imputation_awareness=true", report)
+            self.assertIn(p_aware, report)
+            self.assertIn(r_aware, report)
+        finally:
+            _rmtree(archive)
+            _rmtree(output)
 
 
 class TestValidationAndOrdering(unittest.TestCase):

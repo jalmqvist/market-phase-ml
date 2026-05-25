@@ -15,7 +15,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from experiment_semantics import normalize_experiment_factors, is_v5_surface
+from experiment_semantics import (
+    infer_imputation_awareness_from_name,
+    normalize_experiment_factors,
+    is_v5_surface,
+)
 
 _LEGACY_OR_MISSING_SURFACE_SOURCES = {
     None,
@@ -42,13 +46,27 @@ def summary_generation(summary: dict[str, Any]) -> str | None:
 
 def summary_factors(summary: dict[str, Any]) -> dict[str, Any]:
     experiment = summary_experiment(summary)
-    return normalize_experiment_factors(
+    factors = normalize_experiment_factors(
         experiment.get("factors"),
         fallback_sentiment_enabled=experiment.get("sentiment_enabled"),
         fallback_missing_indicators_enabled=experiment.get("missing_indicators_enabled"),
         fallback_dl_enabled=(summary.get("meta") or {}).get("dl_enabled"),
         fallback_msml_regime=experiment.get("msml_regime"),
     )
+    meta = summary.get("meta") or {}
+    awareness_hint = None
+    for candidate in (
+        meta.get("semantic_run_name"),
+        meta.get("archive_relpath"),
+        meta.get("manifest_run_id"),
+        summary.get("run_id"),
+    ):
+        awareness_hint = infer_imputation_awareness_from_name(candidate)
+        if isinstance(awareness_hint, bool):
+            break
+    if isinstance(awareness_hint, bool):
+        factors["missing_indicators_enabled"] = awareness_hint
+    return factors
 
 
 def summary_surface(summary: dict[str, Any]) -> dict[str, Any]:
