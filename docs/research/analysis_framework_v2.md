@@ -36,6 +36,21 @@ python analysis/pipeline.py results_archive/ --output-dir reports/ --verbose
 | `<output_dir>/comparisons.json` | Cross-run sentiment / gen / selector + generalized factor comparisons |
 | `<output_dir>/report.md` | Human-readable report with validation, warnings, and diagnostics |
 
+## Provenance flow
+
+```mermaid
+graph TD
+    A[Runtime Config] --> D[experiment_surface]
+    B[Parquet Metadata] --> D
+    C[Artifact Sidecar Metadata] --> D
+
+    D --> E[Canonical Manifest]
+    E --> F[Analysis Pipeline]
+    F --> G[Factor Comparisons]
+    F --> H[Validation]
+    F --> I[Reports]
+```
+
 ---
 
 ## Architecture
