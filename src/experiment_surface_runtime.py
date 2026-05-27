@@ -9,6 +9,8 @@ from experiment_semantics import EXPERIMENT_SURFACE_VERSION
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
+_PERSISTENT_PAIRS = frozenset({"EURUSD", "GBPUSD", "NZDUSD", "EURGBP", "EURAUD"})
+_REACTIVE_PAIRS = frozenset({"USDJPY", "EURJPY", "GBPJPY", "EURCHF", "USDCHF"})
 
 
 def _decode_bool(value: Any) -> bool | None:
@@ -111,6 +113,49 @@ def _env_str(name: str) -> str | None:
     return _decode_str(os.getenv(name))
 
 
+def _normalize_sentiment_surface(value: Any) -> str | None:
+    if isinstance(value, bool):
+        return "sentiment" if value else "no_sentiment"
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"sentiment", "no_sentiment", "none"}:
+            return normalized
+    return None
+
+
+def _infer_pair_family_from_text(value: Any) -> str | None:
+    text = _decode_str(value)
+    if not text:
+        return None
+    normalized = text.lower()
+    has_persistent = "persistent" in normalized
+    has_reactive = "reactive" in normalized
+    if has_persistent and not has_reactive:
+        return "persistent"
+    if has_reactive and not has_persistent:
+        return "reactive"
+    return None
+
+
+def _infer_eval_family_from_active_pairs() -> str | None:
+    raw = os.getenv("ACTIVE_PAIRS", "")
+    if not raw.strip():
+        return None
+    active_pairs = {p.strip().upper() for p in raw.split(",") if p.strip()}
+    if not active_pairs:
+        return None
+    if active_pairs.issubset(_PERSISTENT_PAIRS):
+        return "persistent"
+    if active_pairs.issubset(_REACTIVE_PAIRS):
+        return "reactive"
+    return None
+
+
+def _resolve_imputation_awareness(experiment_factors: Mapping[str, Any]) -> str:
+    awareness = _decode_bool(experiment_factors.get("missing_indicators_enabled"))
+    return "aware" if awareness else "blind"
+
+
 def build_runtime_experiment_surface(
     *,
     dl_runtime_enabled: bool,
@@ -132,7 +177,7 @@ def build_runtime_experiment_surface(
         merged_metadata.update(_flatten_metadata(_read_parquet_kv_metadata(dl_artifact_path)))
         merged_metadata.update(_flatten_metadata(_read_sidecar_metadata(dl_artifact_path)))
 
-    sentiment_surface = _decode_bool(
+    explicit_sentiment_surface = _normalize_sentiment_surface(
         _lookup(
             merged_metadata,
             "sentiment_surface",
@@ -141,10 +186,12 @@ def build_runtime_experiment_surface(
             "mpml.sentiment_surface",
         )
     )
-    if sentiment_surface is None:
-        sentiment_surface = _env_bool("MPML_SENTIMENT_SURFACE")
+    if explicit_sentiment_surface is None:
+        explicit_sentiment_surface = _normalize_sentiment_surface(
+            _env_str("MPML_SENTIMENT_SURFACE")
+        )
 
-    training_pair_family = _decode_str(
+    explicit_training_pair_family = _decode_str(
         _lookup(
             merged_metadata,
             "training_pair_family",
@@ -153,9 +200,14 @@ def build_runtime_experiment_surface(
             "mpml.training_pair_family",
             "pair_family.train",
         )
-    ) or _env_str("MPML_TRAINING_PAIR_FAMILY") or "unknown"
+    ) or _decode_str(
+        _lookup(
+            merged_metadata,
+            "pair_family.training",
+        )
+    ) or _env_str("MPML_TRAINING_PAIR_FAMILY")
 
-    evaluation_pair_family = _decode_str(
+    explicit_evaluation_pair_family = _decode_str(
         _lookup(
             merged_metadata,
             "evaluation_pair_family",
@@ -165,7 +217,7 @@ def build_runtime_experiment_surface(
             "pair_family.eval",
             "pair_family.evaluation",
         )
-    ) or _env_str("MPML_EVALUATION_PAIR_FAMILY") or "unknown"
+    ) or _env_str("MPML_EVALUATION_PAIR_FAMILY")
 
     feature_surface = _decode_str(
         _lookup(
@@ -177,7 +229,7 @@ def build_runtime_experiment_surface(
             "feature_set",
             "surface.feature_set",
         )
-    ) or _env_str("MPML_FEATURE_SURFACE") or "unknown"
+    ) or _env_str("MPML_FEATURE_SURFACE") or _decode_str(dl_surface.get("feature_set")) or "unknown"
 
     artifact_source = _decode_str(
         _lookup(
@@ -235,6 +287,37 @@ def build_runtime_experiment_surface(
         )
     ) or _decode_str(experiment_factors.get("msml_regime")) or _decode_str(dl_surface.get("dl_regime")) or "unknown"
 
+    dl_enabled = bool(dl_runtime_enabled)
+    sentiment_surface = explicit_sentiment_surface
+    if not dl_enabled:
+        sentiment_surface = "none"
+    elif sentiment_surface is None:
+        if feature_surface == "price_trend":
+            sentiment_surface = "sentiment"
+        elif feature_surface == "trend_vol_only":
+            sentiment_surface = "no_sentiment"
+    if sentiment_surface is None:
+        sentiment_surface = "none"
+
+    training_pair_family = explicit_training_pair_family or _infer_pair_family_from_text(
+        _lookup(
+            merged_metadata,
+            "artifact_source",
+            "surface.artifact_source",
+            "artifact.path",
+            "artifact_path",
+            "source_path",
+        )
+    ) or _infer_pair_family_from_text(dl_artifact_path) or "unknown"
+
+    evaluation_pair_family = (
+        explicit_evaluation_pair_family
+        or _infer_eval_family_from_active_pairs()
+        or "unknown"
+    )
+
+    imputation_awareness = _resolve_imputation_awareness(experiment_factors)
+
     return {
         "surface_semantics_version": surface_semantics_version,
         "surface_source": "artifact_introspection",
@@ -242,8 +325,9 @@ def build_runtime_experiment_surface(
         "evaluation_pair_family": evaluation_pair_family,
         "sentiment_surface": sentiment_surface,
         "feature_surface": feature_surface,
+        "imputation_awareness": imputation_awareness,
         "artifact_source": artifact_source,
-        "dl_enabled": bool(dl_runtime_enabled),
+        "dl_enabled": dl_enabled,
         "selector_enabled": bool(experiment_factors.get("selector_enabled")),
         "overlap_only": bool(experiment_factors.get("overlap_only")),
         "msml_regime": msml_regime,
