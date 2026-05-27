@@ -11,6 +11,10 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 _PERSISTENT_PAIRS = frozenset({"EURUSD", "GBPUSD", "NZDUSD", "EURGBP", "EURAUD"})
 _REACTIVE_PAIRS = frozenset({"USDJPY", "EURJPY", "GBPJPY", "EURCHF", "USDCHF"})
+_FEATURE_TO_SENTIMENT_MAP = {
+    "price_trend": "sentiment",
+    "trend_vol_only": "no_sentiment",
+}
 
 
 def _decode_bool(value: Any) -> bool | None:
@@ -114,6 +118,7 @@ def _env_str(name: str) -> str | None:
 
 
 def _normalize_sentiment_surface(value: Any) -> str | None:
+    """Normalize legacy/canonical sentiment surface values; return None when invalid."""
     if isinstance(value, bool):
         return "sentiment" if value else "no_sentiment"
     if isinstance(value, str):
@@ -138,6 +143,7 @@ def _infer_pair_family_from_text(value: Any) -> str | None:
 
 
 def _infer_eval_family_from_active_pairs() -> str | None:
+    """Infer evaluation family only when ACTIVE_PAIRS is a pure persistent/reactive subset."""
     raw = os.getenv("ACTIVE_PAIRS", "")
     if not raw.strip():
         return None
@@ -153,7 +159,9 @@ def _infer_eval_family_from_active_pairs() -> str | None:
 
 def _resolve_imputation_awareness(experiment_factors: Mapping[str, Any]) -> str:
     awareness = _decode_bool(experiment_factors.get("missing_indicators_enabled"))
-    return "aware" if awareness else "blind"
+    if awareness is True:
+        return "aware"
+    return "blind"
 
 
 def build_runtime_experiment_surface(
@@ -292,14 +300,11 @@ def build_runtime_experiment_surface(
     if not dl_enabled:
         sentiment_surface = "none"
     elif sentiment_surface is None:
-        if feature_surface == "price_trend":
-            sentiment_surface = "sentiment"
-        elif feature_surface == "trend_vol_only":
-            sentiment_surface = "no_sentiment"
+        sentiment_surface = _FEATURE_TO_SENTIMENT_MAP.get(feature_surface)
     if sentiment_surface is None:
         sentiment_surface = "none"
 
-    training_pair_family = explicit_training_pair_family or _infer_pair_family_from_text(
+    family_from_metadata = _infer_pair_family_from_text(
         _lookup(
             merged_metadata,
             "artifact_source",
@@ -308,7 +313,14 @@ def build_runtime_experiment_surface(
             "artifact_path",
             "source_path",
         )
-    ) or _infer_pair_family_from_text(dl_artifact_path) or "unknown"
+    )
+    family_from_path = _infer_pair_family_from_text(dl_artifact_path)
+    training_pair_family = (
+        explicit_training_pair_family
+        or family_from_metadata
+        or family_from_path
+        or "unknown"
+    )
 
     evaluation_pair_family = (
         explicit_evaluation_pair_family
