@@ -92,6 +92,10 @@ def build_dl_conditional_analysis(
         ``aggregate_table``  : list of row dicts suitable for report rendering
         ``warnings``         : list of warning strings
         ``data_available``   : bool — True when at least one run has fold data
+        ``metadata``         : provenance metadata, including ``dl_state_assignment_method``
+                               (``"heuristic_fold_position"``, ``"timeline_exact"``, or
+                               ``"unknown"``).  When runs differ, the most conservative
+                               method (``"heuristic_fold_position"``) is reported.
     """
     warnings: list[str] = []
     per_run: list[dict[str, Any]] = []
@@ -104,9 +108,11 @@ def build_dl_conditional_analysis(
             "aggregate_table": [],
             "warnings": warnings,
             "data_available": False,
+            "metadata": {"dl_state_assignment_method": "unknown"},
         }
 
     any_data = False
+    run_methods: list[str] = []
 
     for summary in summaries:
         run_id = summary.get("run_id", "unknown")
@@ -117,6 +123,7 @@ def build_dl_conditional_analysis(
             for w in result["warnings"]:
                 warnings.append(f"[{run_id}] {w}")
 
+        run_methods.append(result.get("dl_state_assignment_method", "unknown"))
         per_run.append({"run_id": run_id, **result})
 
         # Build aggregate table rows.
@@ -136,11 +143,24 @@ def build_dl_conditional_analysis(
             }
             aggregate_rows.append(row)
 
+    # Derive the aggregate assignment method.  Heuristic is conservative: if any
+    # run used positional approximation, the overall provenance is heuristic.
+    # Runs with no data ("unknown") are excluded from promotion to exact.
+    if not run_methods:
+        aggregate_method = "unknown"
+    elif any(m == "heuristic_fold_position" for m in run_methods):
+        aggregate_method = "heuristic_fold_position"
+    elif any(m == "timeline_exact" for m in run_methods):
+        aggregate_method = "timeline_exact"
+    else:
+        aggregate_method = "unknown"
+
     return {
         "per_run": per_run,
         "aggregate_table": aggregate_rows,
         "warnings": warnings,
         "data_available": any_data,
+        "metadata": {"dl_state_assignment_method": aggregate_method},
     }
 
 
@@ -171,6 +191,7 @@ def _analyse_run(summary: dict[str, Any]) -> dict[str, Any]:
             "has_fold_data": False,
             "has_timeline_data": False,
             "overlap_fold_coverage_pct": None,
+            "dl_state_assignment_method": "unknown",
             "conditional_metrics": {},
             "selector_entropy": _empty_entropy_result(),
             "switch_density": _empty_switch_density(),
@@ -261,6 +282,7 @@ def _analyse_run(summary: dict[str, Any]) -> dict[str, Any]:
         "has_fold_data": has_fold_data,
         "has_timeline_data": has_timeline_data,
         "overlap_fold_coverage_pct": overlap_pct,
+        "dl_state_assignment_method": "timeline_exact" if has_timeline_data else "heuristic_fold_position",
         "n_folds_total": len(all_folds),
         "n_folds_dl_active": len(active_folds),
         "n_folds_dl_missing": len(missing_folds),

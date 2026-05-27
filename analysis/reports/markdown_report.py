@@ -471,12 +471,25 @@ def _render_dl_conditional_analysis(
         lines.append("")
         return
 
-    lines.append(
-        "> **Temporal heuristic**: DL state assignment uses a positional approximation — "
-        "the last K folds per pair (where K = N × DL-overlap-coverage-pct) are treated as "
-        "`dl_active`. This reflects the walk-forward temporal ordering assumption. "
-        "For exact slicing, provide `selector_state_timeline.csv`."
-    )
+    metadata = conditional.get("metadata") or {}
+    assignment_method = metadata.get("dl_state_assignment_method", "unknown")
+    if assignment_method == "timeline_exact":
+        lines.append(
+            "> **DL state assignment**: `timeline_exact` — per-bar DL state was read from "
+            "`selector_state_timeline.csv`. Tier 2 metrics (switch density, hold durations, "
+            "confidence collapse) are available."
+        )
+    elif assignment_method == "heuristic_fold_position":
+        lines.append(
+            "> **DL state assignment**: `heuristic_fold_position` — DL state was approximated "
+            "positionally (last K folds per pair, where K = N × DL-overlap-coverage-pct). "
+            "This reflects the walk-forward temporal ordering assumption. "
+            "For exact slicing, provide `selector_state_timeline.csv`."
+        )
+    else:
+        lines.append(
+            "> **DL state assignment**: `unknown` — assignment method could not be determined."
+        )
     lines.append("")
 
     # --- Aggregate table ---

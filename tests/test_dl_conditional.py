@@ -723,6 +723,79 @@ class TestBuildDLConditionalAnalysis(unittest.TestCase):
         result = build_dl_conditional_analysis([summary])
         self.assertGreater(len(result["warnings"]), 0)
 
+    def test_metadata_present_in_result(self):
+        result = build_dl_conditional_analysis([_make_summary()])
+        self.assertIn("metadata", result)
+        self.assertIn("dl_state_assignment_method", result["metadata"])
+
+    def test_metadata_heuristic_when_no_timeline(self):
+        result = build_dl_conditional_analysis([_make_summary()])
+        self.assertEqual(
+            result["metadata"]["dl_state_assignment_method"],
+            "heuristic_fold_position",
+        )
+
+    def test_metadata_timeline_exact_when_timeline_present(self):
+        timeline = _make_timeline_rows(n=20, switch_every=5, dl_active_from=10)
+        summary = _make_summary(timeline_rows=timeline)
+        result = build_dl_conditional_analysis([summary])
+        self.assertEqual(
+            result["metadata"]["dl_state_assignment_method"],
+            "timeline_exact",
+        )
+
+    def test_metadata_unknown_when_empty_summaries(self):
+        result = build_dl_conditional_analysis([])
+        self.assertEqual(
+            result["metadata"]["dl_state_assignment_method"],
+            "unknown",
+        )
+
+    def test_metadata_unknown_when_no_data(self):
+        summary = {
+            "run_id": "test",
+            "meta": {},
+            "csvs": {"walkforward_per_fold": None, "selector_state_timeline": None},
+            "coverage": {},
+            "warnings": [],
+        }
+        result = build_dl_conditional_analysis([summary])
+        self.assertEqual(
+            result["metadata"]["dl_state_assignment_method"],
+            "unknown",
+        )
+
+    def test_metadata_heuristic_when_mixed_runs(self):
+        # One run with timeline (exact), one without (heuristic) → conservative result.
+        timeline = _make_timeline_rows(n=20, switch_every=5, dl_active_from=10)
+        s_exact = _make_summary("run_exact", timeline_rows=timeline)
+        s_heuristic = _make_summary("run_heuristic")
+        result = build_dl_conditional_analysis([s_exact, s_heuristic])
+        self.assertEqual(
+            result["metadata"]["dl_state_assignment_method"],
+            "heuristic_fold_position",
+        )
+
+    def test_per_run_has_assignment_method(self):
+        result = build_dl_conditional_analysis([_make_summary()])
+        self.assertIn("dl_state_assignment_method", result["per_run"][0])
+
+    def test_per_run_heuristic_when_no_timeline(self):
+        result = build_dl_conditional_analysis([_make_summary()])
+        self.assertEqual(
+            result["per_run"][0]["dl_state_assignment_method"],
+            "heuristic_fold_position",
+        )
+
+    def test_per_run_timeline_exact_when_timeline_present(self):
+        timeline = _make_timeline_rows(n=20, switch_every=5, dl_active_from=10)
+        summary = _make_summary(timeline_rows=timeline)
+        result = build_dl_conditional_analysis([summary])
+        self.assertEqual(
+            result["per_run"][0]["dl_state_assignment_method"],
+            "timeline_exact",
+        )
+
 
 # ---------------------------------------------------------------------------
 # Tests: csv_parsers — selector_state_timeline parser
