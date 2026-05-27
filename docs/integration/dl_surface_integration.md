@@ -52,6 +52,28 @@ In `main.py::attach_dl_features`:
 - If an artifact is valid but yields no timestamp overlap or no per-pair
   matches, MPML keeps baseline behavior (graceful no-coverage fallback).
 
+## Runtime `experiment_surface` canonical emission
+
+`src/experiment_surface_runtime.py::build_runtime_experiment_surface(...)`
+must emit canonical semantics directly in `run_manifest.json`:
+
+- `sentiment_surface`
+  - `price_trend` → `sentiment`
+  - `trend_vol_only` → `no_sentiment`
+  - `dl_enabled=false` → `none`
+- `training_pair_family`
+  - inferred from explicit metadata first
+  - otherwise inferred from artifact provenance (e.g. `persistent_*`, `reactive_*`)
+- `evaluation_pair_family`
+  - inferred from explicit metadata first
+  - otherwise inferred from runtime `ACTIVE_PAIRS` cohort membership
+- `imputation_awareness`
+  - `missing_indicators_enabled=false` → `blind`
+  - `missing_indicators_enabled=true` → `aware`
+
+Canonical V5 analysis assumes these fields are present and already resolved at
+runtime emission (no post-hoc semantic repair).
+
 ## Analysing DL-enabled runs
 
 Use the analysis framework v2 to inspect DL coverage and performance

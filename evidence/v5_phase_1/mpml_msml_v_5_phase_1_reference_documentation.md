@@ -224,6 +224,16 @@ This is extremely important because:
 
 Future experiment matrices may intentionally break this equality.
 
+Runtime canonical emission requirement (post-runtime-fix V5):
+
+- `training_pair_family` must be resolved from parquet/artifact provenance.
+- `evaluation_pair_family` must be resolved from runtime cohort (`ACTIVE_PAIRS`).
+- `sentiment_surface` must be ontology-canonical (`sentiment` / `no_sentiment` / `none`).
+- `imputation_awareness` must be emitted explicitly (`blind` / `aware`).
+
+Canonical manifests are the source of truth; downstream normalization is not a
+substitute for missing runtime semantics.
+
 ---
 
 # MSML V5 Phase-1 Generation Script

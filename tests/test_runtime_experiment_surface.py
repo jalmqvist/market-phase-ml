@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from analysis.parsers.manifest_parser import parse_manifest
 
@@ -42,7 +43,7 @@ class TestRuntimeExperimentSurfaceEmission(unittest.TestCase):
                     "msml_regime": "LVTF",
                 },
                 artifact_metadata={
-                    "sentiment_surface": False,
+                    "sentiment_surface": "no_sentiment",
                     "training_pair_family": "persistent",
                     "evaluation_pair_family": "reactive",
                     "feature_surface": "trend_vol_only",
@@ -93,9 +94,9 @@ class TestRuntimeExperimentSurfaceEmission(unittest.TestCase):
                 "overlap_only": False,
                 "msml_regime": "LVTF",
             },
-            artifact_metadata={"sentiment_surface": False},
+            artifact_metadata={"sentiment_surface": "no_sentiment"},
         )
-        self.assertIs(surface["sentiment_surface"], False)
+        self.assertEqual(surface["sentiment_surface"], "no_sentiment")
 
     def test_training_eval_family_and_feature_surface_propagation(self):
         surface = build_runtime_experiment_surface(
@@ -116,7 +117,7 @@ class TestRuntimeExperimentSurfaceEmission(unittest.TestCase):
                 "training_pair_family": "persistent",
                 "evaluation_pair_family": "reactive",
                 "feature_surface": "trend_vol_only",
-                "sentiment_surface": True,
+                "sentiment_surface": "sentiment",
             },
         )
         self.assertEqual(surface["training_pair_family"], "persistent")
@@ -142,8 +143,65 @@ class TestRuntimeExperimentSurfaceEmission(unittest.TestCase):
         )
         self.assertEqual(surface["training_pair_family"], "unknown")
         self.assertEqual(surface["evaluation_pair_family"], "unknown")
-        self.assertEqual(surface["feature_surface"], "unknown")
+        self.assertEqual(surface["feature_surface"], "trend_vol_only")
         self.assertEqual(surface["artifact_source"], "unknown")
+        self.assertEqual(surface["imputation_awareness"], "blind")
+
+    def test_canonical_sentiment_surface_is_resolved_from_feature_surface(self):
+        surface = build_runtime_experiment_surface(
+            dl_runtime_enabled=True,
+            dl_surface={"model": "mlp", "target_horizon": 24, "feature_set": "price_trend"},
+            dl_artifact_path=Path("/tmp/artifacts/persistent_dl_sentiment/file.parquet"),
+            experiment_factors={
+                "selector_enabled": True,
+                "overlap_only": False,
+                "msml_regime": "LVTF",
+                "missing_indicators_enabled": True,
+            },
+            artifact_metadata={},
+        )
+        self.assertEqual(surface["feature_surface"], "price_trend")
+        self.assertEqual(surface["sentiment_surface"], "sentiment")
+        self.assertEqual(surface["training_pair_family"], "persistent")
+        self.assertEqual(surface["imputation_awareness"], "aware")
+
+    def test_sentiment_surface_is_none_when_dl_disabled(self):
+        surface = build_runtime_experiment_surface(
+            dl_runtime_enabled=False,
+            dl_surface={"model": "mlp", "target_horizon": 24, "feature_set": "price_trend"},
+            dl_artifact_path=None,
+            experiment_factors={
+                "selector_enabled": True,
+                "overlap_only": False,
+                "msml_regime": "LVTF",
+                "missing_indicators_enabled": False,
+            },
+            artifact_metadata={},
+        )
+        self.assertEqual(surface["sentiment_surface"], "none")
+        self.assertEqual(surface["imputation_awareness"], "blind")
+
+    def test_evaluation_pair_family_is_inferred_from_active_pairs(self):
+        with mock.patch.dict(
+            "os.environ",
+            {"ACTIVE_PAIRS": "EURUSD,GBPUSD,NZDUSD,EURGBP,EURAUD"},
+            clear=False,
+        ):
+            surface = build_runtime_experiment_surface(
+                dl_runtime_enabled=True,
+                dl_surface={"model": "mlp", "target_horizon": 24, "feature_set": "trend_vol_only"},
+                dl_artifact_path=Path("/tmp/artifacts/reactive_dl_nosentiment/file.parquet"),
+                experiment_factors={
+                    "selector_enabled": True,
+                    "overlap_only": False,
+                    "msml_regime": "LVTF",
+                    "missing_indicators_enabled": False,
+                },
+                artifact_metadata={},
+            )
+        self.assertEqual(surface["evaluation_pair_family"], "persistent")
+        self.assertEqual(surface["training_pair_family"], "reactive")
+        self.assertEqual(surface["sentiment_surface"], "no_sentiment")
 
     def test_legacy_manifest_without_surface_still_parses(self):
         with tempfile.TemporaryDirectory() as tmp:
