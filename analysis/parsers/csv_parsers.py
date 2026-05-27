@@ -144,7 +144,9 @@ def _parse_walkforward_per_fold(path: Path) -> list[dict[str, Any]]:
     """
     Parse ``walkforward_results_per_fold__*.csv`` — per-fold OOS stats.
 
-    Columns: Pair, Fold, + Sharpe/Return/MaxDD for Dynamic and Baseline.
+    Columns: Pair, Fold, + Sharpe/Return/MaxDD for Dynamic and Baseline,
+    plus canonical DL overlap attribution columns (``dl_overlap_pct``,
+    ``dl_overlap_active``, ``dl_overlap_state``, ``dl_overlap_window``).
 
     Note: fold boundaries use strictly causal positional indexing
     (``test_start_pos = train_end_pos + 1``).
@@ -153,9 +155,31 @@ def _parse_walkforward_per_fold(path: Path) -> list[dict[str, Any]]:
         "Sharpe_Dynamic", "Sharpe_Baseline", "Sharpe_Delta",
         "Return_Dynamic", "Return_Baseline", "Return_Delta",
         "MaxDD_Dynamic", "MaxDD_Baseline", "MaxDD_Delta",
+        "dl_overlap_pct",
     }
+    bool_str_cols = {"dl_overlap_active"}
     int_cols = {"Fold"}
-    return [_cast_row(r, float_cols, int_cols) for r in _read_csv(path)]
+
+    rows = _read_csv(path)
+    out: list[dict[str, Any]] = []
+    for raw in rows:
+        row: dict[str, Any] = {}
+        for k, v in raw.items():
+            if k in int_cols:
+                row[k] = _safe_int(v)
+            elif k in float_cols:
+                row[k] = _safe_float(v)
+            elif k in bool_str_cols:
+                if v is None or v == "":
+                    row[k] = None
+                elif isinstance(v, str) and v.strip().lower() in ("true", "1", "yes"):
+                    row[k] = True
+                else:
+                    row[k] = False
+            else:
+                row[k] = v
+        out.append(row)
+    return out
 
 
 def _parse_selector_comparison(path: Path) -> list[dict[str, Any]]:

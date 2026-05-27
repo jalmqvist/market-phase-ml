@@ -560,12 +560,46 @@ analysis/
 
 ### DL state classification
 
-Because the V5 fold CSVs (`walkforward_results_per_fold__*.csv`) contain no
-per-bar timestamp columns, DL state is assigned using a **positional
-heuristic**:
+Walk-forward fold rows can carry **per-fold overlap metadata** (new in this
+version), or fall back to a positional heuristic.
+
+#### Path 1 — Per-fold timestamp overlap (canonical)
+
+When `walkforward_results_per_fold__*.csv` contains the columns
+`dl_overlap_pct`, `dl_overlap_active`, `dl_overlap_state`, and
+`dl_overlap_window`, the analysis layer reads them directly:
+
+| Column | Type | Semantics |
+|---|---|---|
+| `dl_overlap_pct` | float [0–100] | Fraction of fold bars with active DL coverage |
+| `dl_overlap_active` | bool | True when state is `"active"` (≥ 95 % coverage) |
+| `dl_overlap_state` | str | `"active"` / `"partial"` / `"missing"` |
+| `dl_overlap_window` | str | ISO 8601 interval string for the fold's DL window |
+
+State semantics:
+
+| `dl_overlap_state` | `dl_overlap_pct` range | Meaning |
+|---|---|---|
+| `active` | ≥ 95 % | Full DL coverage |
+| `partial` | 5 %–95 % | Partial DL coverage |
+| `missing` | ≤ 5 % | No meaningful DL coverage |
+
+Both `"active"` and `"partial"` folds are counted towards the `dl_active`
+conditional window; the `dl_state_assignment_method` is reported as
+`"per_fold_timestamp_overlap"`.  Aggregate `overlap_fold_coverage_pct` is
+recomputed from the per-fold data as `(active + partial) / total * 100`.
+
+Transition labels are derived from consecutive-fold state changes:
+
+- **`dl_transition_enter`** — fold immediately following a `missing → active/partial` change.
+- **`dl_transition_exit`** — fold immediately following an `active/partial → missing` change.
+
+#### Path 2 — Positional heuristic (legacy fallback)
+
+When `dl_overlap_pct` is absent from the fold CSV:
 
 1. `overlap_fold_coverage_pct` is read from `coverage.overlap_window`
-   (already computed from vol-guard diagnostics).
+   (computed from vol-guard diagnostics).
 2. The last `K = round(N × pct/100)` folds per pair are labelled
    **`dl_active`**.  Walk-forward folds are temporally ordered (later
    fold index = more recent calendar period), so this approximates the
@@ -624,19 +658,26 @@ unstable selector routing.  Normalised entropy is on [0, 1].
 ### selector_state_timeline.csv (Tier 2 input)
 
 An optional per-bar export that unlocks Tier 2 diagnostics.  One row per
-timestep per pair.  Supported columns:
+timestep per pair.  Enable at runtime with the environment variable
+`EXPORT_SELECTOR_STATE_TIMELINE=true` (default: disabled).
+
+Supported columns:
 
 | Column | Type | Description |
 |---|---|---|
 | `timestamp` | str (ISO 8601) | Bar timestamp |
 | `pair` | str | Currency pair |
+| `fold` | int | Walk-forward fold index |
 | `selected_strategy` | str | Name of the selected strategy |
 | `selector_confidence` | float | XGBoost selection confidence score |
+| `dl_available` | bool | True when DL feature columns are non-null for this bar |
+| `dl_overlap_pct` | float | Fold-level DL coverage % (constant within a fold) |
+| `dl_overlap_state` | str | Fold-level state: `"active"` / `"partial"` / `"missing"` |
+| `switch_event` | bool | True when strategy changed from previous bar |
+| `previous_strategy` | str | Strategy on previous bar |
 | `dl_active` | bool | True when DL overlap data is available |
 | `dl_missing` | bool | True when DL data is unavailable/imputed |
 | `fallback_active` | bool | True when PhaseAware fallback is active |
-| `switch_event` | bool | True when strategy changed from previous bar |
-| `previous_strategy` | str | Strategy on previous bar |
 | `current_strategy` | str | Strategy on current bar (same as selected_strategy) |
 
 Additional columns (`phaseaware_active`, `volatility_guard_active`,
@@ -648,7 +689,7 @@ Place the file alongside the run's other CSVs:
 results_archive/fp_gen1_A/
 ├── run_manifest_2022.json
 ├── walkforward_results_per_fold__dl_enabled.csv
-└── selector_state_timeline.csv     ← optional Tier 2 input
+└── selector_state_timeline.csv     ← optional Tier 2 input (EXPORT_SELECTOR_STATE_TIMELINE=true)
 ```
 
 ### Aggregate table columns
@@ -671,6 +712,21 @@ The `comparisons.conditional.aggregate_table` list contains one row per
 | `switches_per_1000_bars` | Switch rate (Tier 2 only; `null` if no timeline) |
 | `mean_hold_duration` | Mean bars between switches (Tier 2 only) |
 | `median_hold_duration` | Median bars between switches (Tier 2 only) |
+
+### dl_state_assignment_method
+
+The `dl_state_assignment_method` field in `comparisons.conditional.metadata`
+reports how DL states were derived:
+
+| Value | Meaning |
+|---|---|
+| `per_fold_timestamp_overlap` | Per-fold `dl_overlap_pct` column present (canonical, computed from actual timestamps) |
+| `timeline_exact` | Per-bar `selector_state_timeline.csv` used (most exact) |
+| `heuristic_fold_position` | Positional heuristic used (legacy fallback; at least one run lacked per-fold data) |
+| `unknown` | No fold data available |
+
+When multiple runs are aggregated, the most conservative method wins:
+`heuristic_fold_position` > `per_fold_timestamp_overlap` > `timeline_exact`.
 
 ### Example report output
 

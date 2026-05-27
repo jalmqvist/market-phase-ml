@@ -285,6 +285,12 @@ DEBUG_SELECTED_PAIRS = {"GBPJPY"}
 DEBUG_SELECTED_MAX_FOLDS_PER_PAIR = 9
 # Diagnostics: "near-spike" threshold for analysis/plots (does not affect trading logic)
 VOL_GUARD_NEAR_MULT = 0.90  # near_thr = VOL_GUARD_NEAR_MULT * vol_thr
+# Optional per-bar selector state timeline export (enables DL conditional timeline analysis).
+# Produces selector_state_timeline.csv in the run results directory.
+# Does not alter any runtime behaviour; pure observation export.
+EXPORT_SELECTOR_STATE_TIMELINE = (
+    os.environ.get("EXPORT_SELECTOR_STATE_TIMELINE", "false").lower() in {"1", "true", "yes", "on"}
+)
 # ─────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────
@@ -2507,6 +2513,7 @@ def main(
 
         walkforward_rows = []
         vol_diag_rows = []
+        _timeline_rows: list[dict] = []  # accumulates per-bar selector state (if enabled)
 
         for pair_name in sorted(processed_data.keys()):
             df_full = processed_data[pair_name]
@@ -2735,6 +2742,28 @@ def main(
                             saved_equity_folds[pair_name] += 1
 
 
+                # --- per-fold DL overlap attribution (from actual bar timestamps) ---
+                _dl_cols_fold = get_dl_feature_columns(df_test)
+                if _dl_cols_fold:
+                    _dl_active_mask = df_test[_dl_cols_fold].notna().any(axis=1)
+                    _dl_overlap_pct = float(_dl_active_mask.mean() * 100.0)
+                else:
+                    _dl_overlap_pct = 0.0
+
+                if not _dl_cols_fold or _dl_overlap_pct <= 5.0:
+                    _dl_overlap_state = "missing"
+                elif _dl_overlap_pct >= 95.0:
+                    _dl_overlap_state = "active"
+                else:
+                    _dl_overlap_state = "partial"
+
+                _dl_overlap_active = (_dl_overlap_state == "active")
+                _test_start_date = df_full.index[test_start_pos]
+                _test_end_date = df_full.index[test_end_pos]
+                _dl_overlap_window = (
+                    f"{_test_start_date.date().isoformat()}/{_test_end_date.date().isoformat()}"
+                )
+
                 # --- diagnostics computed BEFORE appending rows ---
                 vol_diag = compute_vol_guard_diagnostics(
                     pair_name=pair_name,
@@ -2749,6 +2778,29 @@ def main(
                     tag="wf",
                 )
                 vol_diag_rows.append(vol_diag)
+
+                # --- optional per-bar selector state timeline accumulation ---
+                if EXPORT_SELECTOR_STATE_TIMELINE:
+                    _prev_strat: str | None = None
+                    for _ti, _ts in enumerate(df_test.index):
+                        _strat = selected_s.iloc[_ti]
+                        _bar_dl_active = (
+                            bool(df_test[_dl_cols_fold].iloc[_ti].notna().any())
+                            if _dl_cols_fold else False
+                        )
+                        _switch_event = (_prev_strat is not None and _strat != _prev_strat)
+                        _timeline_rows.append({
+                            "timestamp": _ts.isoformat(),
+                            "pair": pair_name,
+                            "fold": fold_id,
+                            "selector_choice": _strat,
+                            "dl_available": _bar_dl_active,
+                            "dl_overlap_pct": round(_dl_overlap_pct, 4),
+                            "dl_overlap_state": _dl_overlap_state,
+                            "switch_event": _switch_event,
+                            "previous_strategy": _prev_strat if _prev_strat is not None else "",
+                        })
+                        _prev_strat = _strat
 
                 selector_train_end_ts = selector_window_diag.get("selector_train_end_ts")
                 walkforward_rows.append({
@@ -2796,6 +2848,12 @@ def main(
                     "MR on spike (%)": vol_diag.get("mr_on_spike_pct", np.nan),
                     "TF on spike (%)": vol_diag.get("tf_on_spike_pct", np.nan),
                     "Confident Bars (%)": vol_diag.get("confident_pct", np.nan),
+
+                    # DL overlap attribution (computed from actual bar timestamps)
+                    "dl_overlap_pct": round(_dl_overlap_pct, 4),
+                    "dl_overlap_active": _dl_overlap_active,
+                    "dl_overlap_state": _dl_overlap_state,
+                    "dl_overlap_window": _dl_overlap_window,
                 })
                 print(
                     f"    fold {fold_id}: Sharpe base={base_res['sharpe_ratio']:+.3f} "
@@ -2879,6 +2937,14 @@ def main(
 
             print("\nWalk-forward summary:")
             print(pd.DataFrame([overall]).to_string(index=False))
+
+            # --- Optional selector state timeline export ---
+            if EXPORT_SELECTOR_STATE_TIMELINE and _timeline_rows:
+                timeline_path = _with_mode_tag("results/selector_state_timeline.csv", dl_mode_tag)
+                pd.DataFrame(_timeline_rows).to_csv(timeline_path, index=False)
+                print(f"Saved: {timeline_path} ({len(_timeline_rows)} bars)")
+            elif EXPORT_SELECTOR_STATE_TIMELINE:
+                print("  ⚠  selector_state_timeline: no bars collected (no folds completed).")
 
     # ─────────────────────────────────────────
     if RUN_TAU_SWEEP:

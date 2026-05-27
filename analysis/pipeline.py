@@ -307,7 +307,12 @@ def _build_overlap_window_diagnostics(
     log: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """
-    Foundational overlap-window diagnostics (non-invasive extension points).
+    Foundational overlap-window diagnostics.
+
+    When fold rows carry ``dl_overlap_pct`` / ``dl_overlap_state`` columns
+    (emitted by the runtime since the overlap-attribution PR), these are used
+    directly.  The year-based positional heuristic is retained as a backwards-
+    compatible fallback for older run directories that lack those columns.
     """
     fold_rows = csvs.get("walkforward_per_fold") or []
     dl_cov = (log or {}).get("dl_coverage") or {}
@@ -316,14 +321,41 @@ def _build_overlap_window_diagnostics(
         "dl_pairs_with_coverage": sorted(dl_cov.keys()),
         "dl_active_years": [],
         "per_year_fold_counts": {},
-        "attachment_persistence_note": "Scaffold only; add true per-fold attachment persistence from future exports.",
     }
+
+    # ── Preferred path: use per-fold dl_overlap_pct column ──────────────────
+    if fold_rows and any(
+        r.get("dl_overlap_pct") is not None for r in fold_rows
+    ):
+        active_count = sum(
+            1 for r in fold_rows if r.get("dl_overlap_state") == "active"
+        )
+        partial_count = sum(
+            1 for r in fold_rows if r.get("dl_overlap_state") == "partial"
+        )
+        total = len(fold_rows)
+        diagnostics["overlap_fold_coverage_pct"] = (
+            round(100.0 * (active_count + partial_count) / total, 2)
+            if total else None
+        )
+        diagnostics["overlap_active_fold_count"] = active_count
+        diagnostics["overlap_partial_fold_count"] = partial_count
+        diagnostics["overlap_missing_fold_count"] = total - active_count - partial_count
+        diagnostics["overlap_attribution_source"] = "per_fold_timestamp_overlap"
+        return diagnostics
+
+    # ── Fallback: year-based positional heuristic (older run directories) ───
+    diagnostics["overlap_attribution_source"] = "year_heuristic_fallback"
+    diagnostics["attachment_persistence_note"] = (
+        "Year-heuristic fallback; upgrade to a runtime that emits dl_overlap_pct "
+        "per fold for precise attribution."
+    )
     years: dict[int, int] = {}
     for row in fold_rows:
         for k, v in row.items():
             if not isinstance(v, str):
                 continue
-            if "year" in k.lower() or "date" in k.lower() or "time" in k.lower():
+            if "year" in k.lower() or "date" in k.lower() or "time" in k.lower() or "start" in k.lower():
                 if len(v) >= 4 and v[:4].isdigit():
                     y = int(v[:4])
                     years[y] = years.get(y, 0) + 1
