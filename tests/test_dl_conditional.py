@@ -591,11 +591,11 @@ class TestSummarizeTransitionWindows(unittest.TestCase):
 
     def test_missing_metric_col_ignored(self):
         rows = [{"transition_window_index": 0, "SomethingElse": "x"}]
-        result = summarize_transition_Windows_safe(rows, metric_cols=["Sharpe_Delta"])
+        result = summarize_transition_windows_safe(rows, metric_cols=["Sharpe_Delta"])
         self.assertNotIn("Sharpe_Delta", result["metrics"])
 
 
-def summarize_transition_Windows_safe(rows, metric_cols=None):
+def summarize_transition_windows_safe(rows, metric_cols=None):
     """Wrapper to avoid NameError in test."""
     return summarize_transition_windows(rows, metric_cols=metric_cols)
 
