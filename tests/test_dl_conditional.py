@@ -1009,5 +1009,292 @@ class TestPipelineConditionalIntegration(unittest.TestCase):
                 self.assertNotIn("conditional", comparisons)
 
 
+# ---------------------------------------------------------------------------
+# Tests: per-fold dl_overlap_pct classification
+# ---------------------------------------------------------------------------
+
+_DL_STATE_TO_PCT: dict[str, float] = {"active": 100.0, "partial": 60.0, "missing": 0.0}
+
+
+def _make_fold_rows_with_overlap(
+    states: list[str],
+    pair: str = "EURUSD",
+    pcts: list[float] | None = None,
+) -> list[dict]:
+    """Build fold rows that carry dl_overlap_pct / dl_overlap_state columns."""
+    if pcts is None:
+        pcts = [_DL_STATE_TO_PCT[s] for s in states]
+    rows = []
+    for i, (state, pct) in enumerate(zip(states, pcts)):
+        rows.append({
+            "Pair": pair,
+            "Fold": str(i + 1),
+            "Sharpe_Dynamic": "0.5",
+            "Sharpe_Baseline": "0.4",
+            "Sharpe_Delta": "0.1",
+            "Return_Dynamic": "0.05",
+            "Return_Baseline": "0.03",
+            "Return_Delta": "0.02",
+            "MaxDD_Dynamic": "-0.10",
+            "MaxDD_Baseline": "-0.12",
+            "MaxDD_Delta": "0.02",
+            "dl_overlap_pct": pct,
+            "dl_overlap_active": state == "active",
+            "dl_overlap_state": state,
+            "dl_overlap_window": "2021-01-01/2021-06-30",
+        })
+    return rows
+
+
+class TestClassifyFoldsPerFoldOverlap(unittest.TestCase):
+    """classify_folds_dl_state uses per-fold dl_overlap_pct when present."""
+
+    def test_all_active_folds(self):
+        rows = _make_fold_rows_with_overlap(["active"] * 5)
+        result = classify_folds_dl_state(rows, overlap_fold_coverage_pct=None)
+        for r in result:
+            self.assertTrue(r["dl_active"])
+            self.assertIn(r["dl_state"], ("dl_active", "dl_transition_enter"))
+
+    def test_all_missing_folds(self):
+        rows = _make_fold_rows_with_overlap(["missing"] * 5)
+        result = classify_folds_dl_state(rows, overlap_fold_coverage_pct=None)
+        for r in result:
+            self.assertFalse(r["dl_active"])
+            self.assertEqual(r["dl_state"], "dl_missing")
+
+    def test_partial_folds_treated_as_active(self):
+        rows = _make_fold_rows_with_overlap(["partial"] * 5)
+        result = classify_folds_dl_state(rows, overlap_fold_coverage_pct=None)
+        for r in result:
+            self.assertTrue(r["dl_active"])
+
+    def test_transition_enter_assigned_on_missing_to_active_change(self):
+        rows = _make_fold_rows_with_overlap(["missing", "missing", "missing", "active", "active"])
+        result = classify_folds_dl_state(rows, overlap_fold_coverage_pct=None)
+        states = [r["dl_state"] for r in sorted(result, key=lambda x: int(x["Fold"]))]
+        self.assertEqual(states[3], "dl_transition_enter")
+        self.assertEqual(states[4], "dl_active")
+
+    def test_transition_exit_assigned_on_active_to_missing_change(self):
+        rows = _make_fold_rows_with_overlap(["active", "active", "missing", "missing"])
+        result = classify_folds_dl_state(rows, overlap_fold_coverage_pct=None)
+        states = [r["dl_state"] for r in sorted(result, key=lambda x: int(x["Fold"]))]
+        self.assertEqual(states[2], "dl_transition_exit")
+
+    def test_overlap_pct_arg_ignored_when_per_fold_data_present(self):
+        """When dl_overlap_pct column exists, overlap_fold_coverage_pct kwarg is ignored."""
+        rows = _make_fold_rows_with_overlap(["active"] * 5)
+        # With 0.0 coverage, positional heuristic would label all as missing.
+        result = classify_folds_dl_state(rows, overlap_fold_coverage_pct=0.0)
+        for r in result:
+            self.assertTrue(r["dl_active"], "Per-fold path should override positional heuristic")
+
+    def test_fallback_to_positional_when_no_per_fold_column(self):
+        """When dl_overlap_pct column absent, falls back to positional heuristic."""
+        rows = _make_fold_rows(n=10)  # no dl_overlap_pct
+        result = classify_folds_dl_state(rows, overlap_fold_coverage_pct=40.0)
+        active = [r for r in result if r["dl_active"]]
+        self.assertEqual(len(active), 4)
+
+    def test_preserves_overlap_columns_in_output(self):
+        rows = _make_fold_rows_with_overlap(["active", "missing"])
+        result = classify_folds_dl_state(rows, overlap_fold_coverage_pct=None)
+        for r in result:
+            self.assertIn("dl_overlap_pct", r)
+            self.assertIn("dl_overlap_state", r)
+            self.assertIn("dl_overlap_window", r)
+
+
+class TestAnalyseRunWithPerFoldOverlap(unittest.TestCase):
+    """_analyse_run derives overlap_pct from per-fold data when available."""
+
+    def _make_summary(
+        self,
+        states: list[str],
+        pair: str = "EURUSD",
+    ) -> dict:
+        rows = _make_fold_rows_with_overlap(states, pair=pair)
+        return {
+            "run_id": "test_run",
+            "csvs": {
+                "walkforward_per_fold": rows,
+                "selector_state_timeline": None,
+            },
+            "coverage": {
+                "overlap_window": {
+                    "overlap_fold_coverage_pct": None,  # not set (simulating old pipeline)
+                }
+            },
+        }
+
+    def test_active_folds_non_empty(self):
+        summary = self._make_summary(["missing"] * 6 + ["active"] * 4)
+        result = build_dl_conditional_analysis([summary])
+        per_run = result["per_run"][0]
+        self.assertGreater(per_run["n_folds_dl_active"], 0)
+
+    def test_missing_folds_non_empty(self):
+        summary = self._make_summary(["missing"] * 6 + ["active"] * 4)
+        result = build_dl_conditional_analysis([summary])
+        per_run = result["per_run"][0]
+        self.assertGreater(per_run["n_folds_dl_missing"], 0)
+
+    def test_dl_state_assignment_method_is_per_fold(self):
+        summary = self._make_summary(["active"] * 5)
+        result = build_dl_conditional_analysis([summary])
+        per_run = result["per_run"][0]
+        self.assertEqual(
+            per_run["dl_state_assignment_method"],
+            "per_fold_timestamp_overlap",
+        )
+
+    def test_aggregate_method_per_fold_when_no_heuristic_run(self):
+        summary = self._make_summary(["active"] * 5)
+        result = build_dl_conditional_analysis([summary])
+        self.assertEqual(
+            result["metadata"]["dl_state_assignment_method"],
+            "per_fold_timestamp_overlap",
+        )
+
+    def test_dl_active_folds_empty_when_all_missing(self):
+        summary = self._make_summary(["missing"] * 10)
+        result = build_dl_conditional_analysis([summary])
+        per_run = result["per_run"][0]
+        self.assertEqual(per_run["n_folds_dl_active"], 0)
+        self.assertEqual(per_run["n_folds_dl_missing"], 10)
+
+
+class TestOverlapWindowDiagnosticsWithPerFoldData(unittest.TestCase):
+    """_build_overlap_window_diagnostics uses per-fold overlap when available."""
+
+    def _make_fold_csv_content(self, states: list[str]) -> str:
+        lines = [
+            "Pair,Fold,Sharpe_Dynamic,Sharpe_Baseline,Sharpe_Delta,"
+            "Return_Dynamic,Return_Baseline,Return_Delta,"
+            "MaxDD_Dynamic,MaxDD_Baseline,MaxDD_Delta,"
+            "dl_overlap_pct,dl_overlap_active,dl_overlap_state,dl_overlap_window"
+        ]
+        for i, state in enumerate(states):
+            pct = _DL_STATE_TO_PCT[state]
+            active_str = str(state == "active")
+            lines.append(
+                f"EURUSD,{i + 1},0.5,0.4,0.1,0.05,0.03,0.02,-0.10,-0.12,0.02,"
+                f"{pct},{active_str},{state},2021-01-01/2021-06-30"
+            )
+        return "\n".join(lines) + "\n"
+
+    def test_per_fold_path_used_when_column_present(self):
+        import tempfile, json
+        from analysis.parsers.csv_parsers import parse_run_csvs
+        from analysis.pipeline import _build_overlap_window_diagnostics
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            content = self._make_fold_csv_content(["missing"] * 6 + ["active"] * 4)
+            (run_dir / "walkforward_results_per_fold__dl_enabled.csv").write_text(content)
+            csvs = parse_run_csvs(run_dir)
+            diag = _build_overlap_window_diagnostics(csvs, log=None)
+            self.assertEqual(diag["overlap_attribution_source"], "per_fold_timestamp_overlap")
+            self.assertIsNotNone(diag["overlap_fold_coverage_pct"])
+            # 4 active folds out of 10 → 40%
+            self.assertAlmostEqual(diag["overlap_fold_coverage_pct"], 40.0, places=1)
+
+    def test_active_and_partial_both_count(self):
+        import tempfile
+        from analysis.parsers.csv_parsers import parse_run_csvs
+        from analysis.pipeline import _build_overlap_window_diagnostics
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            content = self._make_fold_csv_content(["missing"] * 5 + ["partial"] * 3 + ["active"] * 2)
+            (run_dir / "walkforward_results_per_fold__dl_enabled.csv").write_text(content)
+            csvs = parse_run_csvs(run_dir)
+            diag = _build_overlap_window_diagnostics(csvs, log=None)
+            # 5 (partial+active) out of 10 → 50%
+            self.assertAlmostEqual(diag["overlap_fold_coverage_pct"], 50.0, places=1)
+            self.assertEqual(diag["overlap_active_fold_count"], 2)
+            self.assertEqual(diag["overlap_partial_fold_count"], 3)
+
+    def test_all_missing_gives_zero_pct(self):
+        import tempfile
+        from analysis.parsers.csv_parsers import parse_run_csvs
+        from analysis.pipeline import _build_overlap_window_diagnostics
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            content = self._make_fold_csv_content(["missing"] * 5)
+            (run_dir / "walkforward_results_per_fold__dl_enabled.csv").write_text(content)
+            csvs = parse_run_csvs(run_dir)
+            diag = _build_overlap_window_diagnostics(csvs, log=None)
+            self.assertAlmostEqual(diag["overlap_fold_coverage_pct"], 0.0, places=5)
+
+
+class TestWalkforwardFoldCsvParser(unittest.TestCase):
+    """_parse_walkforward_per_fold correctly handles dl_overlap_* columns."""
+
+    def _write_fold_csv(self, run_dir: Path, with_overlap: bool = True) -> None:
+        header = (
+            "Pair,Fold,Sharpe_Dynamic,Sharpe_Baseline,Sharpe_Delta,"
+            "Return_Dynamic,Return_Baseline,Return_Delta,"
+            "MaxDD_Dynamic,MaxDD_Baseline,MaxDD_Delta"
+        )
+        row = "EURUSD,1,0.5,0.4,0.1,0.05,0.03,0.02,-0.10,-0.12,0.02"
+        if with_overlap:
+            header += ",dl_overlap_pct,dl_overlap_active,dl_overlap_state,dl_overlap_window"
+            row += ",100.0,True,active,2021-01-01/2021-06-30"
+        content = header + "\n" + row + "\n"
+        (run_dir / "walkforward_results_per_fold__dl_enabled.csv").write_text(content)
+
+    def test_dl_overlap_pct_parsed_as_float(self):
+        import tempfile
+        from analysis.parsers.csv_parsers import parse_run_csvs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self._write_fold_csv(run_dir, with_overlap=True)
+            csvs = parse_run_csvs(run_dir)
+            fold = csvs["walkforward_per_fold"][0]
+            self.assertIsInstance(fold["dl_overlap_pct"], float)
+            self.assertAlmostEqual(fold["dl_overlap_pct"], 100.0, places=5)
+
+    def test_dl_overlap_active_parsed_as_bool(self):
+        import tempfile
+        from analysis.parsers.csv_parsers import parse_run_csvs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self._write_fold_csv(run_dir, with_overlap=True)
+            csvs = parse_run_csvs(run_dir)
+            fold = csvs["walkforward_per_fold"][0]
+            self.assertIsInstance(fold["dl_overlap_active"], bool)
+            self.assertTrue(fold["dl_overlap_active"])
+
+    def test_dl_overlap_state_is_string(self):
+        import tempfile
+        from analysis.parsers.csv_parsers import parse_run_csvs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self._write_fold_csv(run_dir, with_overlap=True)
+            csvs = parse_run_csvs(run_dir)
+            fold = csvs["walkforward_per_fold"][0]
+            self.assertEqual(fold["dl_overlap_state"], "active")
+            self.assertEqual(fold["dl_overlap_window"], "2021-01-01/2021-06-30")
+
+    def test_csv_without_overlap_columns_parsed_ok(self):
+        """Backwards compatibility: CSVs without dl_overlap_* columns still parse."""
+        import tempfile
+        from analysis.parsers.csv_parsers import parse_run_csvs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self._write_fold_csv(run_dir, with_overlap=False)
+            csvs = parse_run_csvs(run_dir)
+            fold = csvs["walkforward_per_fold"][0]
+            # dl_overlap_pct should be absent or None (not present in CSV)
+            self.assertIsNone(fold.get("dl_overlap_pct"))
+
+
 if __name__ == "__main__":
     unittest.main()

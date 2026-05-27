@@ -54,20 +54,33 @@ def classify_folds_dl_state(
     """
     Classify each fold row with a canonical DL state label.
 
-    Uses a positional heuristic: the last ``K`` folds per pair are assigned
-    ``dl_active`` (DL coverage window), the first ``N - K`` folds are
-    ``dl_missing``.  Boundary folds receive ``dl_transition_enter`` (first
-    active fold) or ``dl_transition_exit`` (first missing fold after an active
-    stretch, if applicable).
+    Preferred path (per-fold timestamp overlap)
+    -------------------------------------------
+    When fold rows carry a ``dl_overlap_pct`` column (emitted by the runtime
+    since the overlap-attribution PR), each row is classified independently
+    using its own overlap fraction:
+
+    * ``dl_overlap_state == "active"``   → ``dl_state = "dl_active"``
+    * ``dl_overlap_state == "partial"``  → ``dl_state = "dl_active"``
+    * ``dl_overlap_state == "missing"``  → ``dl_state = "dl_missing"``
+
+    Transition labels (``dl_transition_enter`` / ``dl_transition_exit``) are
+    derived from state changes between consecutive folds within each pair.
+
+    Fallback path (positional heuristic)
+    ------------------------------------
+    When per-fold data is unavailable, the last ``K`` folds (by index) are
+    treated as DL_ACTIVE, where ``K = round(N * overlap_fraction)``.
+    ``overlap_fold_coverage_pct`` is required for the fallback; when it is
+    ``None`` all folds are labelled ``dl_state_unknown``.
 
     Parameters
     ----------
     fold_rows:
         Rows from ``walkforward_per_fold`` CSV.
     overlap_fold_coverage_pct:
-        Fraction of folds in the DL overlap window, in [0, 100].  Sourced
-        from ``coverage.overlap_window.overlap_fold_coverage_pct``.
-        If ``None``, all folds are labelled ``dl_state_unknown``.
+        Aggregate fraction of folds in the DL overlap window, in [0, 100].
+        Used only when per-fold ``dl_overlap_pct`` is absent (fallback path).
     pair_col:
         Column name for the pair identifier.
     fold_col:
@@ -82,6 +95,14 @@ def classify_folds_dl_state(
     if not fold_rows:
         return []
 
+    # ── Preferred path: per-fold dl_overlap_pct column ──────────────────────
+    has_per_fold_overlap = any(
+        r.get("dl_overlap_pct") is not None for r in fold_rows
+    )
+    if has_per_fold_overlap:
+        return _classify_folds_from_per_fold_overlap(fold_rows, pair_col, fold_col)
+
+    # ── Fallback path: positional heuristic ─────────────────────────────────
     # Group by pair so we can apply per-pair heuristics.
     by_pair: dict[str, list[dict[str, Any]]] = {}
     for row in fold_rows:
@@ -128,6 +149,57 @@ def classify_folds_dl_state(
         for row, state in zip(sorted_rows, states):
             is_active = state in ("dl_active", "dl_transition_enter")
             out.append(dict(row, dl_state=state, dl_active=is_active))
+
+    return out
+
+
+def _classify_folds_from_per_fold_overlap(
+    fold_rows: list[dict[str, Any]],
+    pair_col: str,
+    fold_col: str,
+) -> list[dict[str, Any]]:
+    """
+    Classify folds using per-row ``dl_overlap_pct`` / ``dl_overlap_state``
+    columns emitted by the runtime overlap-attribution export.
+
+    Derives ``dl_state`` (including transition labels) from state changes
+    between consecutive folds within each pair.
+    """
+    by_pair: dict[str, list[dict[str, Any]]] = {}
+    for row in fold_rows:
+        pair = row.get(pair_col) or row.get("pair") or "unknown"
+        by_pair.setdefault(pair, []).append(row)
+
+    out: list[dict[str, Any]] = []
+    for pair, rows in by_pair.items():
+        def _fold_key(r: dict[str, Any]) -> int:
+            v = r.get(fold_col) or r.get("fold") or 0
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return 0
+
+        sorted_rows = sorted(rows, key=_fold_key)
+        prev_is_active: bool | None = None
+
+        for row in sorted_rows:
+            raw_state = row.get("dl_overlap_state") or ""
+            # Treat "active" and "partial" as dl_active; "missing" as dl_missing.
+            is_active = raw_state in ("active", "partial")
+
+            if prev_is_active is None:
+                dl_state = "dl_active" if is_active else "dl_missing"
+            elif is_active and not prev_is_active:
+                dl_state = "dl_transition_enter"
+            elif not is_active and prev_is_active:
+                dl_state = "dl_transition_exit"
+            elif is_active:
+                dl_state = "dl_active"
+            else:
+                dl_state = "dl_missing"
+
+            out.append(dict(row, dl_state=dl_state, dl_active=is_active))
+            prev_is_active = is_active
 
     return out
 

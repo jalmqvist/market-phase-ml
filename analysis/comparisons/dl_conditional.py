@@ -143,13 +143,15 @@ def build_dl_conditional_analysis(
             }
             aggregate_rows.append(row)
 
-    # Derive the aggregate assignment method.  Heuristic is conservative: if any
-    # run used positional approximation, the overall provenance is heuristic.
-    # Runs with no data ("unknown") are excluded from promotion to exact.
+    # Derive the aggregate assignment method.  Priority order (highest first):
+    # timeline_exact > per_fold_timestamp_overlap > heuristic_fold_position > unknown.
+    # Runs with no data ("unknown") are excluded from promotion to a better method.
     if not run_methods:
         aggregate_method = "unknown"
     elif any(m == "heuristic_fold_position" for m in run_methods):
         aggregate_method = "heuristic_fold_position"
+    elif any(m == "per_fold_timestamp_overlap" for m in run_methods):
+        aggregate_method = "per_fold_timestamp_overlap"
     elif any(m == "timeline_exact" for m in run_methods):
         aggregate_method = "timeline_exact"
     else:
@@ -179,7 +181,6 @@ def _analyse_run(summary: dict[str, Any]) -> dict[str, Any]:
     fold_rows = csvs.get("walkforward_per_fold") or []
     timeline_rows = csvs.get("selector_state_timeline") or []
     overlap_window = coverage.get("overlap_window") or {}
-    overlap_pct = overlap_window.get("overlap_fold_coverage_pct")
 
     has_fold_data = bool(fold_rows)
     has_timeline_data = bool(timeline_rows)
@@ -200,13 +201,26 @@ def _analyse_run(summary: dict[str, Any]) -> dict[str, Any]:
             "warnings": warnings,
         }
 
+    # --- Derive aggregate overlap_pct ---
+    # Prefer per-fold dl_overlap_pct column (exact, from timestamps); fall
+    # back to the pipeline-computed aggregate stored in coverage.overlap_window.
+    has_per_fold_overlap = has_fold_data and any(
+        r.get("dl_overlap_pct") is not None for r in fold_rows
+    )
+    if has_per_fold_overlap:
+        _active = sum(1 for r in fold_rows if r.get("dl_overlap_state") in ("active", "partial"))
+        _total = len(fold_rows)
+        overlap_pct: float | None = round(100.0 * _active / _total, 2) if _total else None
+    else:
+        overlap_pct = overlap_window.get("overlap_fold_coverage_pct")
+
     # --- Fold-level DL state classification ---
     classified_folds = classify_folds_dl_state(
         fold_rows,
         overlap_fold_coverage_pct=overlap_pct,
     )
 
-    if overlap_pct is None:
+    if overlap_pct is None and not has_per_fold_overlap:
         warnings.append(
             "overlap_fold_coverage_pct not available; folds labelled dl_state_unknown. "
             "DL conditional slicing will be unavailable for this run."
@@ -282,7 +296,11 @@ def _analyse_run(summary: dict[str, Any]) -> dict[str, Any]:
         "has_fold_data": has_fold_data,
         "has_timeline_data": has_timeline_data,
         "overlap_fold_coverage_pct": overlap_pct,
-        "dl_state_assignment_method": "timeline_exact" if has_timeline_data else "heuristic_fold_position",
+        "dl_state_assignment_method": (
+            "timeline_exact" if has_timeline_data
+            else "per_fold_timestamp_overlap" if has_per_fold_overlap
+            else "heuristic_fold_position"
+        ),
         "n_folds_total": len(all_folds),
         "n_folds_dl_active": len(active_folds),
         "n_folds_dl_missing": len(missing_folds),
