@@ -279,6 +279,8 @@ def render_markdown_report(
         )
         _render_factor_comparison(lines, comparisons.get("factors"))
         _render_selector_aggregate(lines, comparisons.get("selector"))
+        if comparisons.get("conditional"):
+            _render_dl_conditional_analysis(lines, comparisons.get("conditional"))
 
     return "\n".join(lines) + "\n"
 
@@ -438,6 +440,140 @@ def _render_ml_accuracy(lines: list[str], summary: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 # Cross-run comparison sections
 # ---------------------------------------------------------------------------
+
+
+def _render_dl_conditional_analysis(
+    lines: list[str],
+    conditional: dict[str, Any] | None,
+) -> None:
+    """
+    Render the DL-conditioned selector analysis section.
+
+    Covers:
+    - Aggregate table: Sharpe / entropy / switch density per run × window
+    - Per-run breakdown: DL state counts, fold coverage, transition summary
+    - Warnings and data-availability notes
+    """
+    lines.append("### DL-Conditioned Selector Analysis\n")
+    if not conditional:
+        lines.append("⚠ DL conditional analysis not computed (run with `--conditional-analysis`).")
+        lines.append("")
+        return
+
+    for w in conditional.get("warnings") or []:
+        lines.append(f"- ⚠ {w}")
+
+    if not conditional.get("data_available"):
+        lines.append(
+            "⚠ No fold-level or timeline data available for conditional analysis. "
+            "Ensure `walkforward_results_per_fold__*.csv` is present."
+        )
+        lines.append("")
+        return
+
+    lines.append(
+        "> **Temporal heuristic**: DL state assignment uses a positional approximation — "
+        "the last K folds per pair (where K = N × DL-overlap-coverage-pct) are treated as "
+        "`dl_active`. This reflects the walk-forward temporal ordering assumption. "
+        "For exact slicing, provide `selector_state_timeline.csv`."
+    )
+    lines.append("")
+
+    # --- Aggregate table ---
+    agg_rows = conditional.get("aggregate_table") or []
+    if agg_rows:
+        lines.append("**Conditional Metrics Table (Sharpe / Entropy / Switch Density per Window):**\n")
+        wanted = [
+            "run_id", "window",
+            "sharpe_dynamic", "sharpe_delta",
+            "return_delta", "maxdd_delta",
+            "n_folds",
+            "selector_entropy", "normalized_entropy",
+            "switches_per_1000_bars",
+        ]
+        _table_from_rows(lines, agg_rows, include=wanted)
+        lines.append("")
+        lines.append(
+            "> `selector_entropy`: Shannon entropy over fold outcome categories "
+            "(positive / near-zero / negative Sharpe delta). "
+            "Low entropy → consistent routing; high entropy → volatile routing.\n"
+            "> `switches_per_1000_bars`: available only when `selector_state_timeline.csv` is present."
+        )
+    else:
+        lines.append("⚠ Aggregate conditional metrics table is empty.")
+    lines.append("")
+
+    # --- Per-run breakdown ---
+    per_run = conditional.get("per_run") or []
+    if per_run:
+        lines.append("**Per-Run DL State Summary:**\n")
+        lines.append("| Run ID | DL Coverage % | Folds Total | Folds DL Active | Folds DL Missing | Transition Rows | Timeline Available |")
+        lines.append("|--------|--------------|-------------|-----------------|-----------------|----------------|-------------------|")
+        for run_result in per_run:
+            run_id = run_result.get("run_id", "—")
+            pct = run_result.get("overlap_fold_coverage_pct")
+            pct_str = f"{pct:.1f}" if pct is not None else "—"
+            n_total = run_result.get("n_folds_total", "—")
+            n_active = run_result.get("n_folds_dl_active", "—")
+            n_missing = run_result.get("n_folds_dl_missing", "—")
+            n_trans = run_result.get("n_transition_rows", "—")
+            has_timeline = "✓" if run_result.get("has_timeline_data") else "✗"
+            lines.append(
+                f"| {run_id} | {pct_str} | {n_total} | {n_active} | {n_missing} | {n_trans} | {has_timeline} |"
+            )
+        lines.append("")
+
+    # --- Selector entropy diagnostics ---
+    lines.append("**Selector Entropy by Window (full-period):**\n")
+    lines.append("| Run ID | Entropy (full) | Entropy (DL active) | Entropy (DL missing) | Concentration (full) |")
+    lines.append("|--------|---------------|--------------------|--------------------|---------------------|")
+    for run_result in per_run:
+        run_id = run_result.get("run_id", "—")
+        cond = run_result.get("conditional_metrics") or {}
+        full_e = cond.get("full", {}).get("selector_entropy")
+        active_e = cond.get("dl_active", {}).get("selector_entropy")
+        missing_e = cond.get("dl_missing", {}).get("selector_entropy")
+        full_conc = cond.get("full", {}).get("occupancy_concentration")
+        lines.append(
+            f"| {run_id} "
+            f"| {_fmt(full_e)} "
+            f"| {_fmt(active_e)} "
+            f"| {_fmt(missing_e)} "
+            f"| {_fmt(full_conc)} |"
+        )
+    lines.append("")
+
+    # --- Transition summary ---
+    lines.append("**Transition Window Metrics (DL enter/exit boundary folds):**\n")
+    for run_result in per_run:
+        run_id = run_result.get("run_id", "—")
+        ts = run_result.get("transition_summary") or {}
+        if ts.get("data_available"):
+            n_win = ts.get("n_windows", 0)
+            n_rows = ts.get("n_transition_rows", 0)
+            lines.append(f"- **{run_id}**: {n_windows_label(n_win)}, {n_rows} fold(s) in window")
+            for metric, stats in sorted((ts.get("metrics") or {}).items()):
+                mean_v = stats.get("mean")
+                std_v = stats.get("std")
+                n_v = stats.get("n")
+                lines.append(f"  - {metric}: mean={_fmt(mean_v)}, std={_fmt(std_v)}, n={n_v}")
+        else:
+            lines.append(f"- **{run_id}**: no transition windows identified (insufficient fold data)")
+    lines.append("")
+
+    lines.append(
+        "> **Guide to interpreting results:**\n"
+        "> - *Does DL reduce selector entropy?* Compare `Entropy (DL active)` vs `Entropy (DL missing)` — "
+        "lower is more stable.\n"
+        "> - *Are DL effects concentrated?* Low `n_folds` for `dl_active` means effects are sparse.\n"
+        "> - *Are reactive failures transition-dominated?* Check `transition` window Sharpe delta.\n"
+        "> - *For true per-bar analysis*, provide `selector_state_timeline.csv` in the run directory."
+    )
+    lines.append("")
+
+
+def n_windows_label(n: int) -> str:
+    return f"{n} window{'s' if n != 1 else ''}"
 
 
 def _render_sentiment_comparison(
