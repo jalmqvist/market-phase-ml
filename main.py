@@ -2849,6 +2849,10 @@ def main(
                     "TF on spike (%)": vol_diag.get("tf_on_spike_pct", np.nan),
                     "Confident Bars (%)": vol_diag.get("confident_pct", np.nan),
 
+                    # fold test-window boundaries (structured; redundant with dl_overlap_window)
+                    "fold_test_start": _test_start_date.date().isoformat(),
+                    "fold_test_end": _test_end_date.date().isoformat(),
+
                     # DL overlap attribution (computed from actual bar timestamps)
                     "dl_overlap_pct": round(_dl_overlap_pct, 4),
                     "dl_overlap_active": _dl_overlap_active,

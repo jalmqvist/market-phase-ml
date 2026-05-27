@@ -146,7 +146,9 @@ def _parse_walkforward_per_fold(path: Path) -> list[dict[str, Any]]:
 
     Columns: Pair, Fold, + Sharpe/Return/MaxDD for Dynamic and Baseline,
     plus canonical DL overlap attribution columns (``dl_overlap_pct``,
-    ``dl_overlap_active``, ``dl_overlap_state``, ``dl_overlap_window``).
+    ``dl_overlap_active``, ``dl_overlap_state``, ``dl_overlap_window``)
+    and structured fold boundary timestamps (``fold_test_start``,
+    ``fold_test_end``) as ISO 8601 date strings (``YYYY-MM-DD``).
 
     Note: fold boundaries use strictly causal positional indexing
     (``test_start_pos = train_end_pos + 1``).
@@ -159,6 +161,8 @@ def _parse_walkforward_per_fold(path: Path) -> list[dict[str, Any]]:
     }
     bool_str_cols = {"dl_overlap_active"}
     int_cols = {"Fold"}
+    # fold_test_start / fold_test_end are ISO 8601 date strings — pass through as-is
+    date_str_cols = {"fold_test_start", "fold_test_end"}
 
     rows = _read_csv(path)
     out: list[dict[str, Any]] = []
