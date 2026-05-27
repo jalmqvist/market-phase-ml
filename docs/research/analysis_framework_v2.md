@@ -68,7 +68,12 @@ analysis/
 ├── comparisons/
 │   ├── sentiment.py             # Sentiment ON vs OFF comparison
 │   ├── selector.py              # Baseline vs dynamic selector uplift
-│   └── gen_comparison.py        # Gen1 vs Gen2 missing-indicator comparison
+│   ├── gen_comparison.py        # Gen1 vs Gen2 missing-indicator comparison
+│   └── dl_conditional.py        # DL-conditioned selector analysis (--conditional-analysis)
+├── diagnostics/
+│   ├── __init__.py
+│   ├── selector_diagnostics.py  # Entropy, switch density, confidence collapse
+│   └── transition_windows.py    # DL state classification, window extraction
 └── plots/                       # Plot generators (extend as needed)
 ```
 
@@ -88,6 +93,7 @@ build_run_summary()    → normalised summary dict (JSON-serialisable)
 compare_sentiment_variants()
 compare_selector_uplift()
 compare_gen1_gen2()
+build_dl_conditional_analysis()   ← only when --conditional-analysis
     ↓
 render_markdown_report()  → report.md
 ```
@@ -112,6 +118,7 @@ render_markdown_report()  → report.md
 | `vol_guard_diagnostics_per_fold__*.csv` | `vol_guard_per_fold` | Vol guard per-fold breakdown |
 | `results_summary__*.csv` | `results_summary` | Top-level results (v2 format) |
 | `results_per_pair__*.csv` | `results_per_pair` | Per-pair results (v2 format) |
+| `selector_state_timeline.csv` | `selector_state_timeline` | Optional per-bar selector state (Tier 2 diagnostics) |
 
 Both `__baseline` and `__dl_enabled` file variants are collected and
 annotated with a `_mode_tag` field before merging.
@@ -251,7 +258,8 @@ Each run produces a `<canonical_run_id>.summary.json` with this structure:
     "vol_guard_summary": null,
     "vol_guard_per_fold": null,
     "results_summary": null,
-    "results_per_pair": null
+    "results_per_pair": null,
+    "selector_state_timeline": null
   },
   "log": {
     "source_log": "results_dl_v1_preliminary_eurusd_lvtf.txt",
@@ -484,16 +492,11 @@ than crashing or omitting the section header.
 | Selector uplift (aggregate + per-pair) | `baseline_vs_dynamic_comparison__*.csv` | `comparisons.selector` |
 | DL coverage (per pair) | log `[DL]` lines or `vol_guard_diagnostics` | `coverage.per_pair` |
 | Vol guard suppression rate | `vol_guard_diagnostics_summary__*.csv` | `csvs.vol_guard_summary` |
-
-**Overlap-window evaluation** (DL data ~2019+) is not yet implemented but
-is now scaffolded in summary coverage metadata:
-
-- overlap fold coverage %
-- per-year fold counts
-- DL-active year inference (>=2019)
-- attachment persistence extension point
-
-This prepares overlap-window research without locking in final metrics yet.
+| DL-active-only vs DL-missing metrics | `walkforward_results_per_fold` + `--conditional-analysis` | `comparisons.conditional` |
+| Selector entropy (fold-level proxy) | `walkforward_results_per_fold` + `--conditional-analysis` | `comparisons.conditional.aggregate_table[].selector_entropy` |
+| Switch density + hold duration | `selector_state_timeline.csv` + `--conditional-analysis` | `comparisons.conditional.aggregate_table[].switches_per_1000_bars` |
+| Transition window analysis | `selector_state_timeline.csv` + `--conditional-analysis` | `comparisons.conditional.per_run[].transition_summary` |
+| Confidence collapse diagnostics | `selector_state_timeline.csv` + `--conditional-analysis` | `comparisons.conditional.per_run[].confidence_collapse` |
 
 ---
 
@@ -519,10 +522,179 @@ The v1 scripts are preserved but deprecated:
 
 ---
 
+## DL-Conditioned Selector Analysis
+
+> Added in the V5 analysis PR. Backwards-compatible — disabled by default.
+
+### Overview
+
+The `--conditional-analysis` flag enables a second analysis pass that slices
+V5 walk-forward fold data into DL-state-conditioned windows and computes
+selector diagnostics on each slice, answering questions such as:
+
+- Does DL reduce selector entropy?
+- Does DL stabilise routing?
+- Are reactive failures transition-dominated?
+- Does selector geometry change materially during DL-active periods?
+
+### Enabling conditional analysis
+
+```bash
+python analysis/pipeline.py results_archive/ --conditional-analysis
+```
+
+When enabled, `comparisons.json` gains a top-level `"conditional"` key and
+`report.md` gains a **DL-Conditioned Selector Analysis** section.
+
+### Architecture
+
+```
+analysis/
+├── comparisons/
+│   └── dl_conditional.py      # Entry point: build_dl_conditional_analysis()
+└── diagnostics/
+    ├── __init__.py
+    ├── selector_diagnostics.py # Entropy, switch density, confidence collapse
+    └── transition_windows.py   # DL state classification, window extraction
+```
+
+### DL state classification
+
+Because the V5 fold CSVs (`walkforward_results_per_fold__*.csv`) contain no
+per-bar timestamp columns, DL state is assigned using a **positional
+heuristic**:
+
+1. `overlap_fold_coverage_pct` is read from `coverage.overlap_window`
+   (already computed from vol-guard diagnostics).
+2. The last `K = round(N × pct/100)` folds per pair are labelled
+   **`dl_active`**.  Walk-forward folds are temporally ordered (later
+   fold index = more recent calendar period), so this approximates the
+   actual DL overlap window.
+3. The first `dl_active` fold per pair is relabelled **`dl_transition_enter`**.
+4. Remaining folds are **`dl_missing`**.
+5. When `overlap_fold_coverage_pct` is absent or `None`, all folds receive
+   **`dl_state_unknown`** and are excluded from conditional metrics.
+
+If a `selector_state_timeline.csv` is present (see below), per-bar DL state
+is derived directly from the `dl_active` column, giving exact rather than
+heuristic classifications.
+
+| Label | Meaning |
+|---|---|
+| `dl_active` | DL overlap exists for this fold/bar |
+| `dl_missing` | DL unavailable / imputed |
+| `dl_transition_enter` | First fold/bar after DL becomes active |
+| `dl_transition_exit` | First fold/bar after DL disappears |
+| `dl_state_unknown` | Coverage information not available |
+
+### Conditional windows
+
+Four analysis windows are computed per run:
+
+| Window | Folds included |
+|---|---|
+| `full` | All folds |
+| `dl_active` | `dl_active` + `dl_transition_enter` folds |
+| `dl_missing` | `dl_missing` folds only |
+| `transition` | `dl_transition_enter` + `dl_transition_exit` folds |
+
+### Two-tier diagnostics
+
+| Tier | Data source | Always available? | Metrics |
+|---|---|---|---|
+| **Tier 1** (fold-level) | `walkforward_results_per_fold` | ✓ | Sharpe/Return/MaxDD per window, selector entropy proxy, fold-Sharpe std |
+| **Tier 2** (bar-level) | `selector_state_timeline.csv` | Optional | True switch density, hold duration, confidence collapse, fallback rates |
+
+Tier 2 functions return `data_available=False` gracefully when the timeline
+CSV is absent; no error or warning is raised.
+
+### Selector entropy proxy (Tier 1)
+
+True occupancy entropy requires per-bar strategy selection data.  In the
+absence of a timeline CSV, the framework uses a **Shannon entropy over
+fold outcome categories** as a routing-stability proxy:
+
+- **positive** — `Sharpe_Delta > 0.05`
+- **near_zero** — `-0.05 ≤ Sharpe_Delta ≤ 0.05`
+- **negative** — `Sharpe_Delta < -0.05`
+
+High entropy across these categories → high outcome instability → proxy for
+unstable selector routing.  Normalised entropy is on [0, 1].
+
+### selector_state_timeline.csv (Tier 2 input)
+
+An optional per-bar export that unlocks Tier 2 diagnostics.  One row per
+timestep per pair.  Supported columns:
+
+| Column | Type | Description |
+|---|---|---|
+| `timestamp` | str (ISO 8601) | Bar timestamp |
+| `pair` | str | Currency pair |
+| `selected_strategy` | str | Name of the selected strategy |
+| `selector_confidence` | float | XGBoost selection confidence score |
+| `dl_active` | bool | True when DL overlap data is available |
+| `dl_missing` | bool | True when DL data is unavailable/imputed |
+| `fallback_active` | bool | True when PhaseAware fallback is active |
+| `switch_event` | bool | True when strategy changed from previous bar |
+| `previous_strategy` | str | Strategy on previous bar |
+| `current_strategy` | str | Strategy on current bar (same as selected_strategy) |
+
+Additional columns (`phaseaware_active`, `volatility_guard_active`,
+`imputation_state`) are parsed if present but not required.
+
+Place the file alongside the run's other CSVs:
+
+```
+results_archive/fp_gen1_A/
+├── run_manifest_2022.json
+├── walkforward_results_per_fold__dl_enabled.csv
+└── selector_state_timeline.csv     ← optional Tier 2 input
+```
+
+### Aggregate table columns
+
+The `comparisons.conditional.aggregate_table` list contains one row per
+`(run_id, window)` combination:
+
+| Column | Description |
+|---|---|
+| `run_id` | Canonical run identifier |
+| `window` | `full` / `dl_active` / `dl_missing` / `transition` |
+| `n_folds` | Number of folds in this window |
+| `sharpe_delta` | Mean Sharpe_Delta across folds |
+| `return_delta` | Mean Return_Delta across folds |
+| `maxdd_delta` | Mean MaxDD_Delta across folds |
+| `selector_entropy` | Shannon entropy of fold-outcome distribution |
+| `normalized_entropy` | Entropy normalised to [0, 1] |
+| `occupancy_concentration` | 1 − normalized_entropy |
+| `fold_sharpe_std` | Std of fold-level Sharpe_Delta |
+| `switches_per_1000_bars` | Switch rate (Tier 2 only; `null` if no timeline) |
+| `mean_hold_duration` | Mean bars between switches (Tier 2 only) |
+| `median_hold_duration` | Median bars between switches (Tier 2 only) |
+
+### Example report output
+
+| Run | Window | Sharpe Δ | Entropy | Switch/1000 |
+|---|---|---|---|---|
+| persistent_dl_sentiment_aware | full | 0.33 | 0.41 | — |
+| persistent_dl_sentiment_aware | dl_active | 0.61 | 0.22 | — |
+| persistent_dl_sentiment_aware | dl_missing | 0.28 | 0.49 | — |
+| reactive_dl_sentiment_aware | transition | -0.07 | 0.81 | — |
+
+(Switch/1000 populated only when `selector_state_timeline.csv` is provided.)
+
+---
+
 ## Running Tests
 
 ```bash
-python -m unittest tests/test_parsers.py tests/test_comparisons.py -v
+# Core analysis framework tests (166 tests)
+python -m unittest tests/test_parsers.py tests/test_comparisons.py \
+    tests/test_reproducibility.py tests/test_experiment_surface.py \
+    tests/test_runtime_experiment_surface.py -v
+
+# DL conditional analysis tests (82 tests)
+python -m unittest tests/test_dl_conditional.py -v
 ```
 
 Tests cover:
@@ -538,6 +710,8 @@ Tests cover:
 - Partial-run handling (manifest-only, log-only, mixed)
 - Comparison generators (sentiment, selector, gen1 vs gen2 cohort correctness)
 - End-to-end pipeline integration (report + summaries + comparisons)
+- DL conditional analysis (selector entropy, fold classification, switch density,
+  confidence collapse, transition windows, timeline CSV parsing)
 
 ---
 
@@ -545,13 +719,14 @@ Tests cover:
 
 | Capability | Where to add |
 |---|---|
-| Overlap-window filtering (~2019+) | `analysis/comparisons/` — filter `walkforward_per_fold` by date |
-| DL coverage by year | `analysis/parsers/csv_parsers.py` — parse fold timestamps |
 | Plot generation | `analysis/plots/` — add renderers using matplotlib/seaborn |
 | HTML report | `analysis/reports/` — add `html_report.py` alongside `markdown_report.py` |
 | New CSV output types | `analysis/parsers/csv_parsers.py` — add entry to `CSV_PARSERS` |
 | Multi-surface analysis | `analysis/comparisons/` — group by `dl_surface_string` |
 | Notebook integration | Load `<output_dir>/summaries/*.summary.json` directly |
+| HMM / latent-state modeling | Load `selector_state_timeline.csv` directly into a sequence model |
+| True occupancy entropy | Provide `selector_state_timeline.csv` → unlock Tier 2 `entropy_per_strategy` |
+| Exact timestamp slicing | Emit fold timestamps in manifest → replace positional DL state heuristic |
 
 ---
 

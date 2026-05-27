@@ -81,6 +81,7 @@ from analysis.comparisons.gen_comparison import (
     compare_training_family_effect,
 )
 from analysis.comparisons.factor_comparison import build_factor_comparisons
+from analysis.comparisons.dl_conditional import build_dl_conditional_analysis
 from analysis.reports.markdown_report import render_markdown_report
 from analysis.validation import validate_summaries, sort_summaries_deterministically
 from experiment_semantics import is_v5_surface
@@ -344,6 +345,7 @@ def run_pipeline(
     output_dir: Path,
     *,
     verbose: bool = False,
+    conditional_analysis: bool = False,
 ) -> None:
     """
     Full analysis pipeline.
@@ -356,6 +358,10 @@ def run_pipeline(
         Directory where outputs are written.
     verbose:
         Print progress messages.
+    conditional_analysis:
+        When True, run DL-conditioned selector analysis (entropy, conditional
+        metrics per DL state, transition window diagnostics) and include the
+        results in ``comparisons.json`` and ``report.md``.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     summaries_dir = output_dir / "summaries"
@@ -437,6 +443,17 @@ def run_pipeline(
     _log("   factors: generalized cohort slices computed")
     comparisons["validation"] = validation
 
+    # 3b. Optional DL conditional analysis.
+    if conditional_analysis:
+        _log("   conditional: running DL-conditioned selector analysis …")
+        comparisons["conditional"] = build_dl_conditional_analysis(summaries)
+        n_cond_rows = len(comparisons["conditional"].get("aggregate_table", []))
+        n_cond_warnings = len(comparisons["conditional"].get("warnings", []))
+        _log(
+            f"   conditional: {n_cond_rows} aggregate table rows, "
+            f"{n_cond_warnings} warning(s)"
+        )
+
     comparisons_path = output_dir / "comparisons.json"
     with open(comparisons_path, "w") as f:
         json.dump(comparisons, f, indent=2, default=str, sort_keys=True)
@@ -472,6 +489,7 @@ Examples:
   python analysis/pipeline.py results_archive/
   python analysis/pipeline.py results_archive/fp_gen1_A/ --output-dir reports/gen1_A/
   python analysis/pipeline.py results/ --output-dir analysis/output/ --verbose
+  python analysis/pipeline.py results/ --conditional-analysis --verbose
 """,
     )
     parser.add_argument(
@@ -490,6 +508,16 @@ Examples:
         action="store_true",
         help="Print progress messages.",
     )
+    parser.add_argument(
+        "--conditional-analysis",
+        action="store_true",
+        help=(
+            "Run DL-conditioned selector analysis: compute conditional metrics "
+            "(Sharpe, Return, MaxDD) per DL state (full / dl_active / dl_missing / transition), "
+            "selector entropy, fold-level routing stability, and transition window diagnostics. "
+            "Results appear in comparisons.json under 'conditional' and in report.md."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -498,6 +526,7 @@ Examples:
             archive_root=args.archive,
             output_dir=args.output_dir,
             verbose=args.verbose,
+            conditional_analysis=args.conditional_analysis,
         )
     except FileNotFoundError as exc:
         print(f"❌ {exc}", file=sys.stderr)

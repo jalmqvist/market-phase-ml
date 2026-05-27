@@ -240,6 +240,56 @@ def _parse_results_per_pair(path: Path) -> list[dict[str, Any]]:
     return _parse_results_summary(path)
 
 
+def _parse_selector_state_timeline(path: Path) -> list[dict[str, Any]]:
+    """
+    Parse ``selector_state_timeline.csv`` — optional per-bar selector state export.
+
+    This file is emitted by the runtime (when enabled) and enables timeline-
+    level DL conditional analysis: true occupancy entropy, switch density,
+    hold durations, and confidence collapse metrics.
+
+    Expected columns (all optional — absent columns are passed through as-is):
+
+    ``timestamp``             ISO-8601 bar timestamp
+    ``pair``                  Instrument pair
+    ``selected_strategy``     Active strategy label
+    ``selector_confidence``   Float in [0, 1]
+    ``phaseaware_active``     Bool — PhaseAware is the selected strategy
+    ``volatility_guard_active`` Bool — vol guard is suppressing signals
+    ``dl_active``             Bool — DL overlap present for this bar
+    ``dl_missing``            Bool — DL unavailable / imputed
+    ``imputation_state``      String label for imputation mode
+    ``fallback_active``       Bool — fallback strategy is active
+    ``switch_event``          Bool — strategy switch occurred at this bar
+    ``previous_strategy``     Strategy label on the previous bar
+    ``current_strategy``      Strategy label on the current bar
+    """
+    float_cols = {"selector_confidence"}
+    bool_str_cols = {
+        "phaseaware_active", "volatility_guard_active", "dl_active",
+        "dl_missing", "fallback_active", "switch_event",
+    }
+    rows = _read_csv(path)
+    out: list[dict[str, Any]] = []
+    for raw in rows:
+        row: dict[str, Any] = {}
+        for k, v in raw.items():
+            if k in float_cols:
+                row[k] = _safe_float(v)
+            elif k in bool_str_cols:
+                # Normalise to Python bool; preserve None for missing values.
+                if v is None or v == "":
+                    row[k] = None
+                elif v.strip().lower() in ("true", "1", "yes"):
+                    row[k] = True
+                else:
+                    row[k] = False
+            else:
+                row[k] = v
+        out.append(row)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Mapping: glob pattern → parser function
 # ---------------------------------------------------------------------------
@@ -250,18 +300,20 @@ def _parse_results_per_pair(path: Path) -> list[dict[str, Any]]:
 # __dl_enabled variants without hardcoding exact suffixes.
 
 CSV_PARSERS: list[tuple[str, str, Callable[[Path], list[dict[str, Any]]]]] = [
-    ("results_ml__*.csv",                   "ml_accuracy",         _parse_results_ml),
-    ("results_ml_backtest__*.csv",           "backtest",            _parse_results_ml_backtest),
-    ("walkforward_results_summary__*.csv",   "walkforward_summary", _parse_walkforward_summary),
-    ("walkforward_results_per_pair__*.csv",  "walkforward_per_pair",_parse_walkforward_per_pair),
-    ("walkforward_results_per_fold__*.csv",  "walkforward_per_fold",_parse_walkforward_per_fold),
-    ("baseline_vs_dynamic_comparison__*.csv","selector_comparison", _parse_selector_comparison),
-    ("ablation_summary_aggregate__*.csv",    "ablation_aggregate",  _parse_ablation_aggregate),
-    ("ablation_summary_per_pair__*.csv",     "ablation_per_pair",   _parse_ablation_per_pair),
-    ("vol_guard_diagnostics_summary__*.csv", "vol_guard_summary",   _parse_vol_guard_summary),
-    ("vol_guard_diagnostics_per_fold__*.csv","vol_guard_per_fold",  _parse_vol_guard_per_fold),
-    ("results_summary__*.csv",               "results_summary",     _parse_results_summary),
-    ("results_per_pair__*.csv",              "results_per_pair",    _parse_results_per_pair),
+    ("results_ml__*.csv",                   "ml_accuracy",              _parse_results_ml),
+    ("results_ml_backtest__*.csv",           "backtest",                 _parse_results_ml_backtest),
+    ("walkforward_results_summary__*.csv",   "walkforward_summary",      _parse_walkforward_summary),
+    ("walkforward_results_per_pair__*.csv",  "walkforward_per_pair",     _parse_walkforward_per_pair),
+    ("walkforward_results_per_fold__*.csv",  "walkforward_per_fold",     _parse_walkforward_per_fold),
+    ("baseline_vs_dynamic_comparison__*.csv","selector_comparison",      _parse_selector_comparison),
+    ("ablation_summary_aggregate__*.csv",    "ablation_aggregate",       _parse_ablation_aggregate),
+    ("ablation_summary_per_pair__*.csv",     "ablation_per_pair",        _parse_ablation_per_pair),
+    ("vol_guard_diagnostics_summary__*.csv", "vol_guard_summary",        _parse_vol_guard_summary),
+    ("vol_guard_diagnostics_per_fold__*.csv","vol_guard_per_fold",       _parse_vol_guard_per_fold),
+    ("results_summary__*.csv",               "results_summary",          _parse_results_summary),
+    ("results_per_pair__*.csv",              "results_per_pair",         _parse_results_per_pair),
+    # Optional per-bar selector state timeline (enables timeline-level DL analysis).
+    ("selector_state_timeline.csv",          "selector_state_timeline",  _parse_selector_state_timeline),
 ]
 
 
