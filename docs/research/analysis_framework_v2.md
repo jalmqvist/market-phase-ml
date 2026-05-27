@@ -669,18 +669,14 @@ Supported columns:
 | `pair` | str | Currency pair |
 | `fold` | int | Walk-forward fold index |
 | `selected_strategy` | str | Name of the selected strategy |
-| `selector_confidence` | float | XGBoost selection confidence score |
 | `dl_available` | bool | True when DL feature columns are non-null for this bar |
 | `dl_overlap_pct` | float | Fold-level DL coverage % (constant within a fold) |
 | `dl_overlap_state` | str | Fold-level state: `"active"` / `"partial"` / `"missing"` |
 | `switch_event` | bool | True when strategy changed from previous bar |
 | `previous_strategy` | str | Strategy on previous bar |
-| `dl_active` | bool | True when DL overlap data is available |
-| `dl_missing` | bool | True when DL data is unavailable/imputed |
-| `fallback_active` | bool | True when PhaseAware fallback is active |
-| `current_strategy` | str | Strategy on current bar (same as selected_strategy) |
 
-Additional columns (`phaseaware_active`, `volatility_guard_active`,
+Additional columns (`selector_confidence`, `dl_active`, `dl_missing`,
+`fallback_active`, `phaseaware_active`, `volatility_guard_active`,
 `imputation_state`) are parsed if present but not required.
 
 Place the file alongside the run's other CSVs:

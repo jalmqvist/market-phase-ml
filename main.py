@@ -2781,26 +2781,26 @@ def main(
 
                 # --- optional per-bar selector state timeline accumulation ---
                 if EXPORT_SELECTOR_STATE_TIMELINE:
-                    _prev_strat: str | None = None
+                    _prev_strategy: str | None = None
                     for _ti, _ts in enumerate(df_test.index):
                         _strat = selected_s.iloc[_ti]
                         _bar_dl_active = (
                             bool(df_test[_dl_cols_fold].iloc[_ti].notna().any())
                             if _dl_cols_fold else False
                         )
-                        _switch_event = (_prev_strat is not None and _strat != _prev_strat)
+                        _switch_event = (_prev_strategy is not None and _strat != _prev_strategy)
                         _timeline_rows.append({
                             "timestamp": _ts.isoformat(),
                             "pair": pair_name,
                             "fold": fold_id,
-                            "selector_choice": _strat,
+                            "selected_strategy": _strat,
                             "dl_available": _bar_dl_active,
                             "dl_overlap_pct": round(_dl_overlap_pct, 4),
                             "dl_overlap_state": _dl_overlap_state,
                             "switch_event": _switch_event,
-                            "previous_strategy": _prev_strat if _prev_strat is not None else "",
+                            "previous_strategy": _prev_strategy if _prev_strategy is not None else "",
                         })
-                        _prev_strat = _strat
+                        _prev_strategy = _strat
 
                 selector_train_end_ts = selector_window_diag.get("selector_train_end_ts")
                 walkforward_rows.append({

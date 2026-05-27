@@ -1013,6 +1013,8 @@ class TestPipelineConditionalIntegration(unittest.TestCase):
 # Tests: per-fold dl_overlap_pct classification
 # ---------------------------------------------------------------------------
 
+_DL_STATE_TO_PCT: dict[str, float] = {"active": 100.0, "partial": 60.0, "missing": 0.0}
+
 
 def _make_fold_rows_with_overlap(
     states: list[str],
@@ -1021,8 +1023,7 @@ def _make_fold_rows_with_overlap(
 ) -> list[dict]:
     """Build fold rows that carry dl_overlap_pct / dl_overlap_state columns."""
     if pcts is None:
-        pcts = {"active": 100.0, "partial": 60.0, "missing": 0.0}
-        pcts = [pcts[s] for s in states]
+        pcts = [_DL_STATE_TO_PCT[s] for s in states]
     rows = []
     for i, (state, pct) in enumerate(zip(states, pcts)):
         rows.append({
@@ -1168,7 +1169,6 @@ class TestOverlapWindowDiagnosticsWithPerFoldData(unittest.TestCase):
     """_build_overlap_window_diagnostics uses per-fold overlap when available."""
 
     def _make_fold_csv_content(self, states: list[str]) -> str:
-        pct_map = {"active": 100.0, "partial": 60.0, "missing": 0.0}
         lines = [
             "Pair,Fold,Sharpe_Dynamic,Sharpe_Baseline,Sharpe_Delta,"
             "Return_Dynamic,Return_Baseline,Return_Delta,"
@@ -1176,7 +1176,7 @@ class TestOverlapWindowDiagnosticsWithPerFoldData(unittest.TestCase):
             "dl_overlap_pct,dl_overlap_active,dl_overlap_state,dl_overlap_window"
         ]
         for i, state in enumerate(states):
-            pct = pct_map[state]
+            pct = _DL_STATE_TO_PCT[state]
             active_str = str(state == "active")
             lines.append(
                 f"EURUSD,{i + 1},0.5,0.4,0.1,0.05,0.03,0.02,-0.10,-0.12,0.02,"
