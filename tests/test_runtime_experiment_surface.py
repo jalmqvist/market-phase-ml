@@ -25,6 +25,32 @@ build_runtime_experiment_surface = _SURFACE_RUNTIME_MODULE.build_runtime_experim
 
 
 class TestRuntimeExperimentSurfaceEmission(unittest.TestCase):
+    def test_manifest_provenance_includes_market_data_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            manifest = {
+                "run": {"run_id": "run_20260525T090000Z", "timestamp_utc": "20260525T090000Z"},
+                "experiment": {"generation": "gen1", "variant": "A", "factors": {}},
+                "experiment_surface": build_runtime_experiment_surface(
+                    dl_runtime_enabled=False,
+                    dl_surface={},
+                    dl_artifact_path=None,
+                    experiment_factors={},
+                    artifact_metadata={},
+                ),
+                "market_data_source": "broker_csv",
+                "market_data_root": "../market-sentiment-ml/data/input/fx",
+                "market_data_timezone": "UTC+1",
+            }
+            (run_dir / "run_manifest.json").write_text(
+                json.dumps(manifest),
+                encoding="utf-8",
+            )
+            parsed = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(parsed.get("market_data_source"), "broker_csv")
+            self.assertEqual(parsed.get("market_data_root"), "../market-sentiment-ml/data/input/fx")
+            self.assertEqual(parsed.get("market_data_timezone"), "UTC+1")
+
     def test_new_manifest_includes_experiment_surface(self):
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)

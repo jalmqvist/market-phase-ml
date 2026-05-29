@@ -17,7 +17,8 @@ from src.data import (
     MarketDataPipeline,
     ALL_PAIRS, MAJORS, MINORS,
     PAIR_NAMES, PIP_VALUES,
-    summarize_dataset
+    summarize_dataset,
+    resolve_market_data_source,
 )
 from src.phases import MarketPhaseDetector
 from src.strategies import run_backtests
@@ -1537,6 +1538,24 @@ def main(
     selected_output_dir = Path(
         output_dir or os.getenv("MPML_OUTPUT_DIR", computed_default_output_dir)
     )
+    market_data_source = resolve_market_data_source()
+    pipeline = MarketDataPipeline(
+        start=START_DATE,
+        end=END_DATE,
+        source=market_data_source,
+        use_cache=True
+    )
+    if market_data_source == "broker_csv":
+        loader = getattr(pipeline, "loader", None)
+        if loader is None or not hasattr(loader, "data_root") or not hasattr(loader, "timezone_name"):
+            raise ValueError(
+                "broker_csv source requires loader.data_root and loader.timezone_name for provenance"
+            )
+        market_data_root = str(loader.data_root)
+        market_data_timezone = str(loader.timezone_name)
+    else:
+        market_data_root = "yfinance"
+        market_data_timezone = "unknown"
     _set_run_output_dir(selected_output_dir)
 
     print('=' * 60)
@@ -1546,6 +1565,7 @@ def main(
     print(f"DL selected surface: {dl_surface}")
     print(f"surface={dl_surface_str}")
     print(f"DL resolved artifact path: {dl_artifact_path}")
+    print(f"Market data source: {market_data_source}")
     print(f"Output dir: {_run_output_dir()}")
     print(f"Experiment: {experiment_meta}")
     print('=' * 60)
@@ -1567,6 +1587,9 @@ def main(
         },
         "experiment": experiment_meta,
         "experiment_surface": experiment_surface,
+        "market_data_source": market_data_source,
+        "market_data_root": market_data_root,
+        "market_data_timezone": market_data_timezone,
         "reproducibility": reproducibility_block,
         "feature_ordering": {
             "dl_feature_columns": [],
@@ -1665,11 +1688,6 @@ def main(
     # ─────────────────────────────────────────
     print('\n[1/5] Downloading and preparing market data...')
 
-    pipeline = MarketDataPipeline(
-        start=START_DATE,
-        end=END_DATE,
-        use_cache=True
-    )
     raw_data = pipeline.run(pairs=ALL_PAIRS)
 
     # Optional pair-universe restriction
