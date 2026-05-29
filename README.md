@@ -318,6 +318,17 @@ python main.py
 
 Outputs are written into immutable run-owned directories under: `results_archive/`
 
+Optional market-data backend override:
+
+```bash
+export MPML_DATA_SOURCE=yfinance    # default
+# or
+export MPML_DATA_SOURCE=broker_csv  # loads broker H1 CSVs and aggregates to D1
+python main.py
+```
+
+`broker_csv` reads OHLCV-only input from `../market-sentiment-ml/data/input/fx/` (for example `EURUSD60.csv`).
+
 ---
 
 ## Run Analysis Pipeline
@@ -427,4 +438,3 @@ The primary focus is:
 - evaluation methodology
 - reproducible experimentation
 - robustness analysis
-

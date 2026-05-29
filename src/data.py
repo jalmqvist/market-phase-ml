@@ -1,12 +1,14 @@
 # src/data.py
 
-import yfinance as yf
 import pandas as pd
 import numpy as np
+import os
 from pathlib import Path
 from ta.momentum import RSIIndicator
 from ta.trend import ADXIndicator
 from ta.volatility import AverageTrueRange
+
+from src.data_sources import BrokerCSVLoader, YahooLoader
 
 
 # ---------------------------------------------------------------------------
@@ -74,21 +76,37 @@ PAIR_NAMES = {
     'GBPAUD=X': 'GBPAUD',
 }
 
+VALID_DATA_SOURCES = {"yfinance", "broker_csv"}
+
+
+def resolve_market_data_source(source: str | None = None) -> str:
+    env_source = os.getenv("MPML_DATA_SOURCE", "").strip().lower()
+    selected = (env_source or source or "yfinance").strip().lower()
+    if selected not in VALID_DATA_SOURCES:
+        raise ValueError(
+            f"Unsupported market data source {selected!r}. "
+            f"Expected one of: {sorted(VALID_DATA_SOURCES)}"
+        )
+    return selected
+
 
 class MarketDataPipeline:
     """
-    Downloads, cleans and engineers features for multiple forex pairs.
+    Loads, cleans and engineers features for multiple forex pairs.
 
     Workflow:
-        1. download()  - fetch raw OHLCV from Yahoo Finance, cache to CSV
+        1. download()  - fetch raw OHLCV from selected source, cache to CSV
         2. prepare()   - clean, add returns and prediction targets
         3. engineer()  - add technical indicators needed by phases.py
                          and strategies.py
         4. run()       - convenience method: runs all three steps for
                          a list of pairs, returns dict of DataFrames
 
-    Data is cached to data/raw/<PAIR>.csv and data/processed/<PAIR>.csv
-    so repeated runs don't re-download unnecessarily.
+    Source backends:
+        yfinance   (default)
+        broker_csv (optional H1 CSV → D1 aggregation)
+
+    Data is cached to source-specific folders under data/.
 
     Technical indicators added by engineer():
         rsi          - RSI(14), used by MeanReversionStrategy
@@ -108,15 +126,21 @@ class MarketDataPipeline:
                  start: str = '2005-01-01',
                  end: str = '2024-12-31',
                  data_dir: str = 'data',
+                 source: str = 'yfinance',
+                 broker_data_dir: str | Path | None = None,
                  rsi_period: int = 14,
                  adx_period: int = 14,
                  atr_period: int = 14,
                  use_cache: bool = True):
         """
         Args:
-            start:       Start date for download (YYYY-MM-DD)
-            end:         End date for download (YYYY-MM-DD)
+            start:       Start date for load (YYYY-MM-DD)
+            end:         End date for load (YYYY-MM-DD)
             data_dir:    Root directory for cached CSV files
+            source:      Market data backend ('yfinance' or 'broker_csv')
+            broker_data_dir:
+                         Optional broker CSV directory. Defaults to
+                         ../market-sentiment-ml/data/input/fx/
             rsi_period:  RSI lookback period (default 14)
             adx_period:  ADX/DI lookback period (default 14)
             atr_period:  ATR lookback period (default 14)
@@ -126,30 +150,48 @@ class MarketDataPipeline:
         self.start = start
         self.end = end
         self.data_dir = Path(data_dir)
+        self.source = resolve_market_data_source(source)
         self.rsi_period = rsi_period
         self.adx_period = adx_period
         self.atr_period = atr_period
         self.use_cache = use_cache
 
+        if self.source == "broker_csv":
+            default_broker_dir = (
+                Path(__file__).resolve().parents[2] / "market-sentiment-ml" / "data" / "input" / "fx"
+            )
+            self.loader = BrokerCSVLoader(
+                data_root=broker_data_dir or default_broker_dir
+            )
+        else:
+            self.loader = YahooLoader()
+
+        raw_dir_name = "raw" if self.source == "yfinance" else f"raw_{self.source}"
+        processed_dir_name = (
+            "processed" if self.source == "yfinance" else f"processed_{self.source}"
+        )
+        self.raw_cache_dir = self.data_dir / raw_dir_name
+        self.processed_cache_dir = self.data_dir / processed_dir_name
+
         # Create data directories if they don't exist
-        (self.data_dir / 'raw').mkdir(parents=True, exist_ok=True)
-        (self.data_dir / 'processed').mkdir(parents=True, exist_ok=True)
+        self.raw_cache_dir.mkdir(parents=True, exist_ok=True)
+        self.processed_cache_dir.mkdir(parents=True, exist_ok=True)
 
     def download(self, ticker: str) -> pd.DataFrame:
         """
-        Download raw OHLCV data for a single ticker.
+        Load raw OHLCV data for a single ticker.
 
         Checks cache first if use_cache=True. Saves to
-        data/raw/<PAIR>.csv after download.
+        source-specific raw cache after load.
 
         Args:
-            ticker: Yahoo Finance ticker (e.g. 'EURUSD=X')
+            ticker: Pair ticker (e.g. 'EURUSD=X')
 
         Returns:
             Raw OHLCV DataFrame, or empty DataFrame if download fails.
         """
         pair_name = PAIR_NAMES.get(ticker, ticker.replace('=X', ''))
-        cache_path = self.data_dir / 'raw' / f'{pair_name}.csv'
+        cache_path = self.raw_cache_dir / f'{pair_name}.csv'
 
         # Load from cache if available
         if self.use_cache and cache_path.exists():
@@ -161,14 +203,18 @@ class MarketDataPipeline:
             print(f'  ✓ {pair_name}: loaded {len(df)} rows from cache')
             return df
 
-        # Download from Yahoo Finance
-        df = yf.download(
-            ticker,
-            start=self.start,
-            end=self.end,
-            progress=False,
-            auto_adjust=True
-        )
+        if self.source == "broker_csv":
+            df = self.loader.load(
+                pair_name=pair_name,
+                start=self.start,
+                end=self.end,
+            )
+        else:
+            df = self.loader.load(
+                ticker=ticker,
+                start=self.start,
+                end=self.end,
+            )
 
         if len(df) == 0:
             print(f'  ✗ {pair_name}: no data returned')
@@ -180,7 +226,7 @@ class MarketDataPipeline:
 
         # Save to cache
         df.to_csv(cache_path)
-        print(f'  ✓ {pair_name}: downloaded {len(df)} rows')
+        print(f'  ✓ {pair_name}: loaded {len(df)} rows from {self.source}')
 
         return df
 
@@ -370,7 +416,7 @@ class MarketDataPipeline:
             # Save processed data
             if save_processed:
                 processed_path = (
-                        self.data_dir / 'processed' / f'{pair_name}.csv'
+                        self.processed_cache_dir / f'{pair_name}.csv'
                 )
                 processed_df.to_csv(processed_path)
 
