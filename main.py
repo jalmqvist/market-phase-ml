@@ -1539,6 +1539,22 @@ def main(
         output_dir or os.getenv("MPML_OUTPUT_DIR", computed_default_output_dir)
     )
     market_data_source = resolve_market_data_source()
+    pipeline = MarketDataPipeline(
+        start=START_DATE,
+        end=END_DATE,
+        source=market_data_source,
+        use_cache=True
+    )
+    market_data_root = (
+        str(getattr(getattr(pipeline, "loader", None), "data_root", "unknown"))
+        if market_data_source == "broker_csv"
+        else "yfinance"
+    )
+    market_data_timezone = (
+        str(getattr(getattr(pipeline, "loader", None), "timezone_name", "unknown"))
+        if market_data_source == "broker_csv"
+        else "unknown"
+    )
     _set_run_output_dir(selected_output_dir)
 
     print('=' * 60)
@@ -1571,6 +1587,8 @@ def main(
         "experiment": experiment_meta,
         "experiment_surface": experiment_surface,
         "market_data_source": market_data_source,
+        "market_data_root": market_data_root,
+        "market_data_timezone": market_data_timezone,
         "reproducibility": reproducibility_block,
         "feature_ordering": {
             "dl_feature_columns": [],
@@ -1669,12 +1687,6 @@ def main(
     # ─────────────────────────────────────────
     print('\n[1/5] Downloading and preparing market data...')
 
-    pipeline = MarketDataPipeline(
-        start=START_DATE,
-        end=END_DATE,
-        source=market_data_source,
-        use_cache=True
-    )
     raw_data = pipeline.run(pairs=ALL_PAIRS)
 
     # Optional pair-universe restriction

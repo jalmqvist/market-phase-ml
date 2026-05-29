@@ -330,6 +330,7 @@ python main.py
 ```
 
 `broker_csv` reads OHLCV-only input from `../market-sentiment-ml/data/input/fx/` (for example `EURUSD60.csv`).
+Broker timestamps are interpreted as broker-local `UTC+1` and aggregated on `UTC+1` day boundaries (fixed offset; no seasonal/DST adjustment).
 
 ---
 

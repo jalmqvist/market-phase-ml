@@ -39,6 +39,8 @@ class TestRuntimeExperimentSurfaceEmission(unittest.TestCase):
                     artifact_metadata={},
                 ),
                 "market_data_source": "broker_csv",
+                "market_data_root": "../market-sentiment-ml/data/input/fx",
+                "market_data_timezone": "UTC+1",
             }
             (run_dir / "run_manifest.json").write_text(
                 json.dumps(manifest),
@@ -46,6 +48,8 @@ class TestRuntimeExperimentSurfaceEmission(unittest.TestCase):
             )
             parsed = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(parsed.get("market_data_source"), "broker_csv")
+            self.assertEqual(parsed.get("market_data_root"), "../market-sentiment-ml/data/input/fx")
+            self.assertEqual(parsed.get("market_data_timezone"), "UTC+1")
 
     def test_new_manifest_includes_experiment_surface(self):
         with tempfile.TemporaryDirectory() as tmp:

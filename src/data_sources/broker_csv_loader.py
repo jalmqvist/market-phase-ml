@@ -1,3 +1,4 @@
+from datetime import timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -5,6 +6,9 @@ import pandas as pd
 
 class BrokerCSVLoader:
     """Load broker-exported H1 CSV files and aggregate to D1 OHLCV."""
+
+    timezone_name = "UTC+1"
+    _tzinfo = timezone(timedelta(hours=1))
 
     def __init__(self, data_root: str | Path):
         self.data_root = Path(data_root)
@@ -57,13 +61,15 @@ class BrokerCSVLoader:
         h1["timestamp"] = pd.to_datetime(
             h1["timestamp"],
             errors="coerce",
-            utc=True,
         )
         h1 = h1.dropna(subset=["timestamp", "Open", "High", "Low", "Close"])
+        # Broker timestamps are interpreted as fixed UTC+1 (broker-local clock).
+        # This preserves broker day boundaries during H1 -> D1 aggregation.
+        if h1["timestamp"].dt.tz is None:
+            h1["timestamp"] = h1["timestamp"].dt.tz_localize(self._tzinfo)
+        else:
+            h1["timestamp"] = h1["timestamp"].dt.tz_convert(self._tzinfo)
         h1 = h1.set_index("timestamp").sort_index()
-        # Input timestamps are normalized to UTC above; strip tz to match
-        # downstream MPML daily pipeline expectations (timezone-naive index).
-        h1.index = h1.index.tz_localize(None)
 
         daily = h1.resample("1D").agg(
             {
@@ -75,6 +81,7 @@ class BrokerCSVLoader:
             }
         )
         daily = daily.dropna(subset=["Open", "High", "Low", "Close"])
+        daily.index = daily.index.tz_localize(None)
 
         start_ts = pd.Timestamp(start)
         end_ts = pd.Timestamp(end)

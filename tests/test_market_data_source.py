@@ -18,7 +18,7 @@ def _write_broker_csv(
     *,
     freq: str = "1h",
 ) -> None:
-    ts = pd.date_range(start=start, periods=periods, freq=freq, tz="UTC")
+    ts = pd.date_range(start=start, periods=periods, freq=freq)
     frame = pd.DataFrame(
         {
             "timestamp": ts,
@@ -91,6 +91,34 @@ class TestBrokerCsvLoader(unittest.TestCase):
             self.assertEqual(daily.loc[pd.Timestamp("2024-01-01"), "Low"], 0.5)
             self.assertEqual(daily.loc[pd.Timestamp("2024-01-01"), "Close"], 3.1)
             self.assertEqual(daily.loc[pd.Timestamp("2024-01-01"), "Volume"], 60)
+
+    def test_utc_plus_1_day_boundaries_do_not_shift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            df = pd.DataFrame(
+                {
+                    "timestamp": [
+                        "2024-01-01 22:00:00",
+                        "2024-01-01 23:00:00",
+                        "2024-01-02 00:00:00",
+                        "2024-01-02 01:00:00",
+                    ],
+                    "open": [1.0, 2.0, 3.0, 4.0],
+                    "high": [1.1, 2.1, 3.1, 4.1],
+                    "low": [0.9, 1.9, 2.9, 3.9],
+                    "close": [1.05, 2.05, 3.05, 4.05],
+                    "tick_volume": [10, 20, 30, 40],
+                }
+            )
+            df.to_csv(root / "EURUSD60.csv", index=False)
+
+            loader = BrokerCSVLoader(root)
+            daily = loader.load("EURUSD", start="2024-01-01", end="2024-01-02")
+
+            self.assertEqual(loader.timezone_name, "UTC+1")
+            self.assertListEqual(list(daily.index), [pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-02")])
+            self.assertEqual(daily.loc[pd.Timestamp("2024-01-01"), "Close"], 2.05)
+            self.assertEqual(daily.loc[pd.Timestamp("2024-01-02"), "Open"], 3.0)
 
     def test_differing_pair_start_dates_are_preserved(self):
         with tempfile.TemporaryDirectory() as tmp:
