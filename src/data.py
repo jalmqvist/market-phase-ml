@@ -140,7 +140,8 @@ class MarketDataPipeline:
             source:      Market data backend ('yfinance' or 'broker_csv')
             broker_data_dir:
                          Optional broker CSV directory. Defaults to
-                         ../market-sentiment-ml/data/input/fx/
+                         ../market-sentiment-ml/data/input/fx/ (sibling repo),
+                         or MPML_BROKER_DATA_DIR when set.
             rsi_period:  RSI lookback period (default 14)
             adx_period:  ADX/DI lookback period (default 14)
             atr_period:  ATR lookback period (default 14)
@@ -160,8 +161,14 @@ class MarketDataPipeline:
             default_broker_dir = (
                 Path(__file__).resolve().parents[2] / "market-sentiment-ml" / "data" / "input" / "fx"
             )
+            broker_env_dir = os.getenv("MPML_BROKER_DATA_DIR", "").strip()
+            broker_root = (
+                Path(broker_env_dir).expanduser()
+                if broker_env_dir
+                else Path(broker_data_dir) if broker_data_dir is not None else default_broker_dir
+            )
             self.loader = BrokerCSVLoader(
-                data_root=broker_data_dir or default_broker_dir
+                data_root=broker_root
             )
         else:
             self.loader = YahooLoader()

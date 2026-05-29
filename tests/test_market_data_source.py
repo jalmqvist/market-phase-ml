@@ -29,6 +29,7 @@ def _write_broker_csv(
             "volume": [10] * periods,
         }
     )
+    # Broker MT4 export naming convention: <PAIR>60.csv for 60-minute (H1) bars.
     frame.to_csv(root / f"{pair}60.csv", index=False)
 
 

@@ -324,6 +324,8 @@ Optional market-data backend override:
 export MPML_DATA_SOURCE=yfinance    # default
 # or
 export MPML_DATA_SOURCE=broker_csv  # loads broker H1 CSVs and aggregates to D1
+# optional override for broker file root
+export MPML_BROKER_DATA_DIR=../market-sentiment-ml/data/input/fx
 python main.py
 ```
 

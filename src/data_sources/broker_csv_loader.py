@@ -30,7 +30,7 @@ class BrokerCSVLoader:
                 return candidate
         raise ValueError(
             "Broker CSV is missing a timestamp column. "
-            "Expected one of: timestamp, time_utc, time, datetime, date."
+            f"Expected one of: timestamp, time_utc, time, datetime, date. Found: {columns}"
         )
 
     def load(self, pair_name: str, start: str, end: str) -> pd.DataFrame:
@@ -61,7 +61,9 @@ class BrokerCSVLoader:
         )
         h1 = h1.dropna(subset=["timestamp", "Open", "High", "Low", "Close"])
         h1 = h1.set_index("timestamp").sort_index()
-        h1.index = h1.index.tz_convert(None)
+        # Input timestamps are normalized to UTC above; strip tz to match
+        # downstream MPML daily pipeline expectations (timezone-naive index).
+        h1.index = h1.index.tz_localize(None)
 
         daily = h1.resample("1D").agg(
             {
