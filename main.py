@@ -1545,16 +1545,17 @@ def main(
         source=market_data_source,
         use_cache=True
     )
-    market_data_root = (
-        str(getattr(getattr(pipeline, "loader", None), "data_root", "unknown"))
-        if market_data_source == "broker_csv"
-        else "yfinance"
-    )
-    market_data_timezone = (
-        str(getattr(getattr(pipeline, "loader", None), "timezone_name", "unknown"))
-        if market_data_source == "broker_csv"
-        else "unknown"
-    )
+    if market_data_source == "broker_csv":
+        loader = getattr(pipeline, "loader", None)
+        if loader is None or not hasattr(loader, "data_root") or not hasattr(loader, "timezone_name"):
+            raise ValueError(
+                "broker_csv source requires loader.data_root and loader.timezone_name for provenance"
+            )
+        market_data_root = str(loader.data_root)
+        market_data_timezone = str(loader.timezone_name)
+    else:
+        market_data_root = "yfinance"
+        market_data_timezone = "unknown"
     _set_run_output_dir(selected_output_dir)
 
     print('=' * 60)
