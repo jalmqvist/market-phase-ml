@@ -890,7 +890,7 @@ This separation is intentional and helps preserve:
 
 ------
 
-# V5 Phase-1 Statistical Analysis Summary
+# V5 Phase-1 Statistical Analysis Summary (2026-05-26)
 
 ## Experimental Context
 
@@ -2003,3 +2003,891 @@ Importantly:
 
 - these differences recur repeatedly throughout the walkforward timeline,
 - and emerge under identical selector-control logic.
+
+---
+
+# V5 Phase-1 Slice — Overlap-Aware Conditional Analysis (2026-05-28)
+
+## Relationship to Earlier V5 Phase-1 Findings
+
+The original V5 Phase-1 analysis investigated DL effects using globally aggregated walkforward statistics.
+
+A major limitation of that setup was sparse temporal overlap between:
+
+- MPML price-history coverage
+- and MSML sentiment/DL coverage.
+
+MPML uses long-horizon Yahoo Finance data, while MSML sentiment-derived surfaces only exist from approximately 2019 onward.
+
+As a result:
+
+- many walkforward folds contained no DL-context coverage at all,
+- while others only partially overlapped the DL timeline.
+
+The original aggregate analysis therefore diluted:
+
+- DL-active periods,
+- DL-missing periods,
+- overlap transitions,
+- and conditional contextual occupancy.
+
+A minimal PR was therefore introduced exposing:
+
+| New Column          | Purpose                                |
+| ------------------- | -------------------------------------- |
+| `dl_overlap_pct`    | fraction of fold covered by DL context |
+| `dl_overlap_active` | whether overlap exists                 |
+| `dl_overlap_state`  | missing/partial/active overlap state   |
+| `dl_overlap_window` | overlap-window semantics               |
+
+This enabled the first overlap-aware conditional analysis layer inside MPML.
+
+---
+
+# Core Concept — Dense Overlap Windows
+
+A "dense-overlap window" refers to a fold/test period where DL/sentiment information is available during a large fraction of the walkforward evaluation period.
+
+Example:
+
+| Fold   | DL Coverage |
+| ------ | ----------: |
+| Fold A |          0% |
+| Fold B |          4% |
+| Fold C |         15% |
+| Fold D |         65% |
+
+Fold D is considered a dense-overlap fold because the adaptive selector has access to contextual DL information during most of the trading period.
+
+This distinction became critically important because earlier aggregate analysis mixed together:
+
+- folds with no DL information,
+- folds with sparse intermittent overlap,
+- and folds with dense contextual occupancy.
+
+The overlap-aware analysis therefore investigates:
+
+```text
+conditional contextual occupancy
+```
+
+rather than:
+
+```text
+global average DL effects
+```
+
+---
+
+# 1. Overlap Distribution Geometry
+
+The overlap distribution itself was extremely sparse and heterogeneous.
+
+## Aggregate Overlap Statistics
+
+| Metric          |  Value |
+| --------------- | -----: |
+| Mean overlap    |  ~3.9% |
+| Median overlap  |     0% |
+| 75th percentile |     0% |
+| Maximum overlap | ~70.8% |
+
+Interpretation:
+
+- most folds still contain no DL overlap,
+- however a meaningful subset now contains medium and high contextual occupancy.
+
+This already represented a major methodological improvement over the original canonical V5 analysis.
+
+---
+
+# 2. Conditional Overlap Buckets
+
+DL-enabled folds were grouped into:
+
+| Bucket | Definition |
+| ------ | ---------- |
+| none   | 0% overlap |
+| low    | 0–5%       |
+| medium | 5–20%      |
+| high   | >20%       |
+
+The primary purpose was to test whether DL effects vary as a function of contextual occupancy density.
+
+---
+
+# 3. Aggregate Conditional Effects
+
+## Mean Fold-Level Effects
+
+| Overlap Bucket | Folds | Mean Sharpe Δ | Mean Return Δ | Mean DD Δ |
+| -------------- | ----: | ------------: | ------------: | --------: |
+| none           |   828 |        -0.082 |        -0.107 |    -0.392 |
+| low            |    22 |        +0.205 |        +0.072 |    -1.387 |
+| medium         |    68 |        -0.132 |        +0.092 |    -0.764 |
+| high           |   122 |        +0.163 |        +0.583 |    +0.319 |
+
+A key observation is that the relationship is:
+
+```text
+nonlinear and threshold-like
+```
+
+rather than monotonically increasing.
+
+Specifically:
+
+| Occupancy Level | Typical Behavior    |
+| --------------- | ------------------- |
+| sparse overlap  | weak / unstable     |
+| medium overlap  | mixed               |
+| dense overlap   | materially positive |
+
+This increasingly suggests that DL behaves less like continuous predictive alpha and more like:
+
+```text
+contextual adaptive-routing modulation
+```
+
+---
+
+# 4. Bootstrap Confidence Interval Analysis
+
+Bootstrap resampling was performed on fold-level Sharpe and Return deltas to estimate uncertainty under heterogeneous adaptive-system noise.
+
+## Sharpe Δ Bootstrap Estimates
+
+| Bucket |   Mean | Approx 95% Bootstrap CI |
+| ------ | -----: | ----------------------: |
+| none   | -0.082 |          [-0.13, -0.03] |
+| low    | +0.205 |          [-0.08, +0.46] |
+| medium | -0.132 |          [-0.27, +0.02] |
+| high   | +0.163 |          [+0.05, +0.29] |
+
+## Return Δ Bootstrap Estimates
+
+| Bucket |   Mean | Approx 95% Bootstrap CI |
+| ------ | -----: | ----------------------: |
+| none   | -0.107 |          [-0.24, +0.01] |
+| low    | +0.072 |          [-0.39, +0.61] |
+| medium | +0.092 |          [-0.22, +0.43] |
+| high   | +0.583 |          [+0.18, +1.05] |
+
+## Interpretation
+
+The strongest surviving result is:
+
+```text
+high-overlap stabilization
+```
+
+which remained predominantly positive under bootstrap uncertainty.
+
+However:
+
+- low-overlap effects remain uncertain,
+- medium-overlap destabilization remains unresolved,
+- and sparse-overlap interpretations should currently be treated cautiously.
+
+Importantly:
+
+- adaptive trading systems exhibit very large variance,
+- therefore effect existence is currently more robust than exact effect magnitude.
+
+---
+
+# 5. Persistent vs Reactive Conditional Geometry
+
+## Persistent Family
+
+| Overlap Bucket | Folds | Mean Sharpe Δ | Mean Return Δ |
+| -------------- | ----: | ------------: | ------------: |
+| none           |   414 |        +0.003 |        -0.067 |
+| low            |    12 |        +0.533 |        +0.563 |
+| medium         |    30 |        +0.093 |        +0.533 |
+| high           |    64 |        +0.108 |        +0.453 |
+
+## Reactive Family
+
+| Overlap Bucket | Folds | Mean Sharpe Δ | Mean Return Δ |
+| -------------- | ----: | ------------: | ------------: |
+| none           |   414 |        -0.168 |        -0.147 |
+| low            |    10 |        -0.187 |        -0.518 |
+| medium         |    38 |        -0.309 |        -0.256 |
+| high           |    58 |        +0.224 |        +0.726 |
+
+---
+
+# 6. Reactive High-Overlap Stabilization
+
+The strongest conditional effect emerged inside:
+
+```text
+reactive-family dense-overlap windows
+```
+
+Reactive systems were globally the weakest family in the original V5 analysis, yet under dense overlap:
+
+| Metric   |   Mean |  Approx 95% CI |
+| -------- | -----: | -------------: |
+| Sharpe Δ | +0.224 | [+0.04, +0.43] |
+| Return Δ | +0.726 | [+0.21, +1.31] |
+
+This result survived:
+
+- overlap slicing,
+- bootstrap uncertainty,
+- and mixed-effects modeling.
+
+This is one of the strongest conditional findings observed so far.
+
+---
+
+# 7. Permutation / Randomization Tests
+
+Permutation testing investigated whether the observed overlap-conditioned structure could arise under random overlap assignment.
+
+The null hypothesis was:
+
+```text
+overlap labels are unrelated to performance structure
+```
+
+## Approximate Empirical Probabilities
+
+| Metric                         | Approx Empirical p |
+| ------------------------------ | -----------------: |
+| High-overlap Return Δ          |         ~0.01–0.03 |
+| High-overlap Sharpe Δ          |         ~0.03–0.07 |
+| Reactive high-overlap Return Δ |         ~0.01–0.04 |
+| Reactive high-overlap Sharpe Δ |         ~0.04–0.09 |
+
+Interpretation:
+
+- dense-overlap improvements appear substantially stronger than random overlap assignment,
+- especially inside reactive structures.
+
+However:
+
+- low-overlap effects did not survive strongly,
+- with empirical probabilities frequently exceeding:
+
+```text
+p > 0.15–0.30
+```
+
+These low-overlap findings therefore remain provisional.
+
+---
+
+# 8. Mixed-Effects Modeling
+
+A mixed-effects model was fit:
+
+```text
+SharpeΔ ~ overlap_bucket + family + overlap:family + (1|pair)
+```
+
+where:
+
+- overlap bucket represents occupancy density,
+- family captures persistent/reactive structure,
+- and pair identity is modeled as a random effect.
+
+## Key Findings
+
+| Effect                  | Result                        |
+| ----------------------- | ----------------------------- |
+| high overlap            | positive moderate effect      |
+| reactive baseline       | structurally weaker           |
+| high overlap × reactive | strongly positive interaction |
+| low overlap             | unstable                      |
+| medium overlap          | ambiguous                     |
+
+The strongest surviving interaction was:
+
+```text
+high overlap × reactive family
+```
+
+This is particularly important because:
+
+- reactive systems were globally the most unstable,
+- yet improved most strongly under dense contextual occupancy.
+
+This substantially strengthens the interpretation that DL behaves as:
+
+```text
+conditional adaptive-control modulation
+```
+
+rather than:
+
+```text
+continuous additive predictive alpha
+```
+
+---
+
+# 9. Selector Confidence Geometry
+
+Average selector confidence decreased as overlap density increased.
+
+| Bucket | Mean Confident Bars (%) |
+| ------ | ----------------------: |
+| none   |                  ~48.9% |
+| low    |                  ~43.1% |
+| medium |                  ~43.4% |
+| high   |                  ~40.4% |
+
+Interpretation:
+
+The selector appears:
+
+- less overconfident,
+- yet more effective,
+
+under dense contextual occupancy.
+
+This may indicate that DL information primarily improves:
+
+- arbitration quality,
+- fallback control,
+- and adaptive stability,
+
+rather than direct directional certainty.
+
+This finding remains preliminary and requires selector-state timeline analysis for stronger mechanistic interpretation.
+
+---
+
+# 10. Revised Systems-Level Interpretation
+
+The original non-slice V5 investigations suggested:
+
+```text
+DL effects are globally small and noisy
+```
+
+The overlap-aware slice analysis substantially refined this interpretation.
+
+The current evidence increasingly supports:
+
+```text
+DL effects are conditional, occupancy-dependent,
+and concentrated inside adaptive selector interactions
+```
+
+rather than:
+
+```text
+uniform predictive alpha generation
+```
+
+The strongest current interpretation is likely:
+
+| DL Occupancy        | Likely Effect               |
+| ------------------- | --------------------------- |
+| absent              | baseline selector geometry  |
+| sparse/intermittent | weak or unstable influence  |
+| dense/sustained     | stabilized adaptive routing |
+
+This reinterpretation may explain why sentiment-based systems historically appear:
+
+- weak,
+- unstable,
+- noisy,
+- or inconsistent,
+
+when evaluated using globally aggregated averages.
+
+The V5 overlap-aware slice investigation therefore represents a substantial conceptual shift from:
+
+```text
+sentiment prediction
+```
+
+toward:
+
+```text
+contextual adaptive-control modulation
+```
+
+inside heterogeneous latent market topologies.
+
+---
+
+# 11. Current Limitations
+
+Several important limitations remain:
+
+| Limitation                  | Consequence                        |
+| --------------------------- | ---------------------------------- |
+| sparse overlap distribution | low/medium buckets remain noisy    |
+| fold-level aggregation      | local transition dynamics hidden   |
+| missing selector timelines  | occupancy persistence unresolved   |
+| coarse timestamps           | macro-era concentration unresolved |
+| high adaptive variance      | wide confidence intervals          |
+
+The current findings should therefore be interpreted as:
+
+```text
+statistically credible exploratory evidence
+```
+
+rather than definitive causal proof.
+
+---
+
+# 12. Recommended Next Experimental Layer
+
+The current evidence strongly motivates a second-stage observability expansion exposing:
+
+| Desired Output              | Purpose                |
+| --------------------------- | ---------------------- |
+| selector_state_timeline.csv | occupancy persistence  |
+| transition-local routing    | collapse topology      |
+| selector entropy            | arbitration stability  |
+| occupancy durations         | persistence analysis   |
+| overlap-entry timing        | transition instability |
+
+This would enable:
+
+- HMM modeling,
+- survival analysis,
+- occupancy-transition matrices,
+- selector-collapse topology,
+- and temporal half-life estimation.
+
+The current overlap-aware slice analysis already provides strong evidence that these future investigations are likely scientifically meaningful.
+
+---
+
+# 11. Selector Transition Topology Analysis (2026-05-30)
+
+The overlap-aware slice investigation demonstrated that:
+
+- dense DL overlap improves performance,
+- particularly inside reactive structures,
+- and that the effect survives bootstrap, permutation, and mixed-effects analysis.
+
+However, these analyses could not determine *how* the adaptive selector changed its behavior.
+
+A second observability PR therefore exposed:
+
+```text
+selector_state_timeline.csv
+```
+
+containing:
+
+- selector state occupancy,
+- state transitions,
+- overlap state,
+- switch events,
+- and routing persistence.
+
+This enabled the first direct investigation of selector transition topology.
+
+------
+
+## Transition-Matrix Methodology
+
+Transition probabilities were computed between:
+
+```text
+MeanReversion
+TrendFollowing
+PhaseAware
+```
+
+for:
+
+- persistent families,
+- reactive families,
+- missing-overlap periods,
+- overlap-active periods.
+
+The analysis therefore measures:
+
+```text
+P(next_state | current_state)
+```
+
+rather than simple occupancy percentages.
+
+This distinction is important because occupancy alone cannot determine whether a state becomes common because:
+
+- it is entered more frequently,
+  or:
+- it simply persists longer once entered.
+
+------
+
+## Persistent Family
+
+### Missing Overlap
+
+| Transition              | Probability |
+| ----------------------- | ----------- |
+| MR → MR                 | 94.1%       |
+| MR → PhaseAware         | 5.6%        |
+| TF → TF                 | 91.9%       |
+| TF → PhaseAware         | 7.3%        |
+| PhaseAware → PhaseAware | 93.2%       |
+
+Transition entropy:
+
+```text
+0.401
+```
+
+### Active Overlap
+
+| Transition              | Probability |
+| ----------------------- | ----------- |
+| MR → MR                 | 93.6%       |
+| MR → PhaseAware         | 6.1%        |
+| TF → TF                 | 88.0%       |
+| TF → PhaseAware         | 11.1%       |
+| PhaseAware → PhaseAware | 92.7%       |
+
+Transition entropy:
+
+```text
+0.457
+```
+
+### Key Effects
+
+| Transition      | Δ Probability |
+| --------------- | ------------- |
+| MR → MR         | -0.5 pp       |
+| MR → PhaseAware | +0.5 pp       |
+| TF → TF         | -3.9 pp       |
+| TF → PhaseAware | +3.8 pp       |
+
+TrendFollowing run length:
+
+| Condition | Mean Run Length |
+| --------- | --------------- |
+| Missing   | 11.35 bars      |
+| Overlap   | 8.05 bars       |
+
+Reduction:
+
+```text
+≈ 29%
+```
+
+### Interpretation
+
+Dense overlap causes the selector to abandon TrendFollowing states earlier and route into PhaseAware arbitration more frequently.
+
+The effect is statistically significant but moderate in magnitude.
+
+Persistent structures remain relatively stable under overlap.
+
+------
+
+## Reactive Family
+
+### Missing Overlap
+
+| Transition              | Probability |
+| ----------------------- | ----------- |
+| MR → MR                 | 90.7%       |
+| MR → PhaseAware         | 8.8%        |
+| TF → TF                 | 93.5%       |
+| TF → PhaseAware         | 6.3%        |
+| PhaseAware → PhaseAware | 92.9%       |
+
+Transition entropy:
+
+```text
+0.425
+```
+
+### Active Overlap
+
+| Transition              | Probability |
+| ----------------------- | ----------- |
+| MR → MR                 | 84.2%       |
+| MR → PhaseAware         | 15.5%       |
+| TF → TF                 | 91.5%       |
+| TF → PhaseAware         | 8.5%        |
+| PhaseAware → PhaseAware | 93.4%       |
+
+Transition entropy:
+
+```text
+0.498
+```
+
+### Key Effects
+
+| Transition      | Δ Probability |
+| --------------- | ------------- |
+| MR → MR         | -6.5 pp       |
+| MR → PhaseAware | +6.7 pp       |
+| TF → TF         | -2.0 pp       |
+| TF → PhaseAware | +2.2 pp       |
+
+MeanReversion run length:
+
+| Condition | Mean Run Length |
+| --------- | --------------- |
+| Missing   | 10.02 bars      |
+| Overlap   | 6.00 bars       |
+
+Reduction:
+
+```text
+≈ 40%
+```
+
+### Interpretation
+
+Reactive structures exhibit substantially larger topology changes during overlap.
+
+The dominant effect is not TrendFollowing abandonment as initially hypothesized.
+
+Instead:
+
+```text
+MeanReversion → PhaseAware
+```
+
+is the strongest overlap-sensitive transition observed.
+
+This indicates that DL context primarily increases willingness to abandon exploitation states and enter arbitration.
+
+------
+
+## Transition Entropy
+
+Average transition entropy increased in both families.
+
+| Family     | Missing | Overlap | Relative Increase |
+| ---------- | ------- | ------- | ----------------- |
+| Persistent | 0.401   | 0.457   | +14%              |
+| Reactive   | 0.425   | 0.498   | +17%              |
+
+Interpretation:
+
+```text
+DL overlap increases routing entropy.
+```
+
+This is noteworthy because:
+
+- performance generally improves,
+- while selector persistence decreases.
+
+The data therefore does not support a:
+
+```text
+more confidence → better performance
+```
+
+interpretation.
+
+Instead, overlap appears associated with:
+
+```text
+greater adaptive reconsideration
+```
+
+of existing policy commitments.
+
+------
+
+## PhaseAware Recovery Analysis
+
+The transition analysis demonstrated that overlap causes the selector to enter PhaseAware arbitration more frequently.
+
+A remaining question was whether PhaseAware behaves primarily as:
+
+```text
+a defensive holding state
+```
+
+or as:
+
+```text
+an adaptive decision point.
+```
+
+To investigate this, recovery transitions out of PhaseAware were analyzed.
+
+### Persistent Recovery
+
+| Transition | Missing | Overlap |
+| ---------- | ------- | ------- |
+| PA → MR    | 4.44%   | 5.05%   |
+| PA → TF    | 2.34%   | 2.27%   |
+
+Recovery bias ratio:
+
+```text
+(PA→MR)/(PA→TF)
+```
+
+| Condition | Ratio |
+| --------- | ----- |
+| Missing   | 1.90  |
+| Overlap   | 2.23  |
+
+Persistent systems already exhibit a strong preference for MeanReversion recovery.
+
+Dense overlap strengthens this tendency further, suggesting increasingly conservative recovery behavior after arbitration.
+
+------
+
+### Reactive Recovery
+
+| Transition | Missing | Overlap |
+| ---------- | ------- | ------- |
+| PA → MR    | 2.90%   | 3.48%   |
+| PA → TF    | 4.22%   | 3.12%   |
+
+Recovery bias ratio:
+
+```text
+(PA→MR)/(PA→TF)
+```
+
+| Condition | Ratio |
+| --------- | ----- |
+| Missing   | 0.69  |
+| Overlap   | 1.12  |
+
+This is one of the most important findings of the entire V5 Phase-1 investigation.
+
+Without overlap, reactive systems preferentially recover from arbitration into TrendFollowing.
+
+Under dense overlap, this preference reverses and recovery becomes slightly biased toward MeanReversion.
+
+The selector therefore does not merely change state occupancy.
+
+It appears to alter recovery policy.
+
+------
+
+## PhaseAware Survival Analysis
+
+A second question was whether overlap merely increases entry into PhaseAware or whether it also changes arbitration persistence.
+
+### Persistent
+
+| Metric            | Missing | Overlap |
+| ----------------- | ------- | ------- |
+| Mean Run Length   | 11.7    | 24.8    |
+| Median Run Length | 1       | 22      |
+| 90th Percentile   | 48      | 36      |
+
+### Reactive
+
+| Metric            | Missing | Overlap |
+| ----------------- | ------- | ------- |
+| Mean Run Length   | 11.5    | 27.4    |
+| Median Run Length | 1       | 22      |
+| 90th Percentile   | 52      | 42      |
+
+The most striking observation is the median.
+
+During missing-overlap periods:
+
+```text
+median PhaseAware duration = 1 bar
+```
+
+During overlap-active periods:
+
+```text
+median PhaseAware duration = 22 bars
+```
+
+for both persistent and reactive families.
+
+This indicates that overlap does not merely increase entry into arbitration.
+
+It also causes the selector to remain in arbitration substantially longer before recommitting to an exploitation strategy.
+
+------
+
+## Statistical Significance
+
+Transition distributions differed significantly between overlap states.
+
+| Family     | χ²    | p-value    |
+| ---------- | ----- | ---------- |
+| Persistent | 190.5 | 6.4×10⁻³⁷  |
+| Reactive   | 716.3 | 2.2×10⁻¹⁴⁹ |
+
+The reactive effect is substantially larger.
+
+This independently confirms earlier:
+
+- overlap analysis,
+- bootstrap results,
+- permutation tests,
+- mixed-effects modeling,
+- and occupancy analysis.
+
+------
+
+## Revised Interpretation
+
+The overlap-aware performance analysis suggested:
+
+```text
+DL effects are conditional and occupancy-dependent.
+```
+
+The selector-topology analysis substantially extends this interpretation.
+
+The strongest current evidence supports:
+
+```text
+DL information changes controller behavior.
+```
+
+More specifically:
+
+```text
+DL reduces exploitation-state persistence,
+increases transition entropy,
+increases PhaseAware arbitration occupancy,
+extends arbitration duration,
+and alters recovery policy.
+```
+
+The effect is strongest inside reactive structures.
+
+Importantly, the selector architecture was designed before DL integration existed.
+
+Therefore, these topology changes are not a direct consequence of handcrafted routing rules.
+
+The emerging interpretation is that DL behaves less like:
+
+```text
+predictive alpha generation
+```
+
+and more like:
+
+```text
+context-sensitive adaptive-control modulation.
+```
+
+The resulting controller behavior is characterized by:
+
+```text
+earlier abandonment of exploitation states,
+longer arbitration periods,
+and more conservative recovery decisions.
+```
+
+This may ultimately prove to be one of the most important findings of the V5 Phase-1 investigation.
+

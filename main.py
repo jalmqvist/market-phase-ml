@@ -296,8 +296,12 @@ EXPORT_SELECTOR_STATE_TIMELINE = (
 # CONFIGURATION
 # ─────────────────────────────────────────────────────
 
-START_DATE          = '2005-01-01'
-END_DATE            = '2024-12-31'
+START_DATE = os.environ.get("MPML_START_DATE", "2005-01-01")
+END_DATE = os.environ.get("MPML_END_DATE", "2026-04-01")
+print(
+    f"[CONFIG] START_DATE={START_DATE} "
+    f"END_DATE={END_DATE}"
+)
 INITIAL_CAPITAL     = 10000.0
 MIN_PHASE_SAMPLES   = 100       # Minimum samples per phase for ML
 USE_ATR_SIZING      = False     # Set True to compare ATR-based sizing
