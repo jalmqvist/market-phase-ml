@@ -3141,3 +3141,244 @@ This controller-level interpretation replicated across independent data sources,
 
 ---
 
+> The persistent/reactive distinction survives both low-volatility and high-volatility trend-following regimes, suggesting that the distinction is not merely a volatility artifact. Family identity remains a larger determinant of adaptive-selector performance than DL availability or overlap state in both regimes.
+
+---
+
+# 14. HVTF Regime Replication Study (2026-05-31)
+
+Following completion of the broker-data LVTF replication study, the complete V5 overlap-extension experiment suite was re-run in the HVTF regime using the same broker-aligned price and sentiment data source.
+
+The objective was to determine whether the principal findings from LVTF survive a regime transition from Low-Volatility Trend-Following (LVTF) to High-Volatility Trend-Following (HVTF).
+
+This constitutes the first direct cross-regime validation of the Persistent vs Reactive family ontology.
+
+------
+
+## 14.1 Statistical Replication
+
+### Effect Size Analysis
+
+| Factor        | η²      |
+| ------------- | ------- |
+| Family        | 0.00812 |
+| Overlap State | 0.00018 |
+| DL            | 0.00002 |
+
+The family effect remains approximately 450 times larger than the direct DL effect.
+
+Importantly, the family effect is larger in HVTF than in broker LVTF (η² ≈ 0.0054).
+
+### Cohen's d
+
+Persistent vs Reactive:
+
+| Metric  | Cohen's d |
+| ------- | --------- |
+| SharpeΔ | -0.181    |
+
+This represents a slightly stronger separation than observed in broker LVTF (d ≈ -0.148).
+
+### OLS Regression
+
+SharpeΔ ~ Family + DL + Overlap
+
+| Variable        | Coefficient | p-value |
+| --------------- | ----------- | ------- |
+| Reactive Family | +0.1485     | 0.001   |
+| No-DL           | -0.0164     | 0.715   |
+| Partial Overlap | -0.0563     | 0.518   |
+
+The family effect remains highly significant, while DL and overlap effects remain statistically insignificant.
+
+------
+
+## 14.2 Family Performance Characteristics
+
+### Persistent Family
+
+| State   | Mean SharpeΔ |
+| ------- | ------------ |
+| Missing | -0.072       |
+| Partial | -0.122       |
+
+### Reactive Family
+
+| State   | Mean SharpeΔ |
+| ------- | ------------ |
+| Missing | +0.076       |
+| Partial | +0.050       |
+
+Bootstrap confidence intervals:
+
+### Persistent
+
+| State   | 95% CI           |
+| ------- | ---------------- |
+| Missing | [-0.125, -0.018] |
+| Partial | [-0.264, 0.026]  |
+
+### Reactive
+
+| State   | 95% CI          |
+| ------- | --------------- |
+| Missing | [0.008, 0.144]  |
+| Partial | [-0.072, 0.181] |
+
+The "missing" state continues to show statistically significant underperformance for persistent structures and statistically significant outperformance for reactive structures.
+
+This constitutes a direct replication of the broker LVTF findings.
+
+------
+
+## 14.3 Overlap Performance Effects
+
+The broker LVTF replication weakened confidence in the hypothesis that overlap-active periods systematically improve trading performance.
+
+HVTF further weakens this hypothesis.
+
+### Permutation Test
+
+Missing vs Partial overlap:
+
+| Metric                      | Value   |
+| --------------------------- | ------- |
+| Observed SharpeΔ Difference | -0.0328 |
+| Permutation p-value         | 0.576   |
+
+### Interaction Model
+
+Family × Overlap interaction:
+
+| Variable                 | p-value |
+| ------------------------ | ------- |
+| Family × Partial Overlap | 0.844   |
+
+No statistically significant overlap-performance interactions were detected.
+
+This represents a second consecutive failure to replicate overlap-induced performance gains.
+
+------
+
+## 14.4 Controller Topology Replication
+
+The strongest HVTF findings occurred at the controller level.
+
+### Persistent Family
+
+#### Recovery Policy
+
+| State   | MR/TF Recovery Ratio |
+| ------- | -------------------- |
+| Missing | 2.081                |
+| Partial | 2.806                |
+
+Persistent structures continue to recover preferentially toward MeanReversion after arbitration.
+
+#### PhaseAware Persistence
+
+Median PhaseAware occupancy:
+
+| State   | Median Run Length |
+| ------- | ----------------- |
+| Missing | 11                |
+| Partial | 11                |
+
+This closely matches previously observed LVTF behavior.
+
+------
+
+### Reactive Family
+
+#### Recovery Policy
+
+| State   | MR/TF Recovery Ratio |
+| ------- | -------------------- |
+| Missing | 0.563                |
+| Partial | 0.541                |
+
+Reactive structures continue to recover preferentially toward TrendFollowing after arbitration.
+
+This is one of the strongest replications observed throughout the V5 program.
+
+#### MeanReversion Abandonment
+
+MeanReversion self-transition probability:
+
+| State   | Value |
+| ------- | ----- |
+| Missing | 90.0% |
+| Partial | 76.0% |
+
+MeanReversion → PhaseAware transitions:
+
+| State   | Value |
+| ------- | ----- |
+| Missing | 9.7%  |
+| Partial | 23.8% |
+
+Reactive structures therefore exhibit approximately 2.5× higher abandonment of MeanReversion assumptions during overlap-active periods.
+
+This closely matches the broker LVTF topology findings.
+
+------
+
+## 14.5 Routing Entropy
+
+### Persistent
+
+| State   | Entropy |
+| ------- | ------- |
+| Missing | 0.855   |
+| Partial | 0.788   |
+
+### Reactive
+
+| State   | Entropy |
+| ------- | ------- |
+| Missing | 0.888   |
+| Partial | 1.140   |
+
+Reactive structures continue to exhibit substantially stronger exploratory behavior under uncertainty.
+
+Interestingly, persistent structures show a slight entropy reduction under overlap conditions, suggesting that HVTF environments may provide sufficiently strong trend information to reduce routing ambiguity.
+
+This differs from broker LVTF and may represent the first meaningful regime-dependent controller effect observed so far.
+
+------
+
+## 14.6 Updated Interpretation
+
+The HVTF replication substantially increases confidence in the Persistent vs Reactive ontology.
+
+The following findings now survive:
+
+- Yahoo LVTF
+- Broker LVTF
+- Broker HVTF
+
+replications:
+
+- Persistent underperformance under adaptive routing.
+- Reactive outperformance under adaptive routing.
+- Persistent MeanReversion recovery preference.
+- Reactive TrendFollowing recovery preference.
+- Reactive MeanReversion abandonment during uncertainty.
+- Controller-level adaptation under overlap-active conditions.
+
+In contrast, overlap-induced performance improvements have now failed replication in both broker LVTF and broker HVTF.
+
+The strongest surviving interpretation is therefore no longer:
+
+> sentiment overlap improves performance.
+
+Instead, the evidence increasingly supports:
+
+> sentiment overlap systematically alters uncertainty-management behavior within the adaptive controller.
+
+The primary remaining validation targets are now the mean-reversion regimes:
+
+- LVMR
+- HVMR
+
+which represent the most important remaining tests of the ontology.
