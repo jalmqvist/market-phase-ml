@@ -515,90 +515,152 @@ This represents a substantial conceptual maturation of the MPML ↔ MSML researc
 
 ---
 
-# 6. Persistent vs Reactive — Deep Interpretation
+# 6. Persistent vs Reactive — Revised Interpretation After Broker Replication
+
+The broker-data replication substantially strengthened confidence in the existence of a genuine structural distinction between persistent and reactive pair families.
+
+Importantly, the strongest replicated findings were not performance metrics.
+
+Instead, replication occurred primarily at the controller-behavior level:
+
+- arbitration duration,
+- routing entropy,
+- occupancy distributions,
+- recovery preferences,
+- and transition topology.
+
+This distinction is important because controller-level behavior is considerably less sensitive to individual market regimes than aggregate Sharpe ratios.
+
+The broker replication therefore increases confidence that the persistent/reactive distinction reflects a real latent structural property rather than a performance artifact.
+
+------
 
 ## Persistent Structures
 
-The current evidence suggests:
+Persistent structures appear increasingly compatible with long-horizon adaptive exploitation.
 
-- slower collective adaptation
-- metastable agent organization
-- bounded volatility release
-- delayed reversion
-- persistent latent equilibrium
+The selector behaves as though:
 
-Adaptive routing therefore primarily improves:
+- latent structure survives uncertainty,
+- equilibrium eventually re-emerges,
+- waiting has informational value,
+- and adaptive state continuity remains useful.
 
-> exploitation optimization.
+Several broker-replicated findings support this interpretation:
 
----
+- substantially longer PhaseAware occupancy during overlap,
+- strong recovery preference toward MeanReversion,
+- increasing recovery conservatism as overlap density rises,
+- and moderate entropy increases under uncertainty.
+
+The resulting picture is not one of simple trend-following.
+
+Instead, persistent structures appear to contain:
+
+> persistence with bounded relaxation.
+
+The controller behaves as though uncertainty is temporary and exploitable structure is expected to return.
+
+This makes persistent families appear fundamentally uncertainty-tolerant.
+
+------
 
 ## Reactive Structures
 
-The current evidence suggests:
+Reactive structures exhibit a markedly different response.
 
-- rapid agent reorganization
-- unstable equilibrium
-- volatility cascades
-- transition-dominated geometry
-- fragmented latent persistence
+The broker replication showed:
 
-Adaptive routing therefore primarily improves:
+- large increases in routing entropy,
+- strong growth in PhaseAware occupancy,
+- substantial increases in MeanReversion abandonment,
+- and continued preference for TrendFollowing recovery after arbitration.
 
-> instability mitigation.
+In particular:
 
-This distinction may become one of the most important implications for future ABM refinement.
+MR → PhaseAware transitions increased from approximately 10% to approximately 25% during overlap-active periods.
 
----
+This suggests that reactive structures do not merely contain more noise.
 
-# 7. Important Emerging Hypothesis
+Instead, the controller behaves as though local equilibrium assumptions become unreliable under uncertainty.
 
-One of the most important implications of V5 Phase-1 is:
+The resulting behavior is highly exploratory:
 
-> reactive structures may fundamentally be low-persistence systems rather than poorly modeled persistent systems.
+- exploitation states are abandoned more aggressively,
+- arbitration dominates occupancy,
+- and routing flexibility increases substantially.
 
-If true, then:
+Reactive structures therefore appear less consistent with uncertainty tolerance and more consistent with opportunity-seeking adaptation.
 
-- instability is intrinsic,
-not:
-- merely an architectural failure.
+The controller behaves as though exploitable opportunities exist, but their persistence is uncertain and must be continually re-evaluated.
 
-This possibility is scientifically extremely important.
+------
 
-It would imply that:
+# 7. Revised Structural Hypothesis
 
-- persistent and reactive structures arise from genuinely different latent organizational dynamics,
-- rather than simply different parameterizations of the same process.
+The strongest current interpretation is no longer:
 
-Future ABM work may therefore need to model:
+> persistent structures are easier to model than reactive structures.
+
+Instead, the evidence increasingly supports:
+
+> persistent and reactive structures represent fundamentally different organizational topologies.
+
+Persistent structures appear to support:
 
 - metastability,
+- bounded relaxation,
 - equilibrium persistence,
-- transition cascades,
-- and collective reorganization speed
+- and adaptive continuity.
 
-as first-class structural properties.
+Reactive structures appear to support:
 
----
+- rapid reorganization,
+- instability-sensitive transitions,
+- opportunity-driven exploitation,
+- and elevated uncertainty management.
 
-# 8. Future Research Directions
+This interpretation survived:
 
-The current interpretation remains provisional and should be revisited after:
+- independent data sources,
+- extended historical periods,
+- overlap-geometry changes,
+- and selector-topology replication.
 
-- all four MPML regimes have been analyzed,
-- full-overlap DL reruns have been completed,
-- and cross-regime temporal stability has been investigated.
+Not all performance findings survived replication.
 
-Particularly important future investigations include:
+However, the controller-level findings largely did.
 
-- temporal clustering analysis
-- transition-state analysis
-- selector-state persistence
-- volatility-trigger topology
-- occupancy transition matrices
-- and second-order subfamily discovery.
+This significantly increases confidence that the distinction reflects a genuine structural property of the underlying market topology.
 
-Nevertheless, the current results already provide strong evidence that:
+------
 
-> trading-strategy behavior itself contains important information about latent market topology.
+# 8. Confidence Level After Broker Replication
+
+Current confidence assessment:
+
+| Finding                                          | Confidence |
+| ------------------------------------------------ | ---------- |
+| Persistent vs Reactive distinction exists        | High       |
+| Family effect dominates DL effect                | High       |
+| Overlap changes controller behavior              | High       |
+| Overlap increases arbitration duration           | High       |
+| Overlap increases routing entropy                | High       |
+| Reactive structures abandon MR more aggressively | High       |
+| Dense overlap improves performance               | Low        |
+| Reactive recovery-policy flip                    | Low        |
+
+The strongest surviving interpretation of the V5 Phase-1 investigations is therefore:
+
+> sentiment overlap systematically changes how uncertainty is managed by the adaptive controller.
+
+This finding replicated across both Yahoo and broker datasets.
+
+The primary remaining uncertainty is no longer whether the interpretation is real.
+
+Instead, the primary uncertainty is whether these findings generalize beyond the LVTF regime.
+
+Future investigations of HVTF, LVMR, and HVMR therefore represent the most important remaining validation step.
+
+
 
