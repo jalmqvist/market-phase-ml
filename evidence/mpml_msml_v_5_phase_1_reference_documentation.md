@@ -2891,3 +2891,253 @@ and more conservative recovery decisions.
 
 This may ultimately prove to be one of the most important findings of the V5 Phase-1 investigation.
 
+---
+
+## V5 Overlap Extension (Broker Data) Replication (2026-05-31)
+
+> The strongest Yahoo-era controller findings replicate on independent broker data. Overlap-active periods consistently exhibit longer arbitration, higher routing entropy, increased abandonment of exploitation states, and stronger PhaseAware occupancy. The previously observed reactive recovery-policy flip does not replicate, suggesting that the dominant overlap effect may operate primarily through entry-to-arbitration behavior rather than recovery-from-arbitration behavior.
+
+---
+
+# 13. Broker Data Replication Study (Extended Dataset Through 2026-04-30)
+
+To assess the robustness of the Yahoo-era findings, the complete V5 overlap-extension experiment suite was re-run using broker-specific price data originating from the same provider as the sentiment feed. Unlike the Yahoo dataset, which primarily provided long historical price coverage with sentiment overlap beginning around 2019, the broker dataset extends both price and sentiment-aligned coverage through approximately 2026-04-30.
+
+The objective was not to discover new effects, but to determine which previously observed findings replicate under an independent data source and an extended historical period.
+
+------
+
+## 13.1 Replication of Family Effects
+
+The strongest result from the Yahoo analysis was the distinction between Persistent and Reactive pair families.
+
+Broker-data statistical analysis strongly replicated this finding.
+
+### Effect Size Analysis
+
+| Factor | η²      |
+| ------ | ------- |
+| Family | 0.00542 |
+| DL     | 0.00002 |
+
+The family effect remains approximately 270 times larger than the direct DL effect.
+
+### OLS Regression
+
+SharpeΔ ~ Family + DL
+
+| Variable        | Coefficient | p-value |
+| --------------- | ----------- | ------- |
+| Reactive Family | +0.1236     | 0.002   |
+| No-DL           | -0.0084     | 0.846   |
+
+Reactive structures continue to outperform persistent structures under adaptive routing, while the direct DL effect remains statistically insignificant when averaged across all folds.
+
+This independently confirms the central Yahoo-era conclusion that pair-family identity is a stronger determinant of adaptive-selector performance than the mere presence of DL signals.
+
+------
+
+## 13.2 Conditional Overlap Performance Replication
+
+The Yahoo overlap-slice analysis suggested that dense sentiment overlap improved selector performance.
+
+The broker replication does not support this conclusion.
+
+### Bootstrap Confidence Intervals
+
+#### Persistent Family
+
+| Overlap State | Mean SharpeΔ | 95% CI           |
+| ------------- | ------------ | ---------------- |
+| None          | -0.058       | [-0.113, -0.004] |
+| Partial       | -0.190       | [-0.458, 0.073]  |
+| Dense         | -0.022       | [-0.141, 0.100]  |
+
+#### Reactive Family
+
+| Overlap State | Mean SharpeΔ | 95% CI          |
+| ------------- | ------------ | --------------- |
+| None          | +0.084       | [0.016, 0.152]  |
+| Partial       | -0.174       | [-0.383, 0.019] |
+| Dense         | +0.003       | [-0.159, 0.177] |
+
+Only the "None" overlap category produced confidence intervals excluding zero. Dense-overlap windows showed no statistically significant performance improvement for either family.
+
+### Permutation Test
+
+Dense vs None overlap:
+
+| Metric                      | Value   |
+| --------------------------- | ------- |
+| Observed SharpeΔ Difference | -0.0227 |
+| Permutation p-value         | 0.759   |
+
+No evidence was found that overlap labels contain predictive information regarding Sharpe improvements.
+
+### Interaction Model
+
+A model of the form:
+
+SharpeΔ ~ Family + DL + Overlap + Family×Overlap
+
+produced no statistically significant overlap terms.
+
+------
+
+## 13.3 Revision of the Overlap Hypothesis
+
+The broker replication suggests that the original Yahoo interpretation requires refinement.
+
+### Original Interpretation
+
+Dense sentiment overlap:
+
+→ improves performance
+
+### Revised Interpretation
+
+Dense sentiment overlap:
+
+→ changes selector behavior
+
+but does not necessarily:
+
+→ improve performance
+
+This distinction is important.
+
+The broker results indicate that overlap-active periods consistently alter routing dynamics, arbitration duration, occupancy distributions, and transition probabilities, but those behavioral changes do not automatically translate into improved Sharpe ratios.
+
+------
+
+## 13.4 Replication of Controller-Level Effects
+
+While performance-based overlap effects weakened substantially, controller-level effects replicated strongly.
+
+### Arbitration Persistence
+
+Median PhaseAware run lengths:
+
+| Family     | Missing | Partial | Dense |
+| ---------- | ------- | ------- | ----- |
+| Persistent | 1       | 22      | 22    |
+| Reactive   | 2       | 24      | 24    |
+
+Mean PhaseAware run lengths:
+
+| Family     | Missing | Partial | Dense |
+| ---------- | ------- | ------- | ----- |
+| Persistent | 13.8    | 27.9    | 31.7  |
+| Reactive   | 12.4    | 23.4    | 34.1  |
+
+Overlap-active periods consistently produce substantially longer arbitration phases.
+
+### Routing Entropy
+
+Transition entropy increased monotonically with overlap density.
+
+#### Persistent
+
+| State   | Entropy |
+| ------- | ------- |
+| Missing | 1.236   |
+| Partial | 1.323   |
+| Dense   | 1.364   |
+
+#### Reactive
+
+| State   | Entropy |
+| ------- | ------- |
+| Missing | 1.274   |
+| Partial | 1.613   |
+| Dense   | 1.765   |
+
+The reactive family exhibits particularly strong overlap sensitivity.
+
+### Reactive Mean-Reversion Abandonment
+
+MR→PhaseAware transitions:
+
+| State   | Probability |
+| ------- | ----------- |
+| Missing | 9.6%        |
+| Partial | 25.2%       |
+| Dense   | 25.1%       |
+
+Approximately one quarter of reactive MeanReversion states immediately transition into arbitration during overlap-active periods.
+
+This represents one of the strongest replicated topology effects observed throughout the V5 investigation.
+
+------
+
+## 13.5 Recovery Policy Replication
+
+One Yahoo-era result did not replicate.
+
+Yahoo overlap analysis suggested a reactive-family recovery-policy shift:
+
+PA→TF preference
+
+→
+
+PA→MR preference
+
+Broker data does not support this conclusion.
+
+Reactive recovery ratios remained stable:
+
+| State   | MR/TF Recovery Ratio |
+| ------- | -------------------- |
+| Missing | 0.557                |
+| Partial | 0.615                |
+| Dense   | 0.569                |
+
+The dominant overlap effect therefore appears to occur during entry into arbitration rather than during recovery from arbitration.
+
+------
+
+## 13.6 Impact of the Extended 2025–2026 Dataset
+
+The broker dataset contains approximately sixteen additional months of aligned price and sentiment data beyond the Yahoo investigation.
+
+This extension introduces:
+
+- additional volatility regimes,
+- additional carry-trade environments,
+- post-2024 macroeconomic transitions,
+- additional overlap-active periods.
+
+The fact that controller-level effects survive this extension while performance-based overlap effects weaken suggests that:
+
+1. Controller adaptation is a structural property of the adaptive routing system.
+2. Performance gains are substantially more regime-dependent.
+
+This distinction would likely not have been discovered without replication using an independent data source.
+
+------
+
+## 13.7 Updated Conclusion
+
+The broker replication study substantially strengthens confidence in the following findings:
+
+- Persistent vs Reactive family distinctions.
+- Family effects dominating DL effects.
+- Overlap-induced controller adaptation.
+- Increased arbitration duration during overlap.
+- Increased routing entropy during overlap.
+- Reactive-family sensitivity to uncertainty.
+
+However, the study weakens confidence in the previously proposed hypothesis that dense sentiment overlap consistently improves trading performance.
+
+The strongest surviving interpretation is therefore not:
+
+"sentiment overlap improves returns"
+
+but rather:
+
+"sentiment overlap systematically changes how the adaptive controller manages uncertainty."
+
+This controller-level interpretation replicated across independent data sources, extended historical periods, and substantially different overlap geometries, making it one of the most robust findings produced by the V5 research program.
+
+---
+
