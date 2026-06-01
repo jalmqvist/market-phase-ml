@@ -3382,3 +3382,139 @@ The primary remaining validation targets are now the mean-reversion regimes:
 - HVMR
 
 which represent the most important remaining tests of the ontology.
+
+---
+
+> In HVTF, no folds achieved the canonical ≥95% overlap threshold. The highest observed overlap coverage was approximately 66.7%. Consequently, all overlap-active observations were classified as "partial" under the framework definition. HVTF results should therefore be interpreted as comparisons between missing-overlap and moderate/high-overlap conditions rather than missing-overlap and fully active-overlap conditions.
+
+---
+
+> HVR successfully replicated the broker-era null-overlap result. Overlap exposure was substantially lower than both LVTF and HVTF (112 partial folds, max overlap ≈16.6%). Neither overlap-state nor DL participation exhibited measurable explanatory power for Sharpe improvement. However, the persistent-versus-reactive family effect remained statistically detectable (η²≈0.006, Cohen's d≈−0.155, reactive coefficient +0.138, p=0.001), indicating that selector-family behavior persists even in environments where overlap-active conditions are largely absent.
+
+---
+
+## Family Topology Analysis and Overlap-Conditioned Controller Behavior (2026-06-01)
+
+A major objective of the broker-data replication phase was to determine whether the persistent/reactive family distinction identified in upstream MSML research manifests as a meaningful behavioral difference within the downstream MPML controller. Surprisingly, the answer appears to be yes, and the effect is substantially larger than the regime-level differences observed across LVTF, HVTF, LVR, and HVR.
+
+### Regime Effects vs Family Effects
+
+Cross-regime selector-state timeline analysis revealed that controller topology is remarkably stable across the four MSML regimes. Strategy occupancy, transition entropy, switch rates, and recovery topology all exhibited only minor variation between LVTF, HVTF, LVR, and HVR. Mean-reversion regimes displayed slightly longer run lengths and marginally lower entropy, but these effects were small relative to the overall stability of the controller.
+
+This finding contrasts sharply with the family-level analysis. When selector timelines were grouped by persistent versus reactive family, substantial and highly consistent behavioral differences emerged across all four regimes.
+
+### Distinct Controller Topologies
+
+Persistent controllers exhibited approximately:
+
+- 40% MeanReversion occupancy
+- 10% TrendFollowing occupancy
+- 50% PhaseAware occupancy
+
+Reactive controllers exhibited approximately:
+
+- 11% MeanReversion occupancy
+- 24% TrendFollowing occupancy
+- 65% PhaseAware occupancy
+
+These differences remained remarkably stable across LVTF, HVTF, LVR, and HVR, suggesting that controller-family behavior is a more fundamental determinant of selector dynamics than the underlying MSML regime itself.
+
+Transition entropy and switching behavior further reinforced this interpretation. Reactive controllers consistently displayed higher entropy and higher switch rates, indicating a more exploratory allocation process. Persistent controllers displayed lower entropy, longer MeanReversion commitments, and reduced switching.
+
+### Recovery Topology Reversal
+
+The strongest family-level result emerged from analysis of PhaseAware recovery transitions.
+
+Persistent controllers consistently preferred:
+
+```
+PhaseAware -> MeanReversion
+```
+
+over:
+
+```
+PhaseAware -> TrendFollowing
+```
+
+with a recovery-bias ratio of approximately 2.1.
+
+Reactive controllers exhibited the opposite behavior, preferring:
+
+```
+PhaseAware -> TrendFollowing
+```
+
+over:
+
+```
+PhaseAware -> MeanReversion
+```
+
+with a recovery-bias ratio of approximately 0.56.
+
+This polarity reversal replicated across all four MSML regimes and represents the clearest mechanistic distinction currently identified between the controller families.
+
+### Overlap-Conditioned Analysis
+
+To determine whether overlap availability merely revealed existing family differences or actively modified controller behavior, the selector timelines were re-analyzed under increasingly strict overlap filters.
+
+Three overlap subsets were evaluated:
+
+- Overlap-active: dl_overlap_pct > 0
+- Moderate overlap: dl_overlap_pct >= 10
+- Strong overlap: dl_overlap_pct >= 20
+
+Contrary to expectations, family differences did not converge under overlap conditions. Instead, they became more pronounced.
+
+For persistent controllers:
+
+- Recovery bias strengthened from approximately 2.15 globally to more than 3.0 under strong overlap.
+- Entropy decreased.
+- Switch rates decreased.
+
+For reactive controllers:
+
+- Recovery bias remained stable near 0.56.
+- Entropy increased substantially.
+- Switch rates increased substantially.
+
+Thus overlap information appears to push the two controller families in opposite directions. Persistent controllers become increasingly deterministic and MeanReversion-oriented when overlap is available, whereas reactive controllers become increasingly exploratory while maintaining their preference for TrendFollowing recovery.
+
+### Interpretation
+
+A notable aspect of this result is that the persistent/reactive distinction originates from MSML ABM/DL research rather than MPML itself. Nevertheless, the distinction reappears within MPML as a large and highly structured behavioral difference.
+
+One interpretation is that the family label encodes a deeper property related to belief persistence rather than a specific trading style. Under this interpretation:
+
+- Persistent controllers treat overlap information as confirmation of an existing hypothesis, increasing commitment and reducing exploration.
+- Reactive controllers treat overlap information as an opportunity signal, increasing exploration and re-engaging TrendFollowing states more readily.
+
+Importantly, overlap does not appear to create the family distinction. Instead, overlap amplifies an already-existing difference in controller behavior.
+
+### Current Working Hypothesis
+
+The cumulative broker-data evidence suggests that:
+
+1. Regime classification strongly affects overlap availability and DL participation rates.
+2. Regime classification has only modest effects on controller topology.
+3. Persistent versus reactive family selection has large and stable effects on controller topology.
+4. Overlap information amplifies pre-existing family differences rather than eliminating them.
+
+At present, the family distinction appears to be a stronger determinant of controller behavior than the underlying MSML regime classification.
+
+### Next Research Step
+
+The highest-priority follow-up experiment is a set of cross-family ablations:
+
+```
+Train Persistent -> Evaluate Reactive
+Train Reactive -> Evaluate Persistent
+```
+
+These experiments are designed to determine whether the family distinction primarily affects:
+
+- regime representation (different latent maps of market structure), or
+- exploitation policy (different actions taken from similar regime beliefs).
+
+The outcome will help determine whether persistent and reactive families encode fundamentally different market understandings or merely different decision policies operating on similar regime representations.
