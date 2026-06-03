@@ -15,6 +15,13 @@ _FEATURE_TO_SENTIMENT_MAP = {
     "price_trend": "sentiment",
     "trend_vol_only": "no_sentiment",
 }
+# (artifact_pattern, training_pair_family, evaluation_pair_family)
+_TRANSFER_ARTIFACT_PATTERNS: tuple[tuple[str, str, str], ...] = (
+    ("persistent_to_reactive", "persistent", "reactive"),
+    ("persistent-to-reactive", "persistent", "reactive"),
+    ("reactive_to_persistent", "reactive", "persistent"),
+    ("reactive-to-persistent", "reactive", "persistent"),
+)
 
 
 def _decode_bool(value: Any) -> bool | None:
@@ -140,6 +147,27 @@ def _infer_pair_family_from_text(value: Any) -> str | None:
     if has_reactive and not has_persistent:
         return "reactive"
     return None
+
+
+def _infer_pair_families_from_artifact_text(value: Any) -> tuple[str | None, str | None]:
+    """
+    Infer training/evaluation pair families from artifact-like text.
+
+    Supported transfer patterns:
+      persistent_to_reactive_*  -> (persistent, reactive)
+      reactive_to_persistent_*  -> (reactive, persistent)
+
+    For non-transfer names, preserves legacy behavior by inferring only a
+    single training family (persistent/reactive) and leaving evaluation unset.
+    """
+    text = _decode_str(value)
+    if not text:
+        return None, None
+    normalized = text.lower()
+    for pattern, training_family, evaluation_family in _TRANSFER_ARTIFACT_PATTERNS:
+        if pattern in normalized:
+            return training_family, evaluation_family
+    return _infer_pair_family_from_text(text), None
 
 
 def _infer_eval_family_from_active_pairs() -> str | None:
@@ -304,7 +332,7 @@ def build_runtime_experiment_surface(
     if sentiment_surface is None:
         sentiment_surface = "none"
 
-    family_from_metadata = _infer_pair_family_from_text(
+    training_family_from_metadata, evaluation_family_from_metadata = _infer_pair_families_from_artifact_text(
         _lookup(
             merged_metadata,
             "artifact_source",
@@ -314,16 +342,20 @@ def build_runtime_experiment_surface(
             "source_path",
         )
     )
-    family_from_path = _infer_pair_family_from_text(dl_artifact_path)
+    training_family_from_path, evaluation_family_from_path = _infer_pair_families_from_artifact_text(
+        dl_artifact_path
+    )
     training_pair_family = (
         explicit_training_pair_family
-        or family_from_metadata
-        or family_from_path
+        or training_family_from_metadata
+        or training_family_from_path
         or "unknown"
     )
 
     evaluation_pair_family = (
         explicit_evaluation_pair_family
+        or evaluation_family_from_metadata
+        or evaluation_family_from_path
         or _infer_eval_family_from_active_pairs()
         or "unknown"
     )
