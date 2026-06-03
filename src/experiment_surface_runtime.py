@@ -142,6 +142,28 @@ def _infer_pair_family_from_text(value: Any) -> str | None:
     return None
 
 
+def _infer_pair_families_from_artifact_text(value: Any) -> tuple[str | None, str | None]:
+    """
+    Infer training/evaluation pair families from artifact-like text.
+
+    Supported transfer patterns:
+      persistent_to_reactive_*  -> (persistent, reactive)
+      reactive_to_persistent_*  -> (reactive, persistent)
+
+    For non-transfer names, preserves legacy behavior by inferring only a
+    single training family (persistent/reactive) and leaving evaluation unset.
+    """
+    text = _decode_str(value)
+    if not text:
+        return None, None
+    normalized = text.lower()
+    if "persistent_to_reactive" in normalized or "persistent-to-reactive" in normalized:
+        return "persistent", "reactive"
+    if "reactive_to_persistent" in normalized or "reactive-to-persistent" in normalized:
+        return "reactive", "persistent"
+    return _infer_pair_family_from_text(text), None
+
+
 def _infer_eval_family_from_active_pairs() -> str | None:
     """Infer evaluation family only when ACTIVE_PAIRS is a pure persistent/reactive subset."""
     raw = os.getenv("ACTIVE_PAIRS", "")
@@ -304,7 +326,7 @@ def build_runtime_experiment_surface(
     if sentiment_surface is None:
         sentiment_surface = "none"
 
-    family_from_metadata = _infer_pair_family_from_text(
+    training_family_from_metadata, evaluation_family_from_metadata = _infer_pair_families_from_artifact_text(
         _lookup(
             merged_metadata,
             "artifact_source",
@@ -314,16 +336,20 @@ def build_runtime_experiment_surface(
             "source_path",
         )
     )
-    family_from_path = _infer_pair_family_from_text(dl_artifact_path)
+    training_family_from_path, evaluation_family_from_path = _infer_pair_families_from_artifact_text(
+        dl_artifact_path
+    )
     training_pair_family = (
         explicit_training_pair_family
-        or family_from_metadata
-        or family_from_path
+        or training_family_from_metadata
+        or training_family_from_path
         or "unknown"
     )
 
     evaluation_pair_family = (
         explicit_evaluation_pair_family
+        or evaluation_family_from_metadata
+        or evaluation_family_from_path
         or _infer_eval_family_from_active_pairs()
         or "unknown"
     )

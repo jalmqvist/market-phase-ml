@@ -229,6 +229,37 @@ class TestRuntimeExperimentSurfaceEmission(unittest.TestCase):
         self.assertEqual(surface["training_pair_family"], "reactive")
         self.assertEqual(surface["sentiment_surface"], "no_sentiment")
 
+    def test_transfer_artifact_names_infer_training_and_evaluation_families(self):
+        cases = [
+            ("persistent_to_reactive_sentiment_LVTF", "persistent", "reactive"),
+            ("persistent_to_reactive_nosentiment_HVR", "persistent", "reactive"),
+            ("reactive_to_persistent_sentiment_HVTF", "reactive", "persistent"),
+            ("reactive_to_persistent_nosentiment_LVR", "reactive", "persistent"),
+        ]
+        for artifact_name, expected_training, expected_evaluation in cases:
+            with self.subTest(artifact_name=artifact_name):
+                surface = build_runtime_experiment_surface(
+                    dl_runtime_enabled=True,
+                    dl_surface={
+                        "model": "mlp",
+                        "target_horizon": 24,
+                        "feature_set": "trend_vol_only",
+                        "dl_regime": "LVTF",
+                    },
+                    dl_artifact_path=Path(f"/tmp/artifacts/{artifact_name}/file.parquet"),
+                    experiment_factors={
+                        "selector_enabled": True,
+                        "overlap_only": False,
+                        "msml_regime": "LVTF",
+                        "missing_indicators_enabled": False,
+                    },
+                    artifact_metadata={},
+                )
+                self.assertEqual(surface["training_pair_family"], expected_training)
+                self.assertEqual(surface["evaluation_pair_family"], expected_evaluation)
+                self.assertNotEqual(surface["training_pair_family"], "unknown")
+                self.assertNotEqual(surface["evaluation_pair_family"], "unknown")
+
     def test_legacy_manifest_without_surface_still_parses(self):
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
