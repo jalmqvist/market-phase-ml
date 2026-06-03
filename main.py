@@ -1838,6 +1838,7 @@ def main(
 
         for pair_name in sorted(processed_data.keys()):
             df = processed_data[pair_name]
+            df.attrs["pair_name"] = pair_name
             print(f'\n  --- {pair_name} ---')
             try:
                 experiment = PhaseMLExperiment(
@@ -1904,6 +1905,7 @@ def main(
 
         for pair_name in sorted(processed_data.keys()):
             df = processed_data[pair_name]
+            df.attrs["pair_name"] = pair_name
             print(f'\n  --- {pair_name} ---')
             try:
                 predictions = predictor.fit_predict(df)
