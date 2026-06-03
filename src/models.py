@@ -225,7 +225,14 @@ def emit_awareness_diagnostics(
     missing_indicators_enabled: bool,
     diagnostics_seen: set[tuple[bool, tuple[str, ...]]] | None = None,
 ) -> None:
-    """Emit awareness-mode diagnostics for a constructed feature matrix."""
+    """Emit awareness-mode diagnostics for a constructed feature matrix.
+
+    Args:
+        X: Feature matrix after optional-feature imputation.
+        missing_indicators_enabled: Whether the runtime is in aware mode.
+        diagnostics_seen: Optional de-duplication set used to suppress repeat
+            logs when the same awareness mode and feature schema recur.
+    """
     signature = (bool(missing_indicators_enabled), tuple(map(str, X.columns)))
     if diagnostics_seen is not None and signature in diagnostics_seen:
         return

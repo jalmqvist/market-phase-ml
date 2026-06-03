@@ -61,6 +61,8 @@ _BASE_COLS = ["adx", "atr_pct", "minus_di", "plus_di", "rsi", "returns_recent", 
 # Use real DL column names so they are recognised by StrategySelector.train()
 # (which gates on DL_D1_FEATURE_COLS and DL_SIGNALS_ENABLED).
 _DL_COLS = list(_D1_FEATURE_COLS[:2]) if _D1_FEATURE_COLS else []
+_MISSING_PATTERN_A = 3
+_MISSING_PATTERN_B = 4
 
 
 def _make_training_df(n: int = 200, *, include_dl: bool = False) -> pd.DataFrame:
@@ -375,8 +377,8 @@ class TestSelectorAwarenessToggle(unittest.TestCase):
         vals_b = rng.uniform(0.0, 1.0, n)
         df["dl_signal_a"] = vals_a
         df["dl_signal_b"] = vals_b
-        df.loc[np.arange(n) % 3 == 0, "dl_signal_a"] = np.nan
-        df.loc[np.arange(n) % 4 == 0, "dl_signal_b"] = np.nan
+        df.loc[np.arange(n) % _MISSING_PATTERN_A == 0, "dl_signal_a"] = np.nan
+        df.loc[np.arange(n) % _MISSING_PATTERN_B == 0, "dl_signal_b"] = np.nan
         return df
 
     def test_selector_feature_schema_differs_between_aware_and_blind(self):

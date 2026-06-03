@@ -1526,7 +1526,7 @@ def main(
         "missing_indicators_enabled": (
             awareness_hint
             if isinstance(awareness_hint, bool)
-            else bool(base_factors.get("missing_indicators_enabled"))
+            else bool(base_factors.get("missing_indicators_enabled", True))
         ),
         "msml_regime": requested_msml_regime,
         "overlap_only": overlap_only,
@@ -1543,7 +1543,7 @@ def main(
         experiment_factors=experiment_meta.get("factors") or {},
     )
     missing_indicators_enabled = bool(
-        (experiment_meta.get("factors") or {}).get("missing_indicators_enabled")
+        (experiment_meta.get("factors") or {}).get("missing_indicators_enabled", True)
     )
     generation_hint = (
         experiment_generation
