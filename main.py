@@ -1755,6 +1755,7 @@ def main(
         dl_artifact=dl_cache_artifact,
     )
     processed_param_hash = _hash_params(detector_hash=detector_hash, dl_cache_hash=dl_cache_hash)
+    # Human-readable cache provenance key (matches src/cache.py filename convention).
     processed_data_key = f"processed_data__{raw_data_hash}__{processed_param_hash}"
 
     processed_data = load_cache(
