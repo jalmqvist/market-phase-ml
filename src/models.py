@@ -73,6 +73,35 @@ def _stable_feature_columns(feature_cols: list[str] | tuple[str, ...]) -> list[s
     return sorted(dict.fromkeys(feature_cols))
 
 
+def _resolve_pair_name(value: object | None) -> str:
+    """Best-effort extraction of pair_name from labels like ``pair=EURUSD``."""
+    if value is None:
+        return "unknown_pair"
+    text = str(value)
+    marker = "pair="
+    if marker in text:
+        pair_part = text.split(marker, 1)[1]
+        pair_tokens = pair_part.split()
+        if pair_tokens:
+            return pair_tokens[0].strip(",;") or "unknown_pair"
+        return "unknown_pair"
+    return text if text else "unknown_pair"
+
+
+def _extract_dl_feature_cols(X: pd.DataFrame) -> list[str]:
+    """Return DL feature columns present in X."""
+    return _stable_feature_columns([c for c in DL_D1_FEATURE_COLS if c in X.columns])
+
+
+def _print_dl_feature_usage(pair_name: str, dl_feature_cols: list[str]) -> None:
+    print(
+        "[DL FEATURE USAGE]",
+        pair_name,
+        len(dl_feature_cols),
+        dl_feature_cols,
+    )
+
+
 #: Suffix appended to optional feature column names to create missing-value
 #: indicator columns during imputation.  Defined at module level so that both
 #: training (apply_optional_feature_imputation) and inference
@@ -597,6 +626,9 @@ class PhaseMLPredictor:
                         )
 
                 model = self._build_model()
+                pair_name = _resolve_pair_name(df.attrs.get("pair_name"))
+                dl_feature_cols = _extract_dl_feature_cols(X_train_raw)
+                _print_dl_feature_usage(pair_name, dl_feature_cols)
                 model.fit(X_train, y_train_int)
 
                 last_trained = i
@@ -926,7 +958,9 @@ class PhaseMLExperiment:
     def _cross_validate(self,
                         model,
                         X: pd.DataFrame,
-                        y: pd.Series) -> dict:
+                        y: pd.Series,
+                        *,
+                        pair_name: str = "unknown_pair") -> dict:
         """
         Time-series cross-validation with StandardScaler.
 
@@ -955,6 +989,8 @@ class PhaseMLExperiment:
             X_train_scaled = scaler.fit_transform(X_train)
             X_test_scaled = scaler.transform(X_test)
 
+            dl_feature_cols = _extract_dl_feature_cols(X_train)
+            _print_dl_feature_usage(pair_name, dl_feature_cols)
             model.fit(X_train_scaled, y_train)
             y_pred = model.predict(X_test_scaled)
 
@@ -1006,7 +1042,8 @@ class PhaseMLExperiment:
             diagnostics_label="per-phase models baseline",
         )
 
-        scores = self._cross_validate(self._build_model(), X, y)
+        pair_name = _resolve_pair_name(df.attrs.get("pair_name"))
+        scores = self._cross_validate(self._build_model(), X, y, pair_name=pair_name)
         self.results['baseline'] = scores
         self._print_scores('Baseline', scores)
 
@@ -1038,7 +1075,8 @@ class PhaseMLExperiment:
             diagnostics_label="per-phase models phase-features",
         )
 
-        scores = self._cross_validate(self._build_model(), X, y)
+        pair_name = _resolve_pair_name(df.attrs.get("pair_name"))
+        scores = self._cross_validate(self._build_model(), X, y, pair_name=pair_name)
         self.results['phase_features'] = scores
         self._print_scores('Phase Features', scores)
 
@@ -1098,8 +1136,9 @@ class PhaseMLExperiment:
 
             print(f'\n  Phase: {phase} ({len(X_phase)} samples)')
 
+            pair_name = _resolve_pair_name(df.attrs.get("pair_name"))
             scores = self._cross_validate(
-                self._build_model(), X_phase, y_phase
+                self._build_model(), X_phase, y_phase, pair_name=pair_name
             )
             phase_scores[phase] = scores
 
@@ -1219,6 +1258,9 @@ class PhaseMLExperiment:
         X_scaled = scaler.fit_transform(X)
 
         model = self._build_model()
+        pair_name = _resolve_pair_name(df.attrs.get("pair_name"))
+        dl_feature_cols = _extract_dl_feature_cols(X)
+        _print_dl_feature_usage(pair_name, dl_feature_cols)
         model.fit(X_scaled, y)
 
         importance_df = pd.DataFrame({
@@ -1566,6 +1608,9 @@ class StrategySelector:
             eval_metric="mlogloss",
         )
 
+        pair_name = _resolve_pair_name(diagnostics_label)
+        dl_feature_cols = _extract_dl_feature_cols(X)
+        _print_dl_feature_usage(pair_name, dl_feature_cols)
         self.model.fit(X_scaled, y_encoded)
 
         # Freeze the canonical feature schema in the EXACT column order used for

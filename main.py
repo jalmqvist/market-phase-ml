@@ -46,7 +46,10 @@ from src.repro import (
     set_global_seed,
     write_manifest,
 )
-from src.dl_config import resolve_dl_prediction_artifact_path
+from src.dl_config import (
+    infer_dl_regime_from_artifact_path,
+    resolve_dl_prediction_artifact_path,
+)
 from src.dl_surface_loader import VALID_DL_REGIMES
 from src.dl_daily_features import load_and_aggregate_d1, D1_FEATURE_COLS
 from src.experiment_surface_runtime import build_runtime_experiment_surface
@@ -103,11 +106,12 @@ RUN_WALKFORWARD = True
 # DL surface integration (optional feature layer, v1 single-surface)
 # DL_SIGNALS_ENABLED = True
 DL_SIGNALS_ENABLED = os.environ.get("DL_SIGNALS_ENABLED", "false").lower() == "true"
+DEFAULT_DL_REGIME = "LVTF"
 DL_SIGNAL_SURFACE = {
     "model": os.getenv("DL_MODEL", "mlp"),
     "target_horizon": 24,
     "feature_set": os.getenv("DL_FEATURE_SET", "price_trend"),
-    "dl_regime": os.getenv("DL_REGIME", "LVTF"),
+    "dl_regime": os.getenv("DL_REGIME", ""),
 }
 
 # DL debug verbosity (controls noisy per-pair diagnostics)
@@ -1445,16 +1449,8 @@ def main(
     run_cfg = build_run_config(seed=resolved_seed, run_id=RUN_ID)
     reproducibility_block = set_global_seed(run_cfg.seed)
     dl_surface = dict(DL_SIGNAL_SURFACE)
-    dl_regime = str(dl_surface.get("dl_regime", "")).upper()
-    dl_surface["dl_regime"] = dl_regime
+    dl_regime = str(dl_surface.get("dl_regime", "")).strip().upper()
     dl_runtime_enabled = bool(DL_SIGNALS_ENABLED)
-    if dl_runtime_enabled and dl_regime not in VALID_DL_REGIMES:
-        print(
-            f"[WARN] DL features will not be attached (baseline mode): "
-            f"invalid dl_regime={dl_regime!r}. Valid values={sorted(VALID_DL_REGIMES)} "
-            f"(no 'all' support in v1)."
-        )
-        dl_runtime_enabled = False
     # ----------------------------------------------------------
     # DL artifact resolution
     #
@@ -1464,6 +1460,7 @@ def main(
     # ----------------------------------------------------------
 
     explicit_dl_artifact = os.getenv("DL_PREDICTION_ARTIFACT_PATH", "").strip()
+    artifact_regime = None
 
     if dl_runtime_enabled:
         if explicit_dl_artifact:
@@ -1480,6 +1477,29 @@ def main(
 
     if dl_runtime_enabled and dl_artifact_path is None:
         print("[WARN] DL enabled but no artifact resolved; DL features will be skipped.")
+
+    if dl_runtime_enabled and dl_artifact_path is not None:
+        artifact_regime = infer_dl_regime_from_artifact_path(dl_artifact_path)
+    if dl_runtime_enabled and not dl_regime and artifact_regime:
+        dl_regime = artifact_regime
+        print(f"[DL] inferred dl_regime={dl_regime} from artifact path")
+
+    if not dl_regime:
+        dl_regime = DEFAULT_DL_REGIME
+        print(
+            "[WARN] DL_REGIME not set and artifact did not encode regime; "
+            f"defaulting dl_regime={DEFAULT_DL_REGIME}."
+        )
+
+    dl_surface["dl_regime"] = dl_regime
+
+    if dl_runtime_enabled and dl_regime not in VALID_DL_REGIMES:
+        print(
+            f"[WARN] DL features will not be attached (baseline mode): "
+            f"invalid dl_regime={dl_regime!r}. Valid values={sorted(VALID_DL_REGIMES)} "
+            f"(no 'all' support in v1)."
+        )
+        dl_runtime_enabled = False
     dl_mode_tag = "__dl_enabled" if dl_runtime_enabled else "__baseline"
     dl_surface_str = _dl_surface_string(dl_surface)
     selected_variant = (
@@ -1569,6 +1589,10 @@ def main(
     print(f"DL selected surface: {dl_surface}")
     print(f"surface={dl_surface_str}")
     print(f"DL resolved artifact path: {dl_artifact_path}")
+    print("[DL REGIME]")
+    print(f"artifact_path={dl_artifact_path}")
+    print(f"artifact_regime={artifact_regime if artifact_regime else 'unknown'}")
+    print(f"runtime_regime={dl_regime}")
     print(f"Market data source: {market_data_source}")
     print(f"Output dir: {_run_output_dir()}")
     print(f"Experiment: {experiment_meta}")
@@ -1731,15 +1755,17 @@ def main(
         dl_artifact=dl_cache_artifact,
     )
     processed_param_hash = _hash_params(detector_hash=detector_hash, dl_cache_hash=dl_cache_hash)
-
-    print(f"[DL CACHE] enabled={dl_runtime_enabled}")
-    print(f"[DL CACHE] surface={dl_surface_str}")
-    print(f"[DL CACHE] artifact={dl_cache_artifact}")
+    # Human-readable cache provenance key (matches src/cache.py filename convention).
+    processed_data_key = f"processed_data__{raw_data_hash}__{processed_param_hash}"
 
     processed_data = load_cache(
         'processed_data', raw_data_hash, processed_param_hash
     )
-    print(f"[DL CACHE] processed_data={'hit' if processed_data is not None else 'miss'}")
+    print("[CACHE]")
+    print(f"processed_data_key={processed_data_key}")
+    print(f"dl_surface={dl_surface_str if dl_runtime_enabled else 'disabled'}")
+    print(f"artifact={dl_cache_artifact}")
+    print(f"cache_hit={processed_data is not None}")
 
     if processed_data is None:
         print('  No cache found — running phase detection...')
@@ -1838,6 +1864,7 @@ def main(
 
         for pair_name in sorted(processed_data.keys()):
             df = processed_data[pair_name]
+            df.attrs["pair_name"] = pair_name
             print(f'\n  --- {pair_name} ---')
             try:
                 experiment = PhaseMLExperiment(
@@ -1904,6 +1931,7 @@ def main(
 
         for pair_name in sorted(processed_data.keys()):
             df = processed_data[pair_name]
+            df.attrs["pair_name"] = pair_name
             print(f'\n  --- {pair_name} ---')
             try:
                 predictions = predictor.fit_predict(df)

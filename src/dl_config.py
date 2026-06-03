@@ -20,6 +20,7 @@ DL_SURFACE_REGIME           dl_regime for surface selection (default: HVTF)
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -96,3 +97,35 @@ DL_SIGNAL_SURFACE: dict = {
     "feature_set": os.environ.get("DL_SURFACE_FEATURE_SET", "price_trend"),
     "dl_regime": os.environ.get("DL_SURFACE_REGIME", "HVTF"),
 }
+
+_VALID_DL_REGIMES: frozenset[str] = frozenset({"HVTF", "LVTF", "HVR", "LVR"})
+_DL_REGIME_PATTERN = re.compile(
+    r"(?<![A-Z0-9])(" + "|".join(sorted(_VALID_DL_REGIMES, reverse=True)) + r")(?![A-Z0-9])"
+)
+
+
+def infer_dl_regime_from_artifact_path(path: Path | str | None) -> str | None:
+    """
+    Infer dl_regime from an artifact file/path string.
+
+    Supports both canonical names like:
+      ``mlp__HVR__24__price_trend__20260524T175056Z.parquet``
+    and free-form names containing regime tokens such as:
+      ``persistent_to_reactive_sentiment_HVR.parquet``.
+    """
+    if path is None:
+        return None
+
+    name = Path(path).name
+    upper_name = name.upper()
+
+    for token in upper_name.split("__"):
+        cleaned = token.replace(".PARQUET", "")
+        if cleaned in _VALID_DL_REGIMES:
+            return cleaned
+
+    match = _DL_REGIME_PATTERN.search(upper_name)
+    if match:
+        return match.group(1)
+
+    return None
