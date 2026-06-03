@@ -46,7 +46,10 @@ from src.repro import (
     set_global_seed,
     write_manifest,
 )
-from src.dl_config import resolve_dl_prediction_artifact_path
+from src.dl_config import (
+    infer_dl_regime_from_artifact_path,
+    resolve_dl_prediction_artifact_path,
+)
 from src.dl_surface_loader import VALID_DL_REGIMES
 from src.dl_daily_features import load_and_aggregate_d1, D1_FEATURE_COLS
 from src.experiment_surface_runtime import build_runtime_experiment_surface
@@ -103,11 +106,12 @@ RUN_WALKFORWARD = True
 # DL surface integration (optional feature layer, v1 single-surface)
 # DL_SIGNALS_ENABLED = True
 DL_SIGNALS_ENABLED = os.environ.get("DL_SIGNALS_ENABLED", "false").lower() == "true"
+DEFAULT_DL_REGIME = "LVTF"
 DL_SIGNAL_SURFACE = {
     "model": os.getenv("DL_MODEL", "mlp"),
     "target_horizon": 24,
     "feature_set": os.getenv("DL_FEATURE_SET", "price_trend"),
-    "dl_regime": os.getenv("DL_REGIME", "LVTF"),
+    "dl_regime": os.getenv("DL_REGIME", ""),
 }
 
 # DL debug verbosity (controls noisy per-pair diagnostics)
@@ -1445,16 +1449,8 @@ def main(
     run_cfg = build_run_config(seed=resolved_seed, run_id=RUN_ID)
     reproducibility_block = set_global_seed(run_cfg.seed)
     dl_surface = dict(DL_SIGNAL_SURFACE)
-    dl_regime = str(dl_surface.get("dl_regime", "")).upper()
-    dl_surface["dl_regime"] = dl_regime
+    dl_regime = str(dl_surface.get("dl_regime", "")).strip().upper()
     dl_runtime_enabled = bool(DL_SIGNALS_ENABLED)
-    if dl_runtime_enabled and dl_regime not in VALID_DL_REGIMES:
-        print(
-            f"[WARN] DL features will not be attached (baseline mode): "
-            f"invalid dl_regime={dl_regime!r}. Valid values={sorted(VALID_DL_REGIMES)} "
-            f"(no 'all' support in v1)."
-        )
-        dl_runtime_enabled = False
     # ----------------------------------------------------------
     # DL artifact resolution
     #
@@ -1480,6 +1476,29 @@ def main(
 
     if dl_runtime_enabled and dl_artifact_path is None:
         print("[WARN] DL enabled but no artifact resolved; DL features will be skipped.")
+
+    if dl_runtime_enabled and not dl_regime and dl_artifact_path is not None:
+        inferred_dl_regime = infer_dl_regime_from_artifact_path(dl_artifact_path)
+        if inferred_dl_regime:
+            dl_regime = inferred_dl_regime
+            print(f"[DL] inferred dl_regime={dl_regime} from artifact path")
+
+    if not dl_regime:
+        dl_regime = DEFAULT_DL_REGIME
+        print(
+            "[WARN] DL_REGIME not set and artifact did not encode regime; "
+            f"defaulting dl_regime={DEFAULT_DL_REGIME}."
+        )
+
+    dl_surface["dl_regime"] = dl_regime
+
+    if dl_runtime_enabled and dl_regime not in VALID_DL_REGIMES:
+        print(
+            f"[WARN] DL features will not be attached (baseline mode): "
+            f"invalid dl_regime={dl_regime!r}. Valid values={sorted(VALID_DL_REGIMES)} "
+            f"(no 'all' support in v1)."
+        )
+        dl_runtime_enabled = False
     dl_mode_tag = "__dl_enabled" if dl_runtime_enabled else "__baseline"
     dl_surface_str = _dl_surface_string(dl_surface)
     selected_variant = (
