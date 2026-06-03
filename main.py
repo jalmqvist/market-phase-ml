@@ -1536,6 +1536,9 @@ def main(
         variant=selected_variant,
         factor_overrides=factor_overrides,
     )
+    missing_indicators_enabled = bool(
+        (experiment_meta.get("factors") or {}).get("missing_indicators_enabled")
+    )
     experiment_surface = build_runtime_experiment_surface(
         dl_runtime_enabled=dl_runtime_enabled,
         dl_surface=dl_surface,
@@ -1754,7 +1757,11 @@ def main(
         dl_surface=dl_cache_surface,
         dl_artifact=dl_cache_artifact,
     )
-    processed_param_hash = _hash_params(detector_hash=detector_hash, dl_cache_hash=dl_cache_hash)
+    processed_param_hash = _hash_params(
+        detector_hash=detector_hash,
+        dl_cache_hash=dl_cache_hash,
+        missing_indicators_enabled=missing_indicators_enabled,
+    )
     # Human-readable cache provenance key (matches src/cache.py filename convention).
     processed_data_key = f"processed_data__{raw_data_hash}__{processed_param_hash}"
 
@@ -1912,6 +1919,7 @@ def main(
         random_state=run_cfg.seed,
         seed=run_cfg.seed,
         min_dl_coverage_pct=MIN_DL_TRAIN_COVERAGE_PCT,
+        missing_indicators_enabled=missing_indicators_enabled,
     )
 
     # Cache key: hash of processed data + predictor parameters
@@ -2098,6 +2106,7 @@ def main(
         spread_pips=SPREAD_PIPS,
         slippage_pips=SLIPPAGE_PIPS,
         commission_per_trade=COMMISSION_PER_TRADE,
+        missing_indicators_enabled=missing_indicators_enabled,
     )
     bt_param_hash = _hash_params(**backtest_params)
 
@@ -2233,7 +2242,10 @@ def main(
             training_data = tracker.compute_strategy_returns(df, pair_backtest)
 
             # Train selector model (3-class: TF vs MR vs PhaseAware)
-            selector = StrategySelector(seed=run_cfg.seed)
+            selector = StrategySelector(
+                seed=run_cfg.seed,
+                missing_indicators_enabled=missing_indicators_enabled,
+            )
             metrics = selector.train(
                 training_data,
                 diagnostics_label=f"dynamic selector training pair={pair_name}",
@@ -2619,7 +2631,10 @@ def main(
                     continue
 
                 # --- Train selector on this fold ---
-                selector = StrategySelector(seed=run_cfg.seed)
+                selector = StrategySelector(
+                    seed=run_cfg.seed,
+                    missing_indicators_enabled=missing_indicators_enabled,
+                )
                 selector.train(
                     training_data,
                     do_cv=False,
@@ -3056,7 +3071,10 @@ def main(
                 if len(training_data) < 200:
                     continue
 
-                selector = StrategySelector(seed=run_cfg.seed)
+                selector = StrategySelector(
+                    seed=run_cfg.seed,
+                    missing_indicators_enabled=missing_indicators_enabled,
+                )
                 selector.train(
                     training_data,
                     do_cv=False,
@@ -3282,7 +3300,10 @@ def main(
                 if len(training_data) < 200:
                     continue
 
-                selector = StrategySelector(seed=run_cfg.seed)
+                selector = StrategySelector(
+                    seed=run_cfg.seed,
+                    missing_indicators_enabled=missing_indicators_enabled,
+                )
                 selector.train(
                     training_data,
                     do_cv=False,

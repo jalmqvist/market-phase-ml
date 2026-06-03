@@ -348,6 +348,43 @@ class TestMissingIndicatorConsistency(unittest.TestCase):
         # Column ORDER must match (both are sorted consistently)
         self.assertEqual(list(train_out.columns), list(infer_out.columns))
 
+    def test_blind_mode_disables_missing_indicators(self):
+        df = pd.DataFrame({
+            "base": [1.0, 2.0],
+            "dl_a": [np.nan, 0.5],
+            "dl_b": [0.3, np.nan],
+        })
+        aware = apply_optional_feature_imputation(
+            df, ["dl_a", "dl_b"], add_missing_indicators=True
+        )
+        blind = apply_optional_feature_imputation(
+            df, ["dl_a", "dl_b"], add_missing_indicators=False
+        )
+        aware_missing_cols = sorted(c for c in aware.columns if c.endswith("_missing"))
+        blind_missing_cols = sorted(c for c in blind.columns if c.endswith("_missing"))
+        self.assertGreater(len(aware_missing_cols), 0)
+        self.assertEqual(blind_missing_cols, [])
+
+
+@unittest.skipUnless(_HAS_DEPS, f"missing deps: {_DEPS_ERR}")
+@unittest.skipUnless(DL_SIGNALS_ENABLED and bool(_DL_COLS), "DL_SIGNALS_ENABLED=False — awareness schema tests skipped")
+class TestAwarenessSelectorSchemas(unittest.TestCase):
+    def test_aware_vs_blind_selector_schema_diverges_on_missing_indicators(self):
+        df = _make_training_df(n=200, include_dl=True)
+
+        aware = StrategySelector(seed=42, missing_indicators_enabled=True)
+        aware.train(df, do_cv=False, diagnostics_label="aware-selector")
+
+        blind = StrategySelector(seed=42, missing_indicators_enabled=False)
+        blind.train(df, do_cv=False, diagnostics_label="blind-selector")
+
+        aware_missing_cols = [c for c in (aware.feature_schema_ or []) if c.endswith("_missing")]
+        blind_missing_cols = [c for c in (blind.feature_schema_ or []) if c.endswith("_missing")]
+
+        self.assertGreater(len(aware_missing_cols), 0)
+        self.assertEqual(len(blind_missing_cols), 0)
+        self.assertNotEqual(aware.feature_schema_, blind.feature_schema_)
+
 
 # ---------------------------------------------------------------------------
 # Tests ensuring NO silent-continuation on schema drift
