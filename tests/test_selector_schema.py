@@ -26,6 +26,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -347,6 +348,69 @@ class TestMissingIndicatorConsistency(unittest.TestCase):
         self.assertEqual(set(train_out.columns), set(infer_out.columns))
         # Column ORDER must match (both are sorted consistently)
         self.assertEqual(list(train_out.columns), list(infer_out.columns))
+
+    def test_missing_indicators_omitted_when_disabled(self):
+        df = pd.DataFrame({
+            "dl_a": [np.nan, 0.5],
+            "dl_b": [1.0, np.nan],
+            "base": [10.0, 20.0],
+        })
+        result = apply_optional_feature_imputation(
+            df,
+            ["dl_b", "dl_a"],
+            add_missing_indicators=False,
+        )
+        self.assertNotIn("dl_a_missing", result.columns)
+        self.assertNotIn("dl_b_missing", result.columns)
+
+
+@unittest.skipUnless(_HAS_DEPS, f"missing deps: {_DEPS_ERR}")
+class TestSelectorAwarenessToggle(unittest.TestCase):
+
+    @staticmethod
+    def _make_optional_training_df(n: int = 200) -> pd.DataFrame:
+        rng = np.random.default_rng(123)
+        df = _make_training_df(n=n, include_dl=False)
+        vals_a = rng.uniform(0.0, 1.0, n)
+        vals_b = rng.uniform(0.0, 1.0, n)
+        df["dl_signal_a"] = vals_a
+        df["dl_signal_b"] = vals_b
+        df.loc[np.arange(n) % 3 == 0, "dl_signal_a"] = np.nan
+        df.loc[np.arange(n) % 4 == 0, "dl_signal_b"] = np.nan
+        return df
+
+    def test_selector_feature_schema_differs_between_aware_and_blind(self):
+        training_df = self._make_optional_training_df()
+        patched_dl_cols = frozenset({"dl_signal_a", "dl_signal_b"})
+
+        with (
+            patch("src.models.DL_SIGNALS_ENABLED", True),
+            patch("src.models.DL_D1_FEATURE_COLS", patched_dl_cols),
+            patch("src.models.OPTIONAL_DL_FEATURE_COLS", tuple(sorted(patched_dl_cols))),
+        ):
+            aware = StrategySelector(seed=42, missing_indicators_enabled=True)
+            blind = StrategySelector(seed=42, missing_indicators_enabled=False)
+
+            aware_metrics = aware.train(
+                training_df,
+                do_cv=False,
+                diagnostics_label="test aware selector",
+            )
+            blind_metrics = blind.train(
+                training_df,
+                do_cv=False,
+                diagnostics_label="test blind selector",
+            )
+
+        self.assertTrue(aware_metrics)
+        self.assertTrue(blind_metrics)
+
+        aware_indicators = [c for c in aware.feature_schema_ if c.endswith("_missing")]
+        blind_indicators = [c for c in blind.feature_schema_ if c.endswith("_missing")]
+
+        self.assertGreater(len(aware_indicators), 0)
+        self.assertEqual(blind_indicators, [])
+        self.assertNotEqual(aware.feature_schema_, blind.feature_schema_)
 
 
 # ---------------------------------------------------------------------------

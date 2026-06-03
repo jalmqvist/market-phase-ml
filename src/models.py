@@ -214,6 +214,28 @@ def apply_optional_feature_imputation(
     return X_out
 
 
+def count_missing_indicator_columns(X: pd.DataFrame) -> int:
+    """Count generated missing-indicator feature columns in *X*."""
+    return sum(1 for col in X.columns if str(col).endswith(_MISSING_INDICATOR_SUFFIX))
+
+
+def emit_awareness_diagnostics(
+    X: pd.DataFrame,
+    *,
+    missing_indicators_enabled: bool,
+    diagnostics_seen: set[tuple[bool, tuple[str, ...]]] | None = None,
+) -> None:
+    """Emit awareness-mode diagnostics for a constructed feature matrix."""
+    signature = (bool(missing_indicators_enabled), tuple(map(str, X.columns)))
+    if diagnostics_seen is not None and signature in diagnostics_seen:
+        return
+    if diagnostics_seen is not None:
+        diagnostics_seen.add(signature)
+    print("[AWARENESS]")
+    print(f"mode={'aware' if missing_indicators_enabled else 'blind'}")
+    print(f"missing_indicator_columns={count_missing_indicator_columns(X)}")
+
+
 def build_training_matrix(
     X_raw: pd.DataFrame,
     y_raw: pd.Series,
@@ -223,6 +245,7 @@ def build_training_matrix(
     optional_feature_cols: list[str] | None = None,
     diagnostics_label: str | None = None,
     add_optional_missing_indicators: bool = True,
+    awareness_diagnostics_seen: set[tuple[bool, tuple[str, ...]]] | None = None,
 ) -> tuple[pd.DataFrame, pd.Series, dict]:
     """Build robust training matrices with required-only masking and optional DL imputation."""
     feature_cols = _stable_feature_columns(feature_cols)
@@ -289,6 +312,11 @@ def build_training_matrix(
         fill_value=0.0,
         add_missing_indicators=add_optional_missing_indicators,
     )
+    emit_awareness_diagnostics(
+        X_final,
+        missing_indicators_enabled=add_optional_missing_indicators,
+        diagnostics_seen=awareness_diagnostics_seen,
+    )
 
     rows_after_optional_imputation = len(X_final)
     effective_training_samples = rows_after_optional_imputation
@@ -312,6 +340,7 @@ def build_training_matrix(
         "dl_coverage_pct": dl_coverage_pct,
         "effective_training_samples": effective_training_samples,
         "missingness_stats": missingness_stats,
+        "missing_indicator_columns": count_missing_indicator_columns(X_final),
     }
 
     if diagnostics_label is not None:
@@ -361,7 +390,8 @@ class PhaseMLPredictor:
                  smooth_labels:     bool = True,
                  random_state:      int  = 42,
                  seed:              int = 42,
-                 min_dl_coverage_pct: float = 5.0):
+                 min_dl_coverage_pct: float = 5.0,
+                 missing_indicators_enabled: bool = True):
         self.train_window      = train_window
         self.retrain_freq      = retrain_freq
         self.confirmation_bars = confirmation_bars
@@ -369,8 +399,10 @@ class PhaseMLPredictor:
         self.random_state      = random_state
         self.seed              = int(seed)
         self.min_dl_coverage_pct = float(min_dl_coverage_pct)
+        self.missing_indicators_enabled = bool(missing_indicators_enabled)
         self._exclude_cols     = PhaseMLExperiment.EXCLUDE_COLS
         self._label_encoder    = None
+        self._awareness_diagnostics_seen: set[tuple[bool, tuple[str, ...]]] = set()
 
     def _get_feature_cols(self, df: pd.DataFrame) -> list:
         """Auto-detect usable feature columns."""
@@ -586,6 +618,8 @@ class PhaseMLPredictor:
                     required_feature_cols=required_feature_cols,
                     optional_feature_cols=optional_dl_feature_cols,
                     diagnostics_label=f"walkforward fold={i} pair-train-window",
+                    add_optional_missing_indicators=self.missing_indicators_enabled,
+                    awareness_diagnostics_seen=self._awareness_diagnostics_seen,
                 )
                 print(
                     f"  [WALKFORWARD DL] fold={i} train_matrix_shape={X_train_raw.shape} "
@@ -651,7 +685,12 @@ class PhaseMLPredictor:
                     X_pred_raw,
                     optional_dl_feature_cols,
                     fill_value=0.0,
-                    add_missing_indicators=True,
+                    add_missing_indicators=self.missing_indicators_enabled,
+                )
+                emit_awareness_diagnostics(
+                    X_pred_raw,
+                    missing_indicators_enabled=self.missing_indicators_enabled,
+                    diagnostics_seen=self._awareness_diagnostics_seen,
                 )
                 if global_dl_numeric_cols:
                     pred_dl_non_null_counts = {
@@ -838,7 +877,8 @@ class PhaseMLExperiment:
                  n_splits: int = 5,
                  random_state: int = 42,
                  smooth_labels: bool = True,    # new
-                 confirmation_bars: int = 5):   # new
+                 confirmation_bars: int = 5,   # new
+                 missing_indicators_enabled: bool = True):
         """
         Args:
             n_splits:          Number of folds for TimeSeriesSplit
@@ -852,8 +892,10 @@ class PhaseMLExperiment:
         self.random_state      = random_state
         self.smooth_labels     = smooth_labels
         self.confirmation_bars = confirmation_bars
+        self.missing_indicators_enabled = bool(missing_indicators_enabled)
         self.tscv              = TimeSeriesSplit(n_splits=n_splits)
         self.results           = {}
+        self._awareness_diagnostics_seen: set[tuple[bool, tuple[str, ...]]] = set()
 
     def _get_phase_target(self, df: pd.DataFrame) -> pd.Series:
         """
@@ -1040,6 +1082,8 @@ class PhaseMLExperiment:
             required_feature_cols=required_cols,
             optional_feature_cols=optional_cols,
             diagnostics_label="per-phase models baseline",
+            add_optional_missing_indicators=self.missing_indicators_enabled,
+            awareness_diagnostics_seen=self._awareness_diagnostics_seen,
         )
 
         pair_name = _resolve_pair_name(df.attrs.get("pair_name"))
@@ -1073,6 +1117,8 @@ class PhaseMLExperiment:
             required_feature_cols=required_cols,
             optional_feature_cols=optional_cols,
             diagnostics_label="per-phase models phase-features",
+            add_optional_missing_indicators=self.missing_indicators_enabled,
+            awareness_diagnostics_seen=self._awareness_diagnostics_seen,
         )
 
         pair_name = _resolve_pair_name(df.attrs.get("pair_name"))
@@ -1132,6 +1178,8 @@ class PhaseMLExperiment:
                 required_feature_cols=required_cols,
                 optional_feature_cols=optional_cols,
                 diagnostics_label=f"per-phase models phase={phase}",
+                add_optional_missing_indicators=self.missing_indicators_enabled,
+                awareness_diagnostics_seen=self._awareness_diagnostics_seen,
             )
 
             print(f'\n  Phase: {phase} ({len(X_phase)} samples)')
@@ -1247,6 +1295,8 @@ class PhaseMLExperiment:
             required_feature_cols=required_cols,
             optional_feature_cols=optional_cols,
             diagnostics_label=f"feature-importance {label}",
+            add_optional_missing_indicators=self.missing_indicators_enabled,
+            awareness_diagnostics_seen=self._awareness_diagnostics_seen,
         )
 
         if len(X) < 50:
@@ -1462,7 +1512,7 @@ class StrategySelector:
     (3-class problem, much more learnable than 31-class)
     """
 
-    def __init__(self, seed: int = 42):
+    def __init__(self, seed: int = 42, missing_indicators_enabled: bool = True):
         self.seed = int(seed)
         self.model = None
         self.label_encoder = None
@@ -1471,9 +1521,11 @@ class StrategySelector:
         self.optional_feature_cols = None
         self.scaler = None
         self.random_state = seed
+        self.missing_indicators_enabled = bool(missing_indicators_enabled)
         # Canonical feature schema frozen at fit time (exact column order used
         # for scaler.fit and model.fit).  Inference MUST reindex to this schema.
         self.feature_schema_: list[str] | None = None
+        self._awareness_diagnostics_seen: set[tuple[bool, tuple[str, ...]]] = set()
 
 
 
@@ -1550,6 +1602,8 @@ class StrategySelector:
             required_feature_cols=base_feature_cols,
             optional_feature_cols=dl_feature_cols,
             diagnostics_label=diagnostics_label or "dynamic selector training",
+            add_optional_missing_indicators=self.missing_indicators_enabled,
+            awareness_diagnostics_seen=self._awareness_diagnostics_seen,
         )
 
         if len(X_train) < 100:
@@ -1683,7 +1737,12 @@ class StrategySelector:
             X,
             self.optional_feature_cols or [],
             fill_value=0.0,
-            add_missing_indicators=True,
+            add_missing_indicators=self.missing_indicators_enabled,
+        )
+        emit_awareness_diagnostics(
+            X,
+            missing_indicators_enabled=self.missing_indicators_enabled,
+            diagnostics_seen=self._awareness_diagnostics_seen,
         )
 
         # Strict schema validation: inference columns must exactly match fit schema.
