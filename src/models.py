@@ -109,6 +109,17 @@ def _print_dl_feature_usage(pair_name: str, dl_feature_cols: list[str]) -> None:
 _MISSING_INDICATOR_SUFFIX: str = "_missing"
 
 
+def _count_missing_indicator_columns(X: pd.DataFrame) -> int:
+    return int(sum(1 for c in X.columns if str(c).endswith(_MISSING_INDICATOR_SUFFIX)))
+
+
+def _emit_awareness_diagnostics(*, missing_indicators_enabled: bool, X: pd.DataFrame) -> None:
+    mode = "aware" if missing_indicators_enabled else "blind"
+    print("[AWARENESS]")
+    print(f"mode={mode}")
+    print(f"missing_indicator_columns={_count_missing_indicator_columns(X)}")
+
+
 def _build_deterministic_xgb_classifier(
     *,
     seed: int,
@@ -361,7 +372,8 @@ class PhaseMLPredictor:
                  smooth_labels:     bool = True,
                  random_state:      int  = 42,
                  seed:              int = 42,
-                 min_dl_coverage_pct: float = 5.0):
+                 min_dl_coverage_pct: float = 5.0,
+                 missing_indicators_enabled: bool = True):
         self.train_window      = train_window
         self.retrain_freq      = retrain_freq
         self.confirmation_bars = confirmation_bars
@@ -369,6 +381,8 @@ class PhaseMLPredictor:
         self.random_state      = random_state
         self.seed              = int(seed)
         self.min_dl_coverage_pct = float(min_dl_coverage_pct)
+        self.missing_indicators_enabled = bool(missing_indicators_enabled)
+        self._awareness_logged_inference = False
         self._exclude_cols     = PhaseMLExperiment.EXCLUDE_COLS
         self._label_encoder    = None
 
@@ -586,6 +600,7 @@ class PhaseMLPredictor:
                     required_feature_cols=required_feature_cols,
                     optional_feature_cols=optional_dl_feature_cols,
                     diagnostics_label=f"walkforward fold={i} pair-train-window",
+                    add_optional_missing_indicators=self.missing_indicators_enabled,
                 )
                 print(
                     f"  [WALKFORWARD DL] fold={i} train_matrix_shape={X_train_raw.shape} "
@@ -651,8 +666,14 @@ class PhaseMLPredictor:
                     X_pred_raw,
                     optional_dl_feature_cols,
                     fill_value=0.0,
-                    add_missing_indicators=True,
+                    add_missing_indicators=self.missing_indicators_enabled,
                 )
+                if not self._awareness_logged_inference:
+                    _emit_awareness_diagnostics(
+                        missing_indicators_enabled=self.missing_indicators_enabled,
+                        X=X_pred_raw,
+                    )
+                    self._awareness_logged_inference = True
                 if global_dl_numeric_cols:
                     pred_dl_non_null_counts = {
                         c: int(X_pred_raw[c].notna().sum()) for c in global_dl_numeric_cols
@@ -1462,7 +1483,7 @@ class StrategySelector:
     (3-class problem, much more learnable than 31-class)
     """
 
-    def __init__(self, seed: int = 42):
+    def __init__(self, seed: int = 42, missing_indicators_enabled: bool = True):
         self.seed = int(seed)
         self.model = None
         self.label_encoder = None
@@ -1471,6 +1492,8 @@ class StrategySelector:
         self.optional_feature_cols = None
         self.scaler = None
         self.random_state = seed
+        self.missing_indicators_enabled = bool(missing_indicators_enabled)
+        self._awareness_logged_inference = False
         # Canonical feature schema frozen at fit time (exact column order used
         # for scaler.fit and model.fit).  Inference MUST reindex to this schema.
         self.feature_schema_: list[str] | None = None
@@ -1550,6 +1573,7 @@ class StrategySelector:
             required_feature_cols=base_feature_cols,
             optional_feature_cols=dl_feature_cols,
             diagnostics_label=diagnostics_label or "dynamic selector training",
+            add_optional_missing_indicators=self.missing_indicators_enabled,
         )
 
         if len(X_train) < 100:
@@ -1683,8 +1707,14 @@ class StrategySelector:
             X,
             self.optional_feature_cols or [],
             fill_value=0.0,
-            add_missing_indicators=True,
+            add_missing_indicators=self.missing_indicators_enabled,
         )
+        if not self._awareness_logged_inference:
+            _emit_awareness_diagnostics(
+                missing_indicators_enabled=self.missing_indicators_enabled,
+                X=X,
+            )
+            self._awareness_logged_inference = True
 
         # Strict schema validation: inference columns must exactly match fit schema.
         validate_feature_schema(self.feature_schema_, list(X.columns), context=context)
