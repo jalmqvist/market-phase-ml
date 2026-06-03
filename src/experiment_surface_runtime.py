@@ -15,6 +15,13 @@ _FEATURE_TO_SENTIMENT_MAP = {
     "price_trend": "sentiment",
     "trend_vol_only": "no_sentiment",
 }
+# (artifact_pattern, training_pair_family, evaluation_pair_family)
+_TRANSFER_ARTIFACT_PATTERNS: tuple[tuple[str, str, str], ...] = (
+    ("persistent_to_reactive", "persistent", "reactive"),
+    ("persistent-to-reactive", "persistent", "reactive"),
+    ("reactive_to_persistent", "reactive", "persistent"),
+    ("reactive-to-persistent", "reactive", "persistent"),
+)
 
 
 def _decode_bool(value: Any) -> bool | None:
@@ -157,10 +164,9 @@ def _infer_pair_families_from_artifact_text(value: Any) -> tuple[str | None, str
     if not text:
         return None, None
     normalized = text.lower()
-    if "persistent_to_reactive" in normalized or "persistent-to-reactive" in normalized:
-        return "persistent", "reactive"
-    if "reactive_to_persistent" in normalized or "reactive-to-persistent" in normalized:
-        return "reactive", "persistent"
+    for pattern, training_family, evaluation_family in _TRANSFER_ARTIFACT_PATTERNS:
+        if pattern in normalized:
+            return training_family, evaluation_family
     return _infer_pair_family_from_text(text), None
 
 

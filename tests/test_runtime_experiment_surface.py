@@ -246,7 +246,9 @@ class TestRuntimeExperimentSurfaceEmission(unittest.TestCase):
                         "feature_set": "trend_vol_only",
                         "dl_regime": "LVTF",
                     },
-                    dl_artifact_path=Path(f"/tmp/artifacts/{artifact_name}/file.parquet"),
+                    dl_artifact_path=(
+                        Path(tempfile.gettempdir()) / "artifacts" / artifact_name / "file.parquet"
+                    ),
                     experiment_factors={
                         "selector_enabled": True,
                         "overlap_only": False,
@@ -257,8 +259,6 @@ class TestRuntimeExperimentSurfaceEmission(unittest.TestCase):
                 )
                 self.assertEqual(surface["training_pair_family"], expected_training)
                 self.assertEqual(surface["evaluation_pair_family"], expected_evaluation)
-                self.assertNotEqual(surface["training_pair_family"], "unknown")
-                self.assertNotEqual(surface["evaluation_pair_family"], "unknown")
 
     def test_legacy_manifest_without_surface_still_parses(self):
         with tempfile.TemporaryDirectory() as tmp:
