@@ -1460,6 +1460,7 @@ def main(
     # ----------------------------------------------------------
 
     explicit_dl_artifact = os.getenv("DL_PREDICTION_ARTIFACT_PATH", "").strip()
+    artifact_regime = None
 
     if dl_runtime_enabled:
         if explicit_dl_artifact:
@@ -1477,11 +1478,11 @@ def main(
     if dl_runtime_enabled and dl_artifact_path is None:
         print("[WARN] DL enabled but no artifact resolved; DL features will be skipped.")
 
-    if dl_runtime_enabled and not dl_regime and dl_artifact_path is not None:
-        inferred_dl_regime = infer_dl_regime_from_artifact_path(dl_artifact_path)
-        if inferred_dl_regime:
-            dl_regime = inferred_dl_regime
-            print(f"[DL] inferred dl_regime={dl_regime} from artifact path")
+    if dl_runtime_enabled and dl_artifact_path is not None:
+        artifact_regime = infer_dl_regime_from_artifact_path(dl_artifact_path)
+    if dl_runtime_enabled and not dl_regime and artifact_regime:
+        dl_regime = artifact_regime
+        print(f"[DL] inferred dl_regime={dl_regime} from artifact path")
 
     if not dl_regime:
         dl_regime = DEFAULT_DL_REGIME
@@ -1588,6 +1589,10 @@ def main(
     print(f"DL selected surface: {dl_surface}")
     print(f"surface={dl_surface_str}")
     print(f"DL resolved artifact path: {dl_artifact_path}")
+    print("[DL REGIME]")
+    print(f"artifact_path={dl_artifact_path}")
+    print(f"artifact_regime={artifact_regime if artifact_regime else 'unknown'}")
+    print(f"runtime_regime={dl_regime}")
     print(f"Market data source: {market_data_source}")
     print(f"Output dir: {_run_output_dir()}")
     print(f"Experiment: {experiment_meta}")
@@ -1750,15 +1755,16 @@ def main(
         dl_artifact=dl_cache_artifact,
     )
     processed_param_hash = _hash_params(detector_hash=detector_hash, dl_cache_hash=dl_cache_hash)
-
-    print(f"[DL CACHE] enabled={dl_runtime_enabled}")
-    print(f"[DL CACHE] surface={dl_surface_str}")
-    print(f"[DL CACHE] artifact={dl_cache_artifact}")
+    processed_data_key = f"processed_data__{raw_data_hash}__{processed_param_hash}"
 
     processed_data = load_cache(
         'processed_data', raw_data_hash, processed_param_hash
     )
-    print(f"[DL CACHE] processed_data={'hit' if processed_data is not None else 'miss'}")
+    print("[CACHE]")
+    print(f"processed_data_key={processed_data_key}")
+    print(f"dl_surface={dl_surface_str if dl_runtime_enabled else 'disabled'}")
+    print(f"artifact={dl_cache_artifact}")
+    print(f"cache_hit={processed_data is not None}")
 
     if processed_data is None:
         print('  No cache found — running phase detection...')
