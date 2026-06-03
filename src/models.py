@@ -74,14 +74,17 @@ def _stable_feature_columns(feature_cols: list[str] | tuple[str, ...]) -> list[s
 
 
 def _resolve_pair_name(value: object | None) -> str:
-    """Best-effort extraction of pair_name from context labels."""
+    """Best-effort extraction of pair_name from labels like ``pair=EURUSD``."""
     if value is None:
         return "unknown_pair"
     text = str(value)
     marker = "pair="
     if marker in text:
         pair_part = text.split(marker, 1)[1]
-        return pair_part.split()[0].strip(",;")
+        pair_tokens = pair_part.split()
+        if pair_tokens:
+            return pair_tokens[0].strip(",;") or "unknown_pair"
+        return "unknown_pair"
     return text if text else "unknown_pair"
 
 
