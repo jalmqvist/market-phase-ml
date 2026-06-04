@@ -47,6 +47,7 @@ from src.repro import (
     write_manifest,
 )
 from src.dl_config import (
+    infer_dl_feature_set_from_artifact_path,
     infer_dl_regime_from_artifact_path,
     resolve_dl_prediction_artifact_path,
 )
@@ -1492,6 +1493,14 @@ def main(
         )
 
     dl_surface["dl_regime"] = dl_regime
+
+    # Infer feature_set from the artifact path when not explicitly overridden
+    # via the DL_FEATURE_SET environment variable.
+    if dl_runtime_enabled and dl_artifact_path is not None and not os.getenv("DL_FEATURE_SET", "").strip():
+        artifact_feature_set = infer_dl_feature_set_from_artifact_path(dl_artifact_path)
+        if artifact_feature_set:
+            dl_surface["feature_set"] = artifact_feature_set
+            print(f"[DL] inferred feature_set={artifact_feature_set} from artifact path")
 
     if dl_runtime_enabled and dl_regime not in VALID_DL_REGIMES:
         print(
