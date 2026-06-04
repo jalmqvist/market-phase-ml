@@ -103,6 +103,11 @@ _DL_REGIME_PATTERN = re.compile(
     r"(?<![A-Z0-9])(" + "|".join(sorted(_VALID_DL_REGIMES, reverse=True)) + r")(?![A-Z0-9])"
 )
 
+# Canonical feature-set identifiers embedded in artifact filenames.
+# Order matters for matching: longer/more-specific tokens should appear first.
+_VALID_DL_FEATURE_SETS: frozenset[str] = frozenset({"price_trend", "trend_vol_only"})
+_DL_FEATURE_SET_TOKENS: tuple[str, ...] = ("trend_vol_only", "price_trend")
+
 
 def infer_dl_regime_from_artifact_path(path: Path | str | None) -> str | None:
     """
@@ -127,5 +132,42 @@ def infer_dl_regime_from_artifact_path(path: Path | str | None) -> str | None:
     match = _DL_REGIME_PATTERN.search(upper_name)
     if match:
         return match.group(1)
+
+    return None
+
+
+def infer_dl_feature_set_from_artifact_path(path: Path | str | None) -> str | None:
+    """
+    Infer ``feature_set`` from an artifact file/path string.
+
+    Canonical artifact filenames embed the feature-set token as the fourth
+    ``__``-delimited segment, e.g.::
+
+        mlp__HVR__24__trend_vol_only__20260524T175056Z.parquet
+        mlp__HVR__24__price_trend__20260524T175056Z.parquet
+
+    The function first tries the canonical positional parse (segment index 3),
+    then falls back to a full-segment scan ordered longest-token-first so that
+    longer tokens are always matched before any shorter token that shares a
+    common prefix.
+
+    Returns ``None`` when no known feature-set token is found.
+    """
+    if path is None:
+        return None
+
+    stem = Path(path).stem  # filename without extension
+    segments = stem.lower().split("__")
+
+    # Canonical position: model__regime__horizon__feature_set__timestamp
+    if len(segments) >= 4:
+        candidate = segments[3]
+        if candidate in _VALID_DL_FEATURE_SETS:
+            return candidate
+
+    # Fallback: scan all segments (longest/most-specific first).
+    for token in _DL_FEATURE_SET_TOKENS:
+        if token in segments:
+            return token
 
     return None
