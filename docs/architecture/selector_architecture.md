@@ -344,6 +344,26 @@ The system now treats:
 
 as a hard runtime error.
 
+## Audited implementation contracts
+
+Current implementation-level contracts (audited in code/tests):
+
+- `src/models.py: StrategySelector.train()`
+  - freezes an exact fit-time `feature_schema_` for inference parity.
+- `src/models.py: StrategySelector._prepare_inference_matrix()`
+  - rebuilds deterministic inference matrices, regenerates optional `*_missing`
+    indicators, validates exact schema equality, and reindexes to fit-time
+    order before scaling.
+- `src/models.py: validate_feature_schema()`
+  - raises hard-fail `RuntimeError` on missing/extra/order-mismatch columns.
+- `src/strategies.py: StrategySelector_Dynamic.generate_signals()`
+  - catches only legitimate `ValueError` fallback cases and intentionally does
+    not swallow schema-drift `RuntimeError`.
+
+This reflects a deliberate anti-corruption design choice:
+
+> selector schema drift is an integrity incident, not a warning.
+
 ---
 
 # Selector Lifecycle
@@ -458,6 +478,6 @@ Current selector-related research includes:
 | Walk-forward evaluation pipeline | `docs/architecture/walkforward_pipeline.md` |
 | DL integration contract | `docs/integration/dl_surface_integration.md` |
 | Analysis/provenance framework | `docs/research/analysis_framework_v2.md` |
+| Selector implementation audit | `docs/research/mpml_selector_audit.md` |
 | Regime taxonomy | `docs/regimes/` |
 | Experimental findings | `RESULTS.md` |
-
