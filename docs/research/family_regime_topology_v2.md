@@ -61,6 +61,7 @@ The objective is now:
    - 7.5 Reinterpreting Transfer Results
    - 7.6 Dense-Overlap Agreement Analysis
    - 7.7 Updated Interpretation
+   - 7.8 Overlap Prevalence and Regime Concentration
 8. Updated Working Model
    - 8.1 The Original Hypothesis
    - 8.2 Evaluation Environment Dominates Topology
@@ -1024,6 +1025,41 @@ This interpretation reconciles all major transfer findings without requiring con
 
 ---
 
+## 7.8 Overlap Prevalence and Regime Concentration
+
+A follow-up overlap analysis was performed using the complete collection of selector-state timelines across all family-regime experiments.
+
+The objective was to determine how frequently meaningful overlap conditions occur and whether overlap behaves as a broadly distributed property of the state space or as a regime-specific phenomenon.
+
+The analysis confirms that dense overlap is relatively uncommon at the global level:
+
+- 21.01% of observations exceed 10% overlap,
+- 11.81% exceed 20% overlap,
+- 7.52% exceed 30% overlap.
+
+However, this aggregate view is misleading because overlap is not distributed uniformly across regimes.
+
+Regime decomposition reveals a remarkably clean separation:
+
+| Regime | ≥10%   | ≥20%   | ≥30%   |
+| ------ | ------ | ------ | ------ |
+| HVR    | 7.87%  | 0.00%  | 0.00%  |
+| HVTF   | 35.39% | 22.55% | 13.23% |
+| LVR    | 3.94%  | 0.00%  | 0.00%  |
+| LVTF   | 36.84% | 24.71% | 16.86% |
+
+The result independently reproduces earlier dense-overlap analyses and substantially increases confidence in the conclusion that meaningful overlap is fundamentally a trend-following phenomenon.
+
+Most importantly:
+
+> No HVR or LVR observations exceed 20% overlap.
+
+Consequently, every observation capable of producing strong overlap-conditioned transfer effects originates from either HVTF or LVTF.
+
+This finding strengthens the interpretation that overlap is closely linked to market structure rather than representing a generic property of the DL prediction surfaces themselves.
+
+---
+
 # 8. Updated Working Model
 
 ## Motivation
@@ -1162,6 +1198,19 @@ At overlap levels above 20%:
 
 HVTF + LVTF account for 100% of observations.
 
+A subsequent prevalence analysis reproduced this result using the full selector-state timeline population.
+
+Across more than 700,000 observations:
+
+- only 11.81% exceeded 20% overlap,
+- only 7.52% exceeded 30% overlap,
+
+yet every observation above the 20% threshold originated from HVTF or LVTF.
+
+This result is important because it demonstrates that dense overlap is not merely enriched within trend-following regimes; it is effectively absent elsewhere.
+
+The practical implication is that overlap-conditioned DL influence should be viewed as a specialized phenomenon associated with trend persistence rather than a property expected throughout the broader MPML state space.
+
 This finding suggests that overlap is not merely a property of the DL model.
 
 Instead, overlap appears closely linked to market structure.
@@ -1273,21 +1322,15 @@ If resolved, it could influence both DL architecture design and future feature e
 
 ## 9.2 What Creates Dense Overlap Episodes?
 
-The overlap analyses explain where transfer effects appear.
+An attempted overlap-persistence analysis produced an unexpected methodological result.
 
-They do not explain why overlap appears.
+Because selector-state timelines are generated within regime-specific experimental universes, simple episode-duration statistics do not directly measure chronological persistence in the underlying market.
 
-Current evidence suggests a relationship between:
+This observation highlights an important limitation of the currently available artifacts.
 
-- trend persistence,
-- sentiment persistence,
-- DL persistence.
+Future work investigating overlap persistence, overlap formation, or overlap decay will likely require reconstruction at the original chronological market level rather than within regime-filtered experiment outputs.
 
-However, this relationship has not yet been studied directly.
-
-A dedicated overlap-generation analysis may therefore represent one of the highest-value future investigations.
-
-Understanding overlap formation could improve both DL modelling and MPML routing logic.
+Consequently, the next generation of overlap research should focus not only on explaining overlap, but also on establishing the correct observational framework for studying it.
 
 ------
 

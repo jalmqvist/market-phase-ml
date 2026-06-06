@@ -1,3 +1,33 @@
+# Archive Notice
+
+**Status:** Historical interpretation document (superseded)
+
+This document captures an earlier conceptual interpretation of Persistent and Reactive market structures developed during the V5 Phase-1 investigations.
+
+Unlike the primary research documentation, this document is intentionally mechanistic and hypothesis-oriented. Its purpose was to explore possible structural explanations for observed selector behavior, trading-strategy interactions, controller dynamics, and emerging ABM-style interpretations.
+
+Since its creation, multiple engineering audits, transfer-validation studies, overlap-conditioned analyses, and family-topology investigations have substantially improved the empirical foundation of the project. Several of the hypotheses discussed here remain plausible and continue to influence ongoing research. However, many interpretations were formulated before:
+
+- transfer-validated MPML analysis,
+- dense-DL overlap studies,
+- overlap-conditioned selector influence analysis,
+- topology-convergence investigations,
+- and the current post-audit MPML working model.
+
+As a result, this document should be viewed primarily as:
+
+- a record of historical reasoning,
+- a source of candidate hypotheses,
+- and a snapshot of the conceptual evolution of the project.
+
+It should not be treated as the authoritative description of current evidence.
+
+Readers seeking the current research consensus should begin with the latest transfer-validated family-topology documentation and associated overlap analyses before consulting this archive.
+
+This document remains valuable because it records many of the ideas that motivated later experiments, including several hypotheses that continue to be active areas of investigation.
+
+---
+
 # Trading-Strategy-Level Interpretation of Persistent vs Reactive Structures
 
 # Relationship To Statistical Findings
