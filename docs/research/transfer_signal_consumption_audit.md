@@ -97,7 +97,9 @@ Given missing concrete run artifacts in this clone, the most defensible interpre
 
 ## Deliverable: Transfer Semantics (one paragraph)
 
-A `persistent_to_reactive_HVR_sentiment_aware` run measures how an MSML DL surface whose provenance encodes training on the persistent family is consumed inside MPML while MPML evaluates and retrains controllers on the reactive target cohort; the run’s effect therefore mixes (i) transferred DL signal availability/content from the source-family artifact and (ii) target-universe retraining dynamics from MPML’s own fold-local model fitting, so causal transfer claims require overlap-conditioned analysis rather than aggregate similarity to the target baseline.
+A `persistent_to_reactive_HVR_sentiment_aware` run measures how an MSML DL surface trained on the persistent family is consumed inside MPML while MPML evaluates on the reactive target cohort.  
+The observed outcome mixes two effects: transferred DL signal availability/content from the source artifact, and target-universe retraining dynamics from MPML’s fold-local model fitting.  
+Because of that mixture, causal transfer claims should rely on overlap-conditioned evidence, not aggregate similarity to the target baseline alone.
 
 ## Deliverable: Transfer Signal Data Flow
 
