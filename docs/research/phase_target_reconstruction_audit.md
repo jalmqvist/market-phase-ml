@@ -4,7 +4,10 @@
 
 **Yes — the `pair, timestamp, phase, next_direction_binary` dataset can be reconstructed directly from source code + broker CSV input data, without rerunning the 16 family experiments and without DL parquet artifacts.**
 
-Reason: `next_direction_binary` is created in `MarketDataPipeline.prepare(...)` (`/tmp/workspace/jalmqvist/market-phase-ml/src/data.py:240-289`) and `phase` is created in `MarketPhaseDetector.detect_phases(...)` (`/tmp/workspace/jalmqvist/market-phase-ml/src/phases.py:169-220`) before optional DL attachment (`/tmp/workspace/jalmqvist/market-phase-ml/main.py:1793-1800`).
+Reason:
+- `next_direction_binary` is created in `MarketDataPipeline.prepare(...)` (`src/data.py:240-289`).
+- `phase` is created in `MarketPhaseDetector.detect_phases(...)` (`src/phases.py:169-220`).
+- Both are created before optional DL attachment (`main.py:1793-1800`).
 
 ## Pipeline Diagram
 
@@ -30,7 +33,7 @@ PhaseMLExperiment.run_* training                     (main.py:1891-1903, src/mod
 
 ## 1) Pipeline Ordering (call chain + file/function names)
 
-1. Entry: `main.py` `if __name__ == '__main__'` → `main(...)` (`/tmp/workspace/jalmqvist/market-phase-ml/main.py:3546-3589`)
+1. Entry: `main.py` `if __name__ == '__main__'` → `main(...)` (`main.py:3546-3589`)
 2. Load/prepare base data: `pipeline.run(pairs=ALL_PAIRS)` (`main.py:1731`)
    - `MarketDataPipeline.download(...)` (`src/data.py:187-238`)
    - `MarketDataPipeline.prepare(...)` (`src/data.py:240-289`)
@@ -50,7 +53,7 @@ PhaseMLExperiment.run_* training                     (main.py:1891-1903, src/mod
 
 ### Influence point A — `DL_SIGNALS_ENABLED`
 
-- Definition: `main.py:109`; runtime flag copied into `dl_runtime_enabled` (`main.py:1454`)
+- Definition: (`main.py:109`); runtime flag copied into `dl_runtime_enabled` (`main.py:1454`)
 - Controls whether `attach_dl_features(...)` is called (`main.py:1793`)
 - Also controls feature-column gating in modeling (`src/models.py:963-964`, `main.py:1993`)
 
@@ -71,7 +74,7 @@ Effect on required fields:
 Effect on required fields:
 - `phase`: **No direct change**
 - `next_direction_binary`: **No direct change**
-- `timestamps`: **No semantic change** (temporary normalize for join key, restored original index)
+- `timestamps`: **No semantic change** (temporary normalization for join key, restored original index)
 - `pair identity`: **No semantic change** (temporary join key column dropped before return)
 
 ### Influence point C — `DL_PREDICTION_ARTIFACT_PATH`
@@ -106,13 +109,13 @@ Shortest code path from source:
 
 1. **Load broker CSV + aggregate D1 OHLCV**
    - `BrokerCSVLoader.load(...)`  
-   - File: `/tmp/workspace/jalmqvist/market-phase-ml/src/data_sources/broker_csv_loader.py:40-89`
+   - File: `src/data_sources/broker_csv_loader.py:40-89`
 2. **Create target**
    - `MarketDataPipeline.prepare(...)`  
-   - File: `/tmp/workspace/jalmqvist/market-phase-ml/src/data.py:240-289`
+   - File: `src/data.py:240-289`
 3. **Create phase**
    - `MarketPhaseDetector.detect_phases(...)`  
-   - File: `/tmp/workspace/jalmqvist/market-phase-ml/src/phases.py:169-220`
+   - File: `src/phases.py:169-220`
 4. **Export columns**
    - `pair` (from pair loop key / filename mapping),
    - `timestamp` (DataFrame index),
@@ -134,7 +137,7 @@ They are derived from market OHLCV data only:
 - `next_direction_binary` from `Close` returns (`src/data.py:274-284`)
 - `phase` from `Open/High/Low/Close/Volume` (`src/phases.py:174-220`)
 
-Family constructs are configured at experiment/run orchestration level (for example `ACTIVE_PAIRS` and run matrix scripting in `/tmp/workspace/jalmqvist/market-phase-ml/run_v5_full_matrix.sh`) and do not define target/phase formulas.
+Family constructs are configured at experiment/run orchestration level (for example `ACTIVE_PAIRS` and run matrix scripting in `run_v5_full_matrix.sh`) and do not define target/phase formulas.
 
 ---
 
@@ -150,4 +153,3 @@ Why:
 ## Final Recommendation
 
 **Proceed with lightweight reconstruction.**
-
