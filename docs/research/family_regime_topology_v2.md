@@ -27,24 +27,29 @@ The objective is now:
 # Table of Contents
 
 1. Executive Summary
+
 2. Why Transfer Experiments Matter
    - 2.1 Transfer Definition
    - 2.2 Why Transfer Validation Was Necessary
+
 3. Experimental Validation
    - 3.1 Validation Philosophy
    - 3.2 Major Audit Findings
    - 3.3 Current Confidence Level
+
 4. Early Pipeline Evidence
    - 4.1 Why Early-Stage Analysis Matters
    - 4.2 Phase-Modelling Experiments
    - 4.3 Family-Level Results
    - 4.4 Interpretation
+
 5. Family Topology Effects
    - 5.1 Family Decomposition
    - 5.2 Aggregate Occupancy Results
    - 5.3 Duration Analysis
    - 5.4 Pair-Level Analysis
    - 5.5 Working Interpretation
+
 6. Transfer Experiments
    - 6.1 Transfer Definition
    - 6.2 Why Transfer Validation Was Necessary
@@ -53,6 +58,7 @@ The objective is now:
    - 6.5 Local Influence Analysis
    - 6.6 Agreement Results
    - 6.7 Transfer Findings
+
 7. DL Overlap Analysis
    - 7.1 Defining DL Overlap
    - 7.2 Overlap Distribution
@@ -62,6 +68,7 @@ The objective is now:
    - 7.6 Dense-Overlap Agreement Analysis
    - 7.7 Updated Interpretation
    - 7.8 Overlap Prevalence and Regime Concentration
+
 8. Updated Working Model
    - 8.1 The Original Hypothesis
    - 8.2 Evaluation Environment Dominates Topology
@@ -70,7 +77,18 @@ The objective is now:
    - 8.5 Why Trend-Following Regimes Matter
    - 8.6 Family Effects Revisited
    - 8.7 Current Best Explanation
-9. Open Questions and Future Directions
+
+9. Family Structure and Learning Geometry
+
+   9.1 Motivation
+   9.2 Revisiting the Origin of the Family Partition
+   9.3 The Failure of Market-Property Explanations
+   9.4 Family Cohesion Analysis
+   9.5 Information Compression Analysis
+   9.6 Sentiment Revisited
+   9.7 Updated Family Interpretation
+
+10. Open Questions and Future Directions
    - 9.1 Why Do Family Effects Appear So Early?
    - 9.2 What Creates Dense Overlap Episodes?
    - 9.3 Can MPML Exploit Overlap Explicitly?
@@ -1283,7 +1301,259 @@ At the time of writing, this represents the highest-confidence interpretation of
 
 ------
 
-# 9. Open Questions and Future Directions
+# 9. Family Structure and Learning Geometry
+
+## Motivation
+
+One of the most persistent questions throughout the project has been:
+
+> Why do Persistent and Reactive families behave differently?
+
+The transfer and topology studies establish that the family effect is real.
+
+However, they do not explain why the effect exists.
+
+Historically, the working assumption was that family behavior might originate from differences in:
+
+- trend structure,
+- volatility structure,
+- sentiment persistence,
+- regime occupancy,
+- state-transition dynamics.
+
+A series of follow-up investigations was therefore performed using the original MPML phase-generation pipeline.
+
+The objective was to identify which properties of the underlying market environment distinguish Persistent and Reactive families.
+
+Unexpectedly, most traditional market-property explanations failed.
+
+The strongest surviving evidence instead points toward differences in learning geometry and information organization.
+
+---
+
+## 9.2 Revisiting the Origin of the Family Partition
+
+A forensic audit of historical MSML research was conducted to reconstruct the origin of the Persistent/Reactive classification.
+
+The investigation examined:
+
+- persistence analyses,
+- pair-quality studies,
+- cross-pair persistence experiments,
+- grouped deep-learning experiments,
+- behavioural-regime construction scripts.
+
+The audit produced an important result.
+
+No evidence was found that the family partition originated from a single persistence score, streak metric, or market statistic.
+
+Instead, the partition appears to have emerged gradually from repeated observations that certain groups of pairs behaved differently during predictive-learning experiments.
+
+In particular:
+
+- grouped DL training experiments,
+- behavioural-regime analyses,
+- ABM development work,
+- early MPML investigations
+
+all contributed evidence supporting a distinction between Persistent and Reactive families.
+
+This finding significantly changes the interpretation of the family partition.
+
+The families should not be viewed as categories derived from a single market statistic.
+
+They should instead be viewed as empirically observed learning environments whose behavioral differences were discovered through repeated experimentation.
+
+---
+
+## 9.3 The Failure of Market-Property Explanations
+
+Several analyses attempted to explain the family partition using conventional market descriptors.
+
+Examples included:
+
+- ADX distributions,
+- ATR distributions,
+- phase occupancy,
+- state-transition dynamics,
+- volatility persistence,
+- trend persistence,
+- sentiment persistence reconstruction.
+
+Most of these analyses produced either weak effects or no consistent family separation.
+
+This result is important.
+
+If the family distinction were driven primarily by conventional market properties, substantial separation would be expected within one or more of these dimensions.
+
+Instead, the evidence suggests that Persistent and Reactive families occupy broadly similar regions of observable market-feature space.
+
+Consequently, the family distinction appears to be less about market levels and more about how information is organized within those environments.
+
+---
+
+## 9.4 Family Cohesion Analysis
+
+A family-cohesion study was performed using reconstructed MPML features.
+
+Each pair was represented using:
+
+- phase occupancy,
+- trend structure,
+- volatility structure,
+- return structure,
+- phase-dynamics statistics,
+- variance-reduction measures.
+
+Distances were then computed within each family.
+
+The results revealed a consistent asymmetry.
+
+Persistent-family pairs formed a tighter cluster than Reactive-family pairs.
+
+Average centroid distances:
+
+Persistent:
+≈ 3.12
+
+Reactive:
+≈ 3.88
+
+The difference is not large enough to support strong statistical claims given the small number of pairs.
+
+However, the effect is consistent with multiple earlier observations.
+
+The result suggests that Persistent-family pairs form a more internally coherent learning environment, whereas Reactive-family pairs exhibit greater internal heterogeneity.
+
+Importantly, family separation was driven primarily by differences in cohesion rather than by large shifts in feature-space location.
+
+In other words:
+
+The families overlap substantially in feature space.
+
+What differs is how tightly they cluster.
+
+---
+
+## 9.5 Information Compression Analysis
+
+A second analysis examined whether MPML phase assignment reduces uncertainty differently across families.
+
+For each pair, the following quantities were estimated:
+
+- target entropy,
+- conditional entropy given phase,
+- mutual information between phase and future direction,
+- relative information gain.
+
+The results revealed another consistent asymmetry.
+
+Average relative information gain:
+
+Persistent:
+≈ 0.000354
+
+Reactive:
+≈ 0.000193
+
+Although the absolute values are small, the relative difference is substantial.
+
+Phase partitioning produces approximately 1.8× more information gain within Persistent families than within Reactive families.
+
+The result is notable because it directly mirrors earlier MPML findings:
+
+- positive Information Effect,
+- positive Partition Effect,
+- positive Variance Effect.
+
+The evidence therefore suggests that MPML phase decomposition is more closely aligned with the predictive structure of Persistent-family environments than with Reactive-family environments.
+
+This finding provides one of the first concrete mechanisms capable of explaining why explicit phase modelling benefits Persistent families while providing little benefit to Reactive families.
+
+---
+
+## 9.6 Sentiment Revisited
+
+The family analyses also motivate a reassessment of sentiment itself.
+
+Earlier stages of the project largely failed to identify robust sentiment alpha.
+
+Repeated signal-search experiments found little evidence that:
+
+sentiment
+→
+future returns
+
+provides a stable predictive relationship.
+
+However, the new family analyses suggest a different interpretation.
+
+Rather than acting primarily as a directional signal, sentiment may function as contextual information describing the structure of the market environment.
+
+Under this interpretation:
+
+sentiment
+→
+market-state information
+→
+improved partitioning
+→
+improved learning
+
+The distinction is subtle but important.
+
+The evidence increasingly suggests that sentiment's value lies not in predicting returns directly, but in helping identify the informational structure within which prediction occurs.
+
+This interpretation remains consistent with:
+
+- the failure of traditional sentiment-alpha searches,
+- the success of family-level analyses,
+- the overlap findings,
+- the transfer experiments.
+
+---
+
+## 9.7 Updated Family Interpretation
+
+The combined evidence supports a revised interpretation of the family partition.
+
+Persistent and Reactive families do not appear to differ primarily because:
+
+- one family trends more,
+- one family is more volatile,
+- one family contains stronger sentiment extremes.
+
+Instead, the families appear to differ in how information is organized.
+
+Current evidence suggests:
+
+Persistent families exhibit:
+
+- greater internal coherence,
+- greater phase informativeness,
+- stronger benefits from explicit partitioning,
+- lower learning variance.
+
+Reactive families exhibit:
+
+- greater internal heterogeneity,
+- weaker phase informativeness,
+- weaker benefits from explicit partitioning,
+- stronger evidence of sub-family structure.
+
+This interpretation is particularly attractive because it simultaneously explains:
+
+- early-stage phase-modelling asymmetry,
+- Information Effect,
+- Partition Effect,
+- Variance Effect,
+- historical grouped-DL observations.
+
+At the time of writing, learning geometry provides the most coherent explanation for the Persistent/Reactive distinction currently available.
+
+---
+
+# 10. Open Questions and Future Directions
 
 ## Motivation
 
@@ -1302,25 +1572,42 @@ Only questions capable of influencing those decisions are considered high priori
 
 ------
 
-## 9.1 Why Do Family Effects Appear So Early?
+## 10.1 Why Do Family Effects Appear So Early?
 
-One of the most important unresolved findings is the early-stage phase-modelling asymmetry.
+This question motivated much of the subsequent family-structure research.
 
-Persistent-family experiments generally benefit from phase modelling.
+Several analyses were performed to determine whether the Persistent/Reactive distinction could be explained using conventional market descriptors such as:
 
-Reactive-family experiments generally do not.
+- trend strength,
+- volatility,
+- phase occupancy,
+- state-transition dynamics,
+- sentiment persistence.
 
-This effect appears before selector construction.
+Most of these explanations received little support.
 
-Consequently, the origin of the family effect may lie within the predictive learning problem itself.
+Instead, the strongest evidence currently points toward differences in learning geometry.
 
-Understanding this mechanism remains a high-priority research objective.
+Two findings are particularly notable:
 
-If resolved, it could influence both DL architecture design and future feature engineering.
+- Persistent families exhibit greater internal cohesion.
+- Persistent families obtain greater information gain from phase partitioning.
+
+Together these findings provide a plausible explanation for the early-stage phase-modelling asymmetry observed throughout the project.
+
+However, the precise mechanisms remain unresolved.
+
+In particular, it is still unclear:
+
+- why ADX×Volatility partitioning aligns more effectively with Persistent environments,
+- whether alternative partitioning schemes exist for Reactive environments,
+- whether the observed family structure reflects deeper behavioral processes within sentiment formation.
+
+Consequently, the question should be regarded as partially answered rather than resolved.
 
 ------
 
-## 9.2 What Creates Dense Overlap Episodes?
+## 10.2 What Creates Dense Overlap Episodes?
 
 An attempted overlap-persistence analysis produced an unexpected methodological result.
 
@@ -1334,7 +1621,7 @@ Consequently, the next generation of overlap research should focus not only on e
 
 ------
 
-## 9.3 Can MPML Exploit Overlap Explicitly?
+## 10.3 Can MPML Exploit Overlap Explicitly?
 
 Current MPML architectures treat overlap largely as an observed property.
 
@@ -1352,68 +1639,72 @@ Future architectures may benefit from exploiting that information directly.
 
 ------
 
-## 9.4 Agent-Based Modelling (ABM)
+## 10.4 Agent-Based Modelling (ABM)
 
-The overlap findings provide an interesting motivation for ABM research.
+Recent family-structure analyses strengthen the motivation for ABM.
 
-The observed chain:
+The Persistent/Reactive distinction increasingly appears to reflect differences in information organization rather than differences in simple market statistics.
 
-trend persistence
-→
-sentiment persistence
-→
-DL persistence
+This raises the possibility that the two families correspond to different underlying behavioral ecosystems.
 
-suggests that market structure may emerge from interacting behavioral populations.
+If so, a successful ABM may require:
 
-ABM provides a natural framework for investigating these dynamics.
+- different persistence mechanisms,
+- different crowd-adjustment dynamics,
+- different sentiment-memory structures,
 
-Unlike purely predictive models, ABM can potentially explain why particular market states arise.
+for different families.
 
-The overlap results therefore strengthen the case for future ABM work.
+One possible interpretation is that Persistent environments contain longer-lived behavioral states, whereas Reactive environments contain faster crowd adaptation.
 
-------
-
-## 9.5 DL Architecture Development
-
-The transfer results imply that current DL surfaces contain meaningful information.
-
-However, the influence appears localized rather than dominant.
-
-Future DL work should therefore focus on increasing:
-
-- signal quality,
-- signal persistence,
-- signal relevance during high-overlap periods.
-
-Simply increasing model complexity is unlikely to be sufficient.
-
-The more important question is whether the model captures the mechanisms responsible for overlap formation.
+The current evidence is insufficient to establish this claim, but the family analyses provide a concrete set of behavioral hypotheses that future ABM work can investigate.
 
 ------
 
-## 9.6 MPML Architecture Development
+## 10.5 DL Architecture Development
 
-The selector currently appears highly effective at adapting to its evaluation environment.
+The family analyses suggest that future DL development should focus not only on signal quality but also on representation quality.
 
-This is a strength.
+The most successful experiments to date appear to exploit differences in information organization rather than differences in directional alpha.
 
-However, the transfer analyses also suggest that potentially valuable DL information may be diluted by global adaptation effects.
+This raises several new questions:
 
-Future MPML research should therefore investigate:
+- What latent structures are being captured by successful family-aware models?
+- Why do Persistent families benefit more from partitioning?
+- Can representations be learned that expose useful structure within Reactive environments?
 
-- stronger utilization of DL information,
-- confidence-aware routing,
-- overlap-aware strategy allocation,
-- regime-aware transfer weighting.
+These questions may prove more important than incremental improvements in predictive accuracy alone.
 
-The goal is not necessarily to increase DL influence.
+---
 
-The goal is to use DL influence where it is most informative.
+## 10.6 What Partitions Reactive Families?
+
+One of the most important new questions emerging from the family-structure analyses is:
+
+> If ADX×Volatility provides a useful partition for Persistent families, what provides a useful partition for Reactive families?
+
+Current MPML phase definitions were designed around:
+
+- trend strength,
+- volatility level.
+
+These dimensions appear reasonably aligned with Persistent-family structure.
+
+However, the information-compression analyses suggest that the same partitioning scheme is substantially less informative for Reactive families.
+
+Several possibilities remain open:
+
+- alternative volatility measures,
+- sentiment-dynamics measures,
+- persistence-based state variables,
+- overlap-aware state variables,
+- behavioral-state representations.
+
+At present, this question may represent the most direct path toward improving both MPML and future ABM designs.
 
 ------
 
-## 9.7 Final Assessment
+## 10.7 Final Assessment
 
 At the beginning of the project, the central question was:
 
