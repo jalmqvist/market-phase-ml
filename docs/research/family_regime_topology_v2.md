@@ -89,13 +89,12 @@ The objective is now:
    9.7 Updated Family Interpretation
 
 10. Open Questions and Future Directions
-   - 9.1 Why Do Family Effects Appear So Early?
-   - 9.2 What Creates Dense Overlap Episodes?
-   - 9.3 Can MPML Exploit Overlap Explicitly?
-   - 9.4 Agent-Based Modelling (ABM)
-   - 9.5 DL Architecture Development
-   - 9.6 MPML Architecture Development
-   - 9.7 Final Assessment
+   - 10.1 What Partitions Reactive families?
+   - 10.2 What Creates Dense Overlap Episodes?
+   - 10.3 Can MPML Exploit Overlap Explicitly?
+   - 10.4 Agent-Based Modelling (ABM)
+   - 10.5 DL Architecture Development
+   - 10.6 Final Assessment
 
 ---
 
@@ -1553,6 +1552,237 @@ At the time of writing, learning geometry provides the most coherent explanation
 
 ---
 
+# 9.8 Reactive Sub-Families and Volatility-Mediated Persistence
+
+## Motivation
+
+The learning-geometry analyses established that:
+
+- Persistent families exhibit greater phase informativeness,
+- Persistent families benefit more from ADX×Volatility partitioning,
+- Reactive families appear substantially more heterogeneous.
+
+These findings immediately raise a new question:
+
+> Is Reactive itself a coherent family?
+
+Several historical observations suggested the answer might be no.
+
+Repeated clustering tendencies involving:
+
+- CHF pairs,
+- JPY pairs,
+
+appeared throughout earlier exploratory studies but were never formally investigated because of concerns regarding excessive partitioning.
+
+The learning-geometry results provided the first strong justification for revisiting this question.
+
+------
+
+## Reactive Sub-Family Investigation
+
+A dedicated Reactive-family decomposition was performed.
+
+The Reactive family was partitioned into:
+
+### CHF subgroup
+
+- EURCHF
+- USDCHF
+
+### JPY subgroup
+
+- EURJPY
+- GBPJPY
+- USDJPY
+
+Several analyses were then repeated:
+
+- information-gain studies,
+- volatility-state studies,
+- sentiment-state studies,
+- volatility-geometry reconstruction,
+- interaction analyses.
+
+The objective was not to discover additional partitions.
+
+The objective was to determine whether structure previously attributed to the Reactive family was in fact being averaged across distinct behavioral environments.
+
+------
+
+## Volatility Geometry
+
+The strongest result emerged from volatility-state analysis.
+
+CHF pairs exhibited a highly coherent volatility geometry.
+
+Both:
+
+- EURCHF
+- USDCHF
+
+produced the same qualitative structure:
+
+```
+MID volatility
+    best
+
+VERY_HIGH volatility
+    worst
+```
+
+The effect replicated independently across both pairs.
+
+Reactive-JPY pairs did not exhibit the same level of consistency.
+
+This was the first clear evidence that the Reactive family contains meaningful internal structure.
+
+------
+
+## Sentiment and Volatility
+
+Several follow-up analyses investigated:
+
+```
+Volatility × Sentiment
+```
+
+interactions.
+
+The results did not support a strong CHF-specific sentiment interaction.
+
+Control groups exhibited interaction strengths comparable to CHF.
+
+This finding weakened the hypothesis that Reactive-family behavior is primarily driven by sentiment-conditioned volatility effects.
+
+The evidence instead suggested that volatility itself was acting as a proxy for a deeper state variable.
+
+------
+
+## CHF Mechanism Analysis
+
+A dedicated mechanism investigation examined:
+
+- trend structure,
+- sentiment stability,
+- regime composition,
+- extreme-crowding persistence,
+
+across CHF volatility states.
+
+Several candidate explanations received little support:
+
+- pure trend strength,
+- simple volatility effects,
+- sentiment-interaction effects.
+
+However, one variable consistently tracked CHF performance:
+
+```
+extreme_streak_80
+```
+
+The longest extreme-crowding streaks occurred within:
+
+```
+MID volatility
+```
+
+while the shortest occurred within:
+
+```
+VERY_LOW
+VERY_HIGH
+```
+
+volatility states.
+
+Remarkably, this pattern closely mirrored the observed predictive geometry.
+
+------
+
+## Volatility-Mediated Persistence
+
+The combined evidence suggests a possible reinterpretation of the CHF results.
+
+Rather than:
+
+```
+volatility
+    →
+prediction
+```
+
+the relationship may instead be:
+
+```
+volatility
+    →
+crowd-state persistence
+    →
+prediction
+```
+
+Under this interpretation:
+
+- very low volatility fails to generate meaningful crowd commitment,
+- moderate volatility sustains persistent extreme crowd states,
+- very high volatility disrupts those states.
+
+The resulting geometry naturally produces:
+
+```
+MID volatility
+    positive
+
+VERY_HIGH volatility
+    negative
+```
+
+without requiring volatility itself to possess predictive power.
+
+Control groups did not exhibit the same persistence geometry, increasing confidence that the effect is not a generic consequence of volatility partitioning.
+
+------
+
+## Updated Working Interpretation
+
+The original family interpretation proposed:
+
+```
+Persistent
+    = persistence
+
+Reactive
+    = volatility
+```
+
+The current evidence supports a more nuanced view.
+
+A more accurate interpretation may be:
+
+```
+Persistent
+    = crowd-state persistence
+
+Reactive-CHF
+    = volatility-mediated persistence
+
+Reactive-JPY
+    = unresolved
+```
+
+Although preliminary, this framework is attractive because it explains:
+
+- the learning-geometry asymmetry,
+- the success of ADX×Volatility partitioning within Persistent families,
+- the emergence of CHF volatility geometry,
+- the historical persistence etymology of the family partition.
+
+Most importantly, it suggests that both families may ultimately be governed by related persistence mechanisms rather than fundamentally different market processes.
+
+---
+
 # 10. Open Questions and Future Directions
 
 ## Motivation
@@ -1572,38 +1802,105 @@ Only questions capable of influencing those decisions are considered high priori
 
 ------
 
-## 10.1 Why Do Family Effects Appear So Early?
+## 10.1 What Partitions Reactive Families?
 
-This question motivated much of the subsequent family-structure research.
+One of the most important developments of the family-structure research is the realization that the original Persistent/Reactive distinction is unlikely to represent the full behavioral topology of the sentiment environment.
 
-Several analyses were performed to determine whether the Persistent/Reactive distinction could be explained using conventional market descriptors such as:
+The learning-geometry analyses demonstrated that:
 
-- trend strength,
-- volatility,
-- phase occupancy,
-- state-transition dynamics,
-- sentiment persistence.
+- Persistent families exhibit greater information compression under ADX×Volatility partitioning.
+- Persistent families benefit more from explicit phase modelling.
+- Reactive families exhibit substantially greater internal heterogeneity.
 
-Most of these explanations received little support.
+Subsequent Reactive-family investigations strengthened this interpretation.
 
-Instead, the strongest evidence currently points toward differences in learning geometry.
+In particular, CHF pairs repeatedly exhibited coherent behavioral structure that was not shared uniformly across the broader Reactive family.
 
-Two findings are particularly notable:
+Examples include:
 
-- Persistent families exhibit greater internal cohesion.
-- Persistent families obtain greater information gain from phase partitioning.
+- replicated volatility geometry,
+- elevated information gain,
+- volatility-mediated persistence,
+- stable CHF-specific state structure.
 
-Together these findings provide a plausible explanation for the early-stage phase-modelling asymmetry observed throughout the project.
+The strongest CHF result emerged from a series of interaction analyses examining:
 
-However, the precise mechanisms remain unresolved.
+```text
+Volatility State
+    ×
+Extreme-State Lifetime
+```
 
-In particular, it is still unclear:
+Neither volatility nor lifetime alone provided a satisfactory explanation of CHF behavior.
 
-- why ADX×Volatility partitioning aligns more effectively with Persistent environments,
-- whether alternative partitioning schemes exist for Reactive environments,
-- whether the observed family structure reflects deeper behavioral processes within sentiment formation.
+However, their interaction produced substantially greater information compression than either component individually.
 
-Consequently, the question should be regarded as partially answered rather than resolved.
+The effect survived:
+
+- bucket consolidation,
+- pair-level decomposition,
+- independent validation across EURCHF and USDCHF.
+
+This result suggests that CHF environments may possess a state geometry of the form:
+
+```text
+Extreme-State Lifetime
+    ×
+Volatility Context
+```
+
+which is structurally analogous to the:
+
+```text
+Trend
+    ×
+Volatility
+```
+
+decomposition previously shown to be effective within Persistent families.
+
+The resulting interpretation is noteworthy because it implies that both Persistent and CHF-reactive environments may be governed by related persistence mechanisms while differing in the specific state variables that organize their learning geometry.
+
+Current evidence therefore supports the tentative framework:
+
+```text
+Persistent
+    →
+Trend Persistence
+    ×
+Volatility
+
+Reactive-CHF
+    →
+Extreme-State Persistence
+    ×
+Volatility
+
+Reactive-JPY
+    →
+Unknown
+```
+
+The Reactive-JPY subgroup remains unresolved.
+
+Unlike CHF pairs, JPY-reactive environments have not yet revealed a stable organizing variable.
+
+Several candidates remain under active investigation:
+
+- overlap geometry,
+- sentiment persistence,
+- sentiment entropy,
+- transition dynamics,
+- crowd-state lifetime distributions,
+- alternative volatility representations.
+
+Consequently, the central open question remains:
+
+> If ADX×Volatility provides a useful partition for Persistent families, and Lifetime×Volatility provides a useful partition for CHF-reactive environments, what provides a useful partition for Reactive-JPY environments?
+
+At the time of writing, answering this question represents the single most important open problem for future MPML, MSML, and ABM development.
+
+More broadly, the emerging evidence suggests that the current Persistent/Reactive partition may eventually evolve into a richer taxonomy organized around distinct information geometries rather than a simple binary family classification.
 
 ------
 
@@ -1675,36 +1972,9 @@ This raises several new questions:
 
 These questions may prove more important than incremental improvements in predictive accuracy alone.
 
----
-
-## 10.6 What Partitions Reactive Families?
-
-One of the most important new questions emerging from the family-structure analyses is:
-
-> If ADX×Volatility provides a useful partition for Persistent families, what provides a useful partition for Reactive families?
-
-Current MPML phase definitions were designed around:
-
-- trend strength,
-- volatility level.
-
-These dimensions appear reasonably aligned with Persistent-family structure.
-
-However, the information-compression analyses suggest that the same partitioning scheme is substantially less informative for Reactive families.
-
-Several possibilities remain open:
-
-- alternative volatility measures,
-- sentiment-dynamics measures,
-- persistence-based state variables,
-- overlap-aware state variables,
-- behavioral-state representations.
-
-At present, this question may represent the most direct path toward improving both MPML and future ABM designs.
-
 ------
 
-## 10.7 Final Assessment
+## 10.6 Final Assessment
 
 At the beginning of the project, the central question was:
 
