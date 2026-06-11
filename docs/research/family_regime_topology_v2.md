@@ -1745,41 +1745,84 @@ Control groups did not exhibit the same persistence geometry, increasing confide
 
 ------
 
+### Consensus Maturity and Reversal Geometry
+
+A dedicated investigation was performed to characterize the lifecycle of extreme crowding states within Reactive-JPY environments.
+
+The strongest result was the discovery that reversal probability depends heavily on consensus maturity.
+
+Across all families:
+
+- immature consensus states predominantly terminated through reversal,
+- mature consensus states predominantly terminated through threshold exits.
+
+The effect was particularly informative within JPY pairs because JPY environments exhibited substantially lower rates of consensus maturation than either CHF or Persistent families.
+
+Importantly, the analysis revealed that family differences are not driven by the longevity of extreme states themselves.
+
+Instead, the critical variable is the probability that a newly formed consensus survives long enough to become established.
+
+This finding provides a direct behavioral mechanism capable of explaining the elevated reversal rates historically observed within JPY environments.
+
+The result also shifts the interpretation of sentiment.
+
+Rather than acting primarily as a directional signal, sentiment increasingly appears to define a behavioral state space whose transition dynamics determine future market behavior.
+
+---
+
 ## Updated Working Interpretation
 
 The original family interpretation proposed:
 
-```
 Persistent
-    = persistence
+→ persistence
 
 Reactive
-    = volatility
-```
+→ volatility
 
-The current evidence supports a more nuanced view.
+Subsequent investigations suggest a more nuanced picture.
 
-A more accurate interpretation may be:
+Current evidence supports:
 
-```
 Persistent
-    = crowd-state persistence
+→ crowd-state persistence
 
 Reactive-CHF
-    = volatility-mediated persistence
+→ volatility-mediated persistence
 
 Reactive-JPY
-    = unresolved
-```
+→ consensus-state persistence
 
-Although preliminary, this framework is attractive because it explains:
+The JPY investigation produced several notable findings.
 
-- the learning-geometry asymmetry,
-- the success of ADX×Volatility partitioning within Persistent families,
-- the emergence of CHF volatility geometry,
-- the historical persistence etymology of the family partition.
+First, JPY sentiment extremes are overwhelmingly characterized by crowd-short positioning, whereas CHF extremes are overwhelmingly characterized by crowd-long positioning.
 
-Most importantly, it suggests that both families may ultimately be governed by related persistence mechanisms rather than fundamentally different market processes.
+Second, reversal probability appears to be governed primarily by the maturity of the underlying consensus state rather than by external timing variables.
+
+Young consensus states frequently terminate through sentiment reversals, while mature consensus states predominantly decay through threshold exits.
+
+Several candidate external drivers were investigated, including high-impact news events, session structure, and other market-timing effects. None produced explanatory power comparable to consensus maturity itself.
+
+The evidence therefore suggests that JPY environments may be better understood as sentiment-state systems whose dynamics are governed primarily by:
+
+Consensus Formation
+→ Consensus Maturation
+→ Consensus Decay
+
+rather than by isolated external catalysts.
+
+A final exploratory analysis identified a positive relationship between recent price persistence and consensus maturation probability. Young consensus states occurring within stronger trend environments were materially more likely to mature than equivalent states occurring within weak-trend environments.
+
+Although preliminary, this result suggests that price persistence may influence the evolution of sentiment states rather than acting as a direct driver of reversals.
+
+The emerging interpretation is therefore:
+
+Price Persistence
+→ Consensus Maturation
+→ Exit Mechanism
+→ Reversal Probability
+
+Further work is required to establish causality and to determine whether trend alignment provides additional explanatory power.
 
 ---
 
@@ -1878,7 +1921,7 @@ Volatility
 
 Reactive-JPY
     →
-Unknown
+Consensus-state dynamics (provisional)
 ```
 
 The Reactive-JPY subgroup remains unresolved.
@@ -1896,7 +1939,7 @@ Several candidates remain under active investigation:
 
 Consequently, the central open question remains:
 
-> If ADX×Volatility provides a useful partition for Persistent families, and Lifetime×Volatility provides a useful partition for CHF-reactive environments, what provides a useful partition for Reactive-JPY environments?
+> If ADX×Volatility provides a useful partition for Persistent families, and Lifetime×Volatility provides a useful partition for CHF-reactive environments, what governs the evolution of Reactive-JPY consensus states?
 
 At the time of writing, answering this question represents the single most important open problem for future MPML, MSML, and ABM development.
 
