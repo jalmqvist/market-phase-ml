@@ -214,6 +214,35 @@ The integration layer was designed to tolerate:
 
 ---
 
+## Behavioral Surface Registry
+
+MPML Phase A introduces a **Behavioral Surface Registry** that replaces
+hardcoded regime assumptions with a metadata-driven abstraction.
+
+```python
+from mpml.behavioral import registry
+
+surface = registry.load("trend_vol")
+state   = surface.get_state("LVTF")
+print(state.display_name)
+# 'Low-Volatility Trend-Following'
+```
+
+Built-in surfaces:
+
+| Surface ID | States |
+|---|---|
+| `trend_vol` | LVTF, HVTF, LVR, HVR |
+| `reactive_jpy` | JPY_NON_EXTREME, JPY_CONSENSUS_YOUNG, JPY_CONSENSUS_MATURING, JPY_CONSENSUS_MATURE |
+
+The `--behavioral-surface` CLI argument selects the active surface
+(default: `trend_vol`).  Existing runs are unaffected.
+
+See [`docs/behavioral/behavioral_surface_registry.md`](docs/behavioral/behavioral_surface_registry.md)
+and [`docs/MPML_Architecture_Roadmap.md`](docs/MPML_Architecture_Roadmap.md) for details.
+
+---
+
 # Key Findings
 
 ## Classical MPML Findings
