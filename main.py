@@ -54,6 +54,8 @@ from src.dl_config import (
 from src.dl_surface_loader import VALID_DL_REGIMES
 from src.dl_daily_features import load_and_aggregate_d1, D1_FEATURE_COLS
 from src.experiment_surface_runtime import build_runtime_experiment_surface
+from mpml.behavioral import registry as behavioral_registry
+from mpml.behavioral.compat import build_behavioral_surface_manifest_block
 from experiment_semantics import (
     VALID_EXPERIMENT_VARIANTS,
     build_experiment_metadata_from_variant,
@@ -1442,6 +1444,7 @@ def main(
     experiment_generation: str | None = None,
     experiment_variant: str | None = None,
     experiment_seed: int | None = None,
+    behavioral_surface: str | None = None,
 ):
     resolved_seed = resolve_experiment_seed(
         cli_seed=experiment_seed,
@@ -1452,6 +1455,23 @@ def main(
     dl_surface = dict(DL_SIGNAL_SURFACE)
     dl_regime = str(dl_surface.get("dl_regime", "")).strip().upper()
     dl_runtime_enabled = bool(DL_SIGNALS_ENABLED)
+
+    # ------------------------------------------------------------------
+    # Behavioral Surface resolution
+    #
+    # Precedence: CLI --behavioral-surface > BEHAVIORAL_SURFACE env > "trend_vol"
+    # Trend/Vol remains the default; existing runs are unaffected.
+    # ------------------------------------------------------------------
+    _resolved_behavioral_surface_id = (
+        behavioral_surface
+        or os.getenv("BEHAVIORAL_SURFACE", "trend_vol").strip()
+        or "trend_vol"
+    )
+    if _resolved_behavioral_surface_id not in behavioral_registry:
+        raise ValueError(
+            f"Unknown --behavioral-surface {_resolved_behavioral_surface_id!r}. "
+            f"Available: {behavioral_registry.available()}"
+        )
     # ----------------------------------------------------------
     # DL artifact resolution
     #
@@ -1627,6 +1647,10 @@ def main(
         },
         "experiment": experiment_meta,
         "experiment_surface": experiment_surface,
+        "behavioral_surface": build_behavioral_surface_manifest_block(
+            surface_id=_resolved_behavioral_surface_id,
+            state_id=dl_regime if dl_regime else None,
+        ),
         "market_data_source": market_data_source,
         "market_data_root": market_data_root,
         "market_data_timezone": market_data_timezone,
@@ -3580,10 +3604,23 @@ if __name__ == '__main__':
             f"> default ({DEFAULT_EXPERIMENT_SEED})."
         ),
     )
+    parser.add_argument(
+        "--behavioral-surface",
+        type=str,
+        default=None,
+        choices=behavioral_registry.available(),
+        help=(
+            "Behavioral Surface to use for this run. "
+            "Precedence: --behavioral-surface > BEHAVIORAL_SURFACE env > 'trend_vol'. "
+            f"Available: {behavioral_registry.available()}. "
+            "Trend/Vol (trend_vol) is the default and preserves existing run behaviour."
+        ),
+    )
     args = parser.parse_args()
     main(
         output_dir=args.output_dir,
         experiment_generation=args.experiment_generation,
         experiment_variant=args.experiment_variant,
         experiment_seed=args.experiment_seed,
+        behavioral_surface=args.behavioral_surface,
     )
