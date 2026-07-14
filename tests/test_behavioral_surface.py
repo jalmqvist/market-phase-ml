@@ -33,6 +33,7 @@ from mpml.behavioral.compat import (
     build_behavioral_surface_manifest_block,
 )
 from mpml.behavioral import registry as global_registry
+from mpml.behavioral.registry import default_registry as _default_registry
 
 
 # ---------------------------------------------------------------------------
@@ -284,9 +285,9 @@ class TestDefaultRegistry(unittest.TestCase):
         self.assertIn("reactive_jpy", default_registry)
 
     def test_global_registry_alias(self):
-        # mpml.behavioral.registry (imported as global_registry) exposes
-        # default_registry through the module attribute
-        self.assertIs(global_registry, default_registry)
+        # mpml.behavioral exposes default_registry through the module-level
+        # `registry` attribute; verify they are the same object.
+        self.assertIs(global_registry, _default_registry)
 
 
 # ---------------------------------------------------------------------------

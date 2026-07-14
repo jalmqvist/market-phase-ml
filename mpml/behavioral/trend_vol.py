@@ -44,7 +44,6 @@ _STATES: list[BehavioralState] = [
         metadata={
             "volatility": "low",
             "trend": "trending",
-            "aliases": [],
         },
     ),
     BehavioralState(
@@ -59,7 +58,6 @@ _STATES: list[BehavioralState] = [
         metadata={
             "volatility": "high",
             "trend": "trending",
-            "aliases": [],
         },
     ),
     BehavioralState(

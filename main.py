@@ -1465,7 +1465,6 @@ def main(
     _resolved_behavioral_surface_id = (
         behavioral_surface
         or os.getenv("BEHAVIORAL_SURFACE", "trend_vol").strip()
-        or "trend_vol"
     )
     if _resolved_behavioral_surface_id not in behavioral_registry:
         raise ValueError(

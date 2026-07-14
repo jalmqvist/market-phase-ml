@@ -117,8 +117,8 @@ class BehavioralSurface(ABC):
         ----------
         state_id : str
             Canonical state identifier.  Implementations may optionally
-            accept compatibility aliases (e.g. ``"HVR"`` alongside the
-            canonical ``"HVMR"``).
+            accept compatibility aliases (e.g. ``"HVMR"`` as an alias for
+            canonical ``"HVR"``).
 
         Returns
         -------

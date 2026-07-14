@@ -43,7 +43,6 @@ _STATES: list[BehavioralState] = [
         ),
         metadata={
             "consensus_stage": "none",
-            "aliases": [],
         },
     ),
     BehavioralState(
@@ -56,7 +55,6 @@ _STATES: list[BehavioralState] = [
         ),
         metadata={
             "consensus_stage": "young",
-            "aliases": [],
         },
     ),
     BehavioralState(
@@ -70,7 +68,6 @@ _STATES: list[BehavioralState] = [
         ),
         metadata={
             "consensus_stage": "maturing",
-            "aliases": [],
         },
     ),
     BehavioralState(
@@ -84,7 +81,6 @@ _STATES: list[BehavioralState] = [
         ),
         metadata={
             "consensus_stage": "mature",
-            "aliases": [],
         },
     ),
 ]
