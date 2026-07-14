@@ -183,6 +183,48 @@ constructed.
 
 ---
 
+## Behavioral Surface Contract
+
+Behavioral Surfaces are produced by BSVE/MSML and consumed by MPML.
+
+MPML does not construct Behavioral Surfaces itself.
+
+Instead, MPML depends only on a stable metadata contract describing each
+surface.
+
+Every Behavioral Surface should expose, at minimum,
+
+```
+surface_id
+
+surface_version
+
+display_name
+
+states[]
+
+metadata
+```
+
+Every Behavioral State should expose
+
+```
+state_id
+
+display_name
+
+description
+
+metadata
+```
+
+MPML should treat these objects as immutable research artifacts.
+
+Their internal construction, calibration and validation remain the
+responsibility of BSVE/MSML.
+
+---
+
 # 5. Behavioral Surface Registry
 
 Behavioral Surfaces should be loaded through a registry.
@@ -628,6 +670,72 @@ Each repository owns exactly one layer.
 
 ---
 
+# Behavioral Surface Ownership
+
+Behavioral Surfaces originate entirely within BSVE/MSML.
+
+Examples include
+
+- Trend/Vol Surface
+- Reactive JPY Surface
+- Reactive CHF Surface
+- Persistent Surface
+
+MPML should never duplicate the logic used to generate or calibrate these
+surfaces.
+
+Instead, MPML consumes Behavioral Surface metadata together with Behavioral
+State labels produced by BSVE/MSML.
+
+Future Behavioral Surfaces should become available to MPML simply by
+registering their metadata rather than modifying MPML algorithms.
+
+---
+
+## Behavioral Surface Manifest
+
+Each Behavioral Surface should be accompanied by metadata describing its
+identity and provenance.
+
+Suggested fields include
+
+```
+surface_id
+
+surface_version
+
+dataset_version
+
+calibration_version
+
+state_spec_version
+
+created
+
+description
+```
+
+MPML should preserve this metadata in experiment manifests wherever practical,
+allowing downstream analyses to trace recommendations back to the exact
+Behavioral Surface used during evaluation.
+
+---
+
+## State Naming
+
+Behavioral State identifiers should be treated as stable external contracts.
+
+Where historical naming inconsistencies exist (for example HVR vs HVMR),
+compatibility aliases may be provided internally.
+
+However, Behavioral Surface registries should expose a single canonical
+identifier for each state.
+
+Future Behavioral Surfaces should avoid introducing multiple names for the
+same market state.
+
+---
+
 # 17. Planned Evolution
 
 ## Phase A
@@ -709,3 +817,42 @@ behavioral strategy recommendation engine.
 
 MRML can then focus exclusively on the independent problem of portfolio risk
 management and live execution.
+
+---
+
+# Appendix A — Current Behavioral Surfaces
+
+TrendVolSurface
+
+States
+
+```
+LVTF
+HVTF
+LVR
+HVR
+```
+
+ReactiveJPYSurface
+
+States
+
+```
+JPY_NON_EXTREME
+JPY_CONSENSUS_YOUNG
+JPY_CONSENSUS_MATURING
+JPY_CONSENSUS_MATURE
+```
+
+ReactiveCHFSurface
+
+Reserved
+
+PersistentSurface
+
+Reserved
+
+This appendix documents only the public metadata exposed by each Behavioral
+Surface.
+
+Behavioral definitions remain the responsibility of BSVE/MSML.
