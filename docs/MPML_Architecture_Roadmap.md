@@ -643,27 +643,11 @@ MSML
 
 ↓
 
-Predictive Validation
+Behavioral Prediction Artifacts
 
 ↓
 
 MPML
-
-↓
-
-Strategy Recommendation
-
-↓
-
-MRML
-
-↓
-
-Risk Management
-
-↓
-
-Broker Execution
 ```
 
 Each repository owns exactly one layer.
@@ -738,54 +722,149 @@ same market state.
 
 # 17. Planned Evolution
 
-## Phase A
+## Phase A (Completed)
 
 Behavioral Surface Registry
 
-- Surface abstraction
-- Registry
+Objective
+
+Introduce Behavioral Surfaces as first-class objects while preserving existing
+Trend/Vol functionality.
+
+Deliverables
+
+- Behavioral Surface abstraction
+- Behavioral State abstraction
+- Behavioral Surface Registry
 - Trend/Vol implementation
-- Reactive-JPY implementation
+- Reactive-JPY example implementation
+- Registry-backed manifests
+- Backward compatibility
+
+This phase intentionally preserves existing runtime behaviour.
 
 ---
 
 ## Phase B
 
-Strategy Registry
+Behavioral Surface Integration
 
-- Strategy metadata
-- Supported surfaces
-- Supported states
+Objective
+
+Replace Trend/Vol-specific runtime assumptions with Behavioral Surface
+metadata.
+
+The Behavioral Surface Registry introduced in Phase A establishes the required
+abstractions, but MPML still propagates Trend/Vol concepts (for example
+`DL_REGIME`) throughout the runtime.
+
+This phase removes those assumptions and allows the runtime to operate on
+
+```
+surface_id
+
++
+
+state_id
+```
+
+rather than
+
+```
+LVTF
+
+HVTF
+
+LVR
+
+HVR
+```
+
+Deliverables
+
+- Surface-aware runtime
+- Behavioral Surface propagated through experiment pipeline
+- Behavioral State propagated through selector pipeline
+- Surface-aware manifests
+- Surface-aware artifact loading
+- Surface-aware experiment metadata
+
+No Strategy Registry work is included in this phase.
 
 ---
 
 ## Phase C
 
-Recommendation Engine
+Strategy Registry
 
-- Ranked recommendations
-- Recommendation object
-- Recommendation export
+Objective
+
+Generalize strategy selection using metadata.
+
+Deliverables
+
+- Strategy metadata
+- Strategy Registry
+- Supported Behavioral Surfaces
+- Supported Behavioral States
+- Strategy compatibility metadata
+
+Strategies become metadata-driven objects rather than hardcoded selector
+choices.
 
 ---
 
 ## Phase D
 
-Experiment Metadata
+Recommendation Engine
 
-- Rich manifests
-- Provenance
-- Dataset traceability
+Objective
+
+Generate metadata-driven strategy recommendations.
+
+Deliverables
+
+- Ranked recommendations
+- Recommendation object
+- Recommendation export
+- Generic ranking engine
+
+Recommendations become the primary interface consumed by MRML.
 
 ---
 
 ## Phase E
 
+Experiment Metadata
+
+Objective
+
+Strengthen experiment provenance.
+
+Deliverables
+
+- Rich manifests
+- Dataset traceability
+- Behavioral Surface provenance
+- Strategy Registry provenance
+- Recommendation provenance
+
+---
+
+## Phase F
+
 MRML Integration
 
-- Stable Recommendation interface
-- Portfolio execution
-- Risk management
+Objective
+
+Expose a stable recommendation interface.
+
+Deliverables
+
+- Recommendation API
+- Portfolio integration
+- Risk-management boundary
+- Stable repository interface
 
 ---
 
