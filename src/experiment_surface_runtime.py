@@ -199,6 +199,9 @@ def build_runtime_experiment_surface(
     dl_artifact_path: Path | None,
     experiment_factors: dict[str, Any],
     artifact_metadata: Mapping[str, Any] | None = None,
+    behavioral_surface_id: str | None = None,
+    behavioral_surface_version: str | None = None,
+    behavioral_state_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Build canonical runtime ``experiment_surface`` for manifest emission.
@@ -206,6 +209,21 @@ def build_runtime_experiment_surface(
     Field precedence:
       1) Explicit artifact metadata (caller-provided, parquet kv metadata, sidecar)
       2) Canonical runtime configuration (surface dict, experiment factors, env)
+
+    Parameters
+    ----------
+    behavioral_surface_id : str | None
+        Canonical Behavioral Surface identifier (e.g. ``"trend_vol"``,
+        ``"reactive_jpy"``).  When provided, emitted in the returned dict
+        as ``"behavioral_surface"``.
+    behavioral_surface_version : str | None
+        Semantic version string for the Behavioral Surface (e.g. ``"1.0.0"``).
+        When provided, emitted as ``"behavioral_surface_version"``.
+    behavioral_state_id : str | None
+        Canonical state identifier within the Behavioral Surface for this run
+        (e.g. ``"LVTF"`` for TrendVol).  When provided, emitted as
+        ``"behavioral_state"``.  ``None`` for surfaces that do not map from
+        DL artifact regimes (e.g. ``"reactive_jpy"``).
     """
     merged_metadata: dict[str, Any] = {}
     merged_metadata.update(_flatten_metadata(dict(artifact_metadata or {})))
@@ -362,7 +380,7 @@ def build_runtime_experiment_surface(
 
     imputation_awareness = _resolve_imputation_awareness(experiment_factors)
 
-    return {
+    result: dict[str, Any] = {
         "surface_semantics_version": surface_semantics_version,
         "surface_source": "artifact_introspection",
         "training_pair_family": training_pair_family,
@@ -378,3 +396,15 @@ def build_runtime_experiment_surface(
         "target_horizon": target_horizon,
         "artifact_model": artifact_model,
     }
+
+    # Behavioral Surface provenance — emitted when caller provides surface identity.
+    # These fields carry the canonical surface representation through the manifest
+    # without converting back to Trend/Vol-specific regime strings.
+    if behavioral_surface_id is not None:
+        result["behavioral_surface"] = behavioral_surface_id
+    if behavioral_surface_version is not None:
+        result["behavioral_surface_version"] = behavioral_surface_version
+    if behavioral_state_id is not None:
+        result["behavioral_state"] = behavioral_state_id
+
+    return result

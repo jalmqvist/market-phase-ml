@@ -32,6 +32,7 @@ from mpml.behavioral.compat import (
     dl_regime_to_state,
     phase_label_to_state,
     build_behavioral_surface_manifest_block,
+    resolve_behavioral_state_for_surface,
 )
 
 # The default global registry — pre-populated with built-in surfaces.
@@ -45,4 +46,5 @@ __all__ = [
     "dl_regime_to_state",
     "phase_label_to_state",
     "build_behavioral_surface_manifest_block",
+    "resolve_behavioral_state_for_surface",
 ]
