@@ -225,6 +225,32 @@ responsibility of BSVE/MSML.
 
 ---
 
+### DL Prediction Artifact Contract
+
+Behavioral prediction artifacts produced by MSML expose the following canonical identity:
+
+```
+surface_id
+surface_version
+state_id
+```
+
+together with
+
+```
+model
+target_horizon
+feature_set
+```
+
+These fields uniquely identify one behavioral prediction surface.
+
+MPML should use these fields directly for artifact selection and runtime propagation.
+
+`dl_regime` remains available only as a deprecated compatibility alias for legacy Trend/Vol artifacts and must not be used as the canonical runtime identifier.
+
+---
+
 # 5. Behavioral Surface Registry
 
 Behavioral Surfaces should be loaded through a registry.
@@ -720,6 +746,76 @@ same market state.
 
 ---
 
+## Canonical Identity Rule
+
+Throughout MPML,
+
+```
+surface_id
+surface_version
+state_id
+```
+
+define Behavioral Surface identity.
+
+No runtime component should infer Behavioral Surface identity from
+
+```
+dl_regime
+```
+
+except inside explicit backward-compatibility adapters.
+
+---
+
+## Legacy Compatibility
+
+During the Behavioral Surface migration, MPML may encounter legacy artifacts containing `dl_regime`.
+
+Compatibility adapters may populate
+
+```
+surface_id
+state_id
+```
+
+from
+
+```
+dl_regime
+```
+
+for historical Trend/Vol artifacts.
+
+Newly produced artifacts should always use the canonical Behavioral Surface identity.
+
+---
+
+## Consumer Expectations
+
+Behavioral prediction artifacts consumed by MPML are expected to provide:
+
+```
+pair
+entry_time
+prediction_available_timestamp
+
+model
+surface_id
+surface_version
+state_id
+target_horizon
+feature_set
+```
+
+MPML must perform all artifact selection using the behavioral identity fields.
+
+`prediction_available_timestamp` is the causal timestamp used for temporal validation.
+
+`prediction_generated_timestamp` and `artifact_created_timestamp` are provenance only.
+
+---
+
 # 17. Planned Evolution
 
 ## Phase A (Completed)
@@ -751,8 +847,7 @@ Behavioral Surface Integration
 
 Objective
 
-Replace Trend/Vol-specific runtime assumptions with Behavioral Surface
-metadata.
+Replace all runtime assumptions based on `dl_regime` with Behavioral Surface identity (`surface_id`, `surface_version`, `state_id`). Runtime components should consume the canonical artifact identity directly rather than reconstructing Behavioral Surface information from legacy fields.
 
 The Behavioral Surface Registry introduced in Phase A establishes the required
 abstractions, but MPML still propagates Trend/Vol concepts (for example
