@@ -1,7 +1,8 @@
 """
 tests/test_behavioral_surface.py
 ==================================
-Tests for the mpml.behavioral package (Phase A — Behavioral Surface Registry).
+Tests for the mpml.behavioral package (Phase A — Behavioral Surface Registry;
+Phase B — Runtime propagation and state resolution).
 
 Covers:
 - BehavioralState construction and immutability
@@ -9,8 +10,9 @@ Covers:
 - ReactiveJPYSurface states, get_state(), metadata
 - BehavioralSurfaceRegistry register/load/available/get_state
 - Compatibility helpers (dl_regime_to_state, phase_label_to_state,
-  build_behavioral_surface_manifest_block)
+  build_behavioral_surface_manifest_block, resolve_behavioral_state_for_surface)
 - Default registry contents
+- Phase B: resolve_behavioral_state_for_surface runtime propagation
 
 Run with:
     python -m pytest tests/test_behavioral_surface.py -v
@@ -31,6 +33,7 @@ from mpml.behavioral.compat import (
     dl_regime_to_state,
     phase_label_to_state,
     build_behavioral_surface_manifest_block,
+    resolve_behavioral_state_for_surface,
 )
 from mpml.behavioral import registry as global_registry
 from mpml.behavioral.registry import default_registry as _default_registry
@@ -368,6 +371,108 @@ class TestCompatHelpers(unittest.TestCase):
     def test_build_manifest_block_unknown_state_raises(self):
         with self.assertRaises(KeyError):
             build_behavioral_surface_manifest_block("trend_vol", "JPY_CONSENSUS_MATURE")
+
+
+# ---------------------------------------------------------------------------
+# Phase B: resolve_behavioral_state_for_surface
+# ---------------------------------------------------------------------------
+
+class TestResolveBehavioralStateForSurface(unittest.TestCase):
+    """Tests for the Phase B runtime state resolution helper."""
+
+    # TrendVol surface — dl_regime maps directly to state_id
+    def test_trend_vol_lvtf(self):
+        self.assertEqual(
+            resolve_behavioral_state_for_surface("trend_vol", "LVTF"), "LVTF"
+        )
+
+    def test_trend_vol_hvtf(self):
+        self.assertEqual(
+            resolve_behavioral_state_for_surface("trend_vol", "HVTF"), "HVTF"
+        )
+
+    def test_trend_vol_hvr(self):
+        self.assertEqual(
+            resolve_behavioral_state_for_surface("trend_vol", "HVR"), "HVR"
+        )
+
+    def test_trend_vol_lvr(self):
+        self.assertEqual(
+            resolve_behavioral_state_for_surface("trend_vol", "LVR"), "LVR"
+        )
+
+    def test_trend_vol_none_regime_returns_none(self):
+        self.assertIsNone(resolve_behavioral_state_for_surface("trend_vol", None))
+
+    def test_trend_vol_empty_regime_returns_none(self):
+        self.assertIsNone(resolve_behavioral_state_for_surface("trend_vol", ""))
+
+    # ReactiveJPY surface — dl_regime has no meaning; always returns None
+    def test_reactive_jpy_with_trend_vol_regime_returns_none(self):
+        self.assertIsNone(
+            resolve_behavioral_state_for_surface("reactive_jpy", "LVTF")
+        )
+
+    def test_reactive_jpy_with_any_regime_returns_none(self):
+        for regime in ("LVTF", "HVTF", "HVR", "LVR", "HVMR", "LVMR", ""):
+            with self.subTest(regime=regime):
+                self.assertIsNone(
+                    resolve_behavioral_state_for_surface("reactive_jpy", regime)
+                )
+
+    def test_reactive_jpy_with_none_regime_returns_none(self):
+        self.assertIsNone(
+            resolve_behavioral_state_for_surface("reactive_jpy", None)
+        )
+
+    # Unknown surface — returns None (not a registered surface, but helper is non-strict)
+    def test_unknown_surface_returns_none(self):
+        self.assertIsNone(
+            resolve_behavioral_state_for_surface("does_not_exist", "LVTF")
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase B: manifest block for reactive_jpy with no state_id (no crash)
+# ---------------------------------------------------------------------------
+
+class TestManifestBlockReactiveJPYNoState(unittest.TestCase):
+    """Verify that build_behavioral_surface_manifest_block does not crash for
+    reactive_jpy when no state_id is provided (the Phase B success condition)."""
+
+    def test_reactive_jpy_no_state_id_does_not_raise(self):
+        block = build_behavioral_surface_manifest_block("reactive_jpy")
+        self.assertEqual(block["surface_id"], "reactive_jpy")
+        self.assertIn("surface_version", block)
+        self.assertIn("display_name", block)
+        self.assertNotIn("behavioral_state", block)
+
+    def test_reactive_jpy_none_state_id_does_not_raise(self):
+        block = build_behavioral_surface_manifest_block("reactive_jpy", None)
+        self.assertEqual(block["surface_id"], "reactive_jpy")
+        self.assertNotIn("behavioral_state", block)
+
+    def test_resolve_then_build_manifest_block_is_consistent(self):
+        """Simulate the Phase B main() flow for reactive_jpy: resolve state → build block."""
+        surface_id = "reactive_jpy"
+        dl_regime = "LVTF"  # what main() has from DL config
+        state_id = resolve_behavioral_state_for_surface(surface_id, dl_regime)
+        # state_id must be None for reactive_jpy
+        self.assertIsNone(state_id)
+        # building the block with None state_id must not raise
+        block = build_behavioral_surface_manifest_block(surface_id, state_id)
+        self.assertEqual(block["surface_id"], "reactive_jpy")
+        self.assertNotIn("behavioral_state", block)
+
+    def test_resolve_then_build_manifest_block_trend_vol_is_consistent(self):
+        """Simulate the Phase B main() flow for trend_vol: resolve state → build block."""
+        surface_id = "trend_vol"
+        dl_regime = "LVTF"
+        state_id = resolve_behavioral_state_for_surface(surface_id, dl_regime)
+        self.assertEqual(state_id, "LVTF")
+        block = build_behavioral_surface_manifest_block(surface_id, state_id)
+        self.assertEqual(block["surface_id"], "trend_vol")
+        self.assertEqual(block["behavioral_state"]["state_id"], "LVTF")
 
 
 if __name__ == "__main__":

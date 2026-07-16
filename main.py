@@ -55,7 +55,7 @@ from src.dl_surface_loader import VALID_DL_REGIMES
 from src.dl_daily_features import load_and_aggregate_d1, D1_FEATURE_COLS
 from src.experiment_surface_runtime import build_runtime_experiment_surface
 from mpml.behavioral import registry as behavioral_registry
-from mpml.behavioral.compat import build_behavioral_surface_manifest_block
+from mpml.behavioral.compat import build_behavioral_surface_manifest_block, resolve_behavioral_state_for_surface
 from experiment_semantics import (
     VALID_EXPERIMENT_VARIANTS,
     build_experiment_metadata_from_variant,
@@ -1471,6 +1471,7 @@ def main(
             f"Unknown --behavioral-surface {_resolved_behavioral_surface_id!r}. "
             f"Available: {behavioral_registry.available()}"
         )
+    _resolved_behavioral_surface = behavioral_registry.load(_resolved_behavioral_surface_id)
     # ----------------------------------------------------------
     # DL artifact resolution
     #
@@ -1521,6 +1522,18 @@ def main(
             dl_surface["feature_set"] = artifact_feature_set
             print(f"[DL] inferred feature_set={artifact_feature_set} from artifact path")
 
+    # Guard: DL artifact loading requires the TrendVol surface.
+    # Other surfaces do not yet have DL artifact support; disable DL with a
+    # descriptive message rather than failing silently or raising a KeyError.
+    if dl_runtime_enabled and _resolved_behavioral_surface_id != "trend_vol":
+        print(
+            f"[INFO] DL artifact loading is not yet implemented for behavioral surface "
+            f"{_resolved_behavioral_surface_id!r} (only 'trend_vol' is supported). "
+            "DL features will not be attached for this run.  "
+            "Implement a surface-specific artifact resolver to enable DL support."
+        )
+        dl_runtime_enabled = False
+
     if dl_runtime_enabled and dl_regime not in VALID_DL_REGIMES:
         print(
             f"[WARN] DL features will not be attached (baseline mode): "
@@ -1528,6 +1541,14 @@ def main(
             f"(no 'all' support in v1)."
         )
         dl_runtime_enabled = False
+
+    # Resolve the canonical behavioral state for this run.
+    # For TrendVol: the dl_regime is the state ID.
+    # For other surfaces: no state mapping from DL artifacts yet; state is None.
+    _resolved_behavioral_state_id = resolve_behavioral_state_for_surface(
+        _resolved_behavioral_surface_id, dl_regime
+    )
+
     dl_mode_tag = "__dl_enabled" if dl_runtime_enabled else "__baseline"
     dl_surface_str = _dl_surface_string(dl_surface)
     selected_variant = (
@@ -1535,7 +1556,12 @@ def main(
         if experiment_variant is not None
         else os.getenv("EXPERIMENT_VARIANT", "A")
     )
-    requested_msml_regime = os.getenv("MSML_REGIME", dl_regime).strip().upper() or dl_regime
+    # msml_regime is a Trend/Vol compatibility concept; propagate it only for
+    # trend_vol surfaces.  For other surfaces it is not meaningful.
+    if _resolved_behavioral_surface_id == "trend_vol":
+        requested_msml_regime = os.getenv("MSML_REGIME", dl_regime).strip().upper() or dl_regime
+    else:
+        requested_msml_regime = os.getenv("MSML_REGIME", "").strip().upper() or "unknown"
     overlap_only = os.getenv("OVERLAP_ONLY", "false").strip().lower() in {"1", "true", "yes", "on"}
     base_experiment_meta = _build_experiment_metadata(variant=selected_variant)
     base_factors = dict(base_experiment_meta.get("factors") or {})
@@ -1569,6 +1595,9 @@ def main(
         dl_surface=dl_surface,
         dl_artifact_path=dl_artifact_path,
         experiment_factors=experiment_meta.get("factors") or {},
+        behavioral_surface_id=_resolved_behavioral_surface_id,
+        behavioral_surface_version=_resolved_behavioral_surface.surface_version,
+        behavioral_state_id=_resolved_behavioral_state_id,
     )
     missing_indicators_enabled = bool(
         (experiment_meta.get("factors") or {}).get("missing_indicators_enabled", True)
@@ -1648,7 +1677,7 @@ def main(
         "experiment_surface": experiment_surface,
         "behavioral_surface": build_behavioral_surface_manifest_block(
             surface_id=_resolved_behavioral_surface_id,
-            state_id=dl_regime if dl_regime else None,
+            state_id=_resolved_behavioral_state_id,
         ),
         "market_data_source": market_data_source,
         "market_data_root": market_data_root,

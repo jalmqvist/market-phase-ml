@@ -289,5 +289,106 @@ class TestRuntimeExperimentSurfaceEmission(unittest.TestCase):
             self.assertEqual(parsed["surface_source"], "legacy_variant_fallback")
 
 
+# ---------------------------------------------------------------------------
+# Phase B: Behavioral Surface metadata propagation through experiment_surface
+# ---------------------------------------------------------------------------
+
+class TestBehavioralSurfaceMetadataPropagation(unittest.TestCase):
+    """Tests for behavioral_surface, behavioral_surface_version, behavioral_state
+    fields added in Phase B."""
+
+    def _base_surface_kwargs(self, **overrides):
+        kwargs = dict(
+            dl_runtime_enabled=False,
+            dl_surface={},
+            dl_artifact_path=None,
+            experiment_factors={},
+            artifact_metadata={},
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_behavioral_surface_id_propagates(self):
+        surface = build_runtime_experiment_surface(
+            **self._base_surface_kwargs(behavioral_surface_id="trend_vol")
+        )
+        self.assertEqual(surface["behavioral_surface"], "trend_vol")
+
+    def test_behavioral_surface_version_propagates(self):
+        surface = build_runtime_experiment_surface(
+            **self._base_surface_kwargs(
+                behavioral_surface_id="trend_vol",
+                behavioral_surface_version="1.0.0",
+            )
+        )
+        self.assertEqual(surface["behavioral_surface_version"], "1.0.0")
+
+    def test_behavioral_state_id_propagates(self):
+        surface = build_runtime_experiment_surface(
+            **self._base_surface_kwargs(
+                behavioral_surface_id="trend_vol",
+                behavioral_state_id="LVTF",
+            )
+        )
+        self.assertEqual(surface["behavioral_state"], "LVTF")
+
+    def test_behavioral_fields_absent_when_not_provided(self):
+        surface = build_runtime_experiment_surface(
+            **self._base_surface_kwargs()
+        )
+        self.assertNotIn("behavioral_surface", surface)
+        self.assertNotIn("behavioral_surface_version", surface)
+        self.assertNotIn("behavioral_state", surface)
+
+    def test_behavioral_state_absent_when_none(self):
+        surface = build_runtime_experiment_surface(
+            **self._base_surface_kwargs(
+                behavioral_surface_id="reactive_jpy",
+                behavioral_surface_version="1.0.0",
+                behavioral_state_id=None,
+            )
+        )
+        self.assertEqual(surface["behavioral_surface"], "reactive_jpy")
+        self.assertEqual(surface["behavioral_surface_version"], "1.0.0")
+        self.assertNotIn("behavioral_state", surface)
+
+    def test_reactive_jpy_surface_propagates_without_state(self):
+        """Phase B: reactive_jpy surface emits surface metadata but no state_id."""
+        surface = build_runtime_experiment_surface(
+            dl_runtime_enabled=False,
+            dl_surface={},
+            dl_artifact_path=None,
+            experiment_factors={},
+            behavioral_surface_id="reactive_jpy",
+            behavioral_surface_version="1.0.0",
+            behavioral_state_id=None,
+        )
+        self.assertEqual(surface["behavioral_surface"], "reactive_jpy")
+        self.assertNotIn("behavioral_state", surface)
+
+    def test_trend_vol_full_propagation(self):
+        """Phase B: trend_vol surface emits surface_id, version and state."""
+        surface = build_runtime_experiment_surface(
+            dl_runtime_enabled=True,
+            dl_surface={
+                "model": "mlp",
+                "target_horizon": 24,
+                "feature_set": "price_trend",
+                "dl_regime": "LVTF",
+            },
+            dl_artifact_path=None,
+            experiment_factors={"selector_enabled": True, "overlap_only": False},
+            behavioral_surface_id="trend_vol",
+            behavioral_surface_version="1.0.0",
+            behavioral_state_id="LVTF",
+        )
+        self.assertEqual(surface["behavioral_surface"], "trend_vol")
+        self.assertEqual(surface["behavioral_surface_version"], "1.0.0")
+        self.assertEqual(surface["behavioral_state"], "LVTF")
+        # Legacy compat field preserved
+        self.assertIn("msml_regime", surface)
+
+
 if __name__ == "__main__":
     unittest.main()
+

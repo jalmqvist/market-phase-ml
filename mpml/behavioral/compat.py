@@ -127,6 +127,63 @@ def phase_label_to_state(phase_label: str) -> BehavioralState:
 
 
 # ---------------------------------------------------------------------------
+# Runtime state resolution
+# ---------------------------------------------------------------------------
+
+#: Surface IDs whose states are addressable by DL artifact dl_regime values.
+#: Only the TrendVol surface maps directly from MSML dl_regime tokens.
+_DL_REGIME_CAPABLE_SURFACES: frozenset[str] = frozenset({_DL_REGIME_SURFACE})
+
+
+def resolve_behavioral_state_for_surface(
+    surface_id: str,
+    dl_regime: str | None,
+) -> str | None:
+    """Resolve the canonical behavioral state_id for a runtime surface.
+
+    This is the Phase B bridge between ``dl_regime`` (a Trend/Vol artifact
+    concept) and :class:`~mpml.behavioral.base.BehavioralState`.
+
+    For surfaces that are based on the Trend × Volatility representation
+    (``"trend_vol"``), the *dl_regime* value is a valid state identifier and
+    is returned directly.
+
+    For all other surfaces, the DL artifact's ``dl_regime`` has no meaning;
+    ``None`` is returned so that callers can omit the state from the manifest
+    rather than raising a ``KeyError``.
+
+    Parameters
+    ----------
+    surface_id : str
+        Registered Behavioral Surface identifier (e.g. ``"trend_vol"``,
+        ``"reactive_jpy"``).
+    dl_regime : str | None
+        MSML dl_regime value from the runtime DL surface configuration, or
+        ``None`` when no artifact is configured.
+
+    Returns
+    -------
+    str | None
+        The canonical ``state_id`` for this surface, or ``None`` when no
+        state mapping is available (non-TrendVol surfaces, or empty regime).
+
+    Examples
+    --------
+    >>> resolve_behavioral_state_for_surface("trend_vol", "LVTF")
+    'LVTF'
+    >>> resolve_behavioral_state_for_surface("reactive_jpy", "LVTF") is None
+    True
+    >>> resolve_behavioral_state_for_surface("trend_vol", None) is None
+    True
+    """
+    if surface_id not in _DL_REGIME_CAPABLE_SURFACES:
+        return None
+    if not dl_regime:
+        return None
+    return dl_regime
+
+
+# ---------------------------------------------------------------------------
 # Manifest helpers
 # ---------------------------------------------------------------------------
 

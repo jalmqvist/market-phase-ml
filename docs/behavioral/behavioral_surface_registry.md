@@ -1,6 +1,6 @@
 # Behavioral Surface Registry
 
-**Phase A of the MPML Architecture Roadmap**
+**Phase A — Registry and Abstractions | Phase B — Runtime Integration**
 
 > See [`docs/MPML_Architecture_Roadmap.md`](../MPML_Architecture_Roadmap.md) for the
 > full design rationale, long-term phases and guiding principles.
@@ -22,6 +22,10 @@ Behavioral Surfaces simultaneously:
 | `BehavioralSurface` | A named, versioned market representation that partitions markets into discrete states |
 | `BehavioralState` | An immutable value object representing one state within a surface |
 | `BehavioralSurfaceRegistry` | A registry that loads and exposes available surfaces |
+
+Phase B makes Behavioral Surfaces the **canonical runtime abstraction**.
+Instead of routing on `DL_REGIME` / `LVTF` / `HVTF` internally, the MPML
+execution pipeline now carries Behavioral Surface metadata directly.
 
 ---
 
@@ -217,6 +221,34 @@ state = phase_label_to_state("HV_Trend")
 # BehavioralState(state_id='HVTF', ...)
 ```
 
+### `resolve_behavioral_state_for_surface(surface_id, dl_regime)` *(Phase B)*
+
+Resolve the canonical behavioral `state_id` for a runtime surface from a
+`dl_regime` string.  This is the Phase B bridge between MSML's `dl_regime`
+vocabulary and the Behavioral Surface abstraction.
+
+**Rules:**
+
+- `"trend_vol"` surface: returns `dl_regime` unchanged (LVTF, HVTF, HVR, LVR are valid state IDs).
+- Any other surface: returns `None` — the DL artifact regime vocabulary has no meaning outside TrendVol.
+- `None` or empty `dl_regime`: returns `None`.
+
+```python
+from mpml.behavioral.compat import resolve_behavioral_state_for_surface
+
+# TrendVol: dl_regime IS the state_id
+resolve_behavioral_state_for_surface("trend_vol", "LVTF")   # → "LVTF"
+resolve_behavioral_state_for_surface("trend_vol", None)      # → None
+
+# ReactiveJPY: dl_regime has no meaning
+resolve_behavioral_state_for_surface("reactive_jpy", "LVTF") # → None
+resolve_behavioral_state_for_surface("reactive_jpy", None)   # → None
+```
+
+Use this in `main()` to compute `state_id` before calling
+`build_behavioral_surface_manifest_block`, avoiding a `KeyError` when a
+non-TrendVol surface is selected.
+
 ### `build_behavioral_surface_manifest_block(surface_id, state_id=None)`
 
 Build the `behavioral_surface` block for experiment manifests:
@@ -235,13 +267,113 @@ block = build_behavioral_surface_manifest_block("trend_vol", "LVTF")
 #         "description": "...",
 #     },
 # }
+
+# ReactiveJPY with no state — does not raise
+block = build_behavioral_surface_manifest_block("reactive_jpy")
+# {
+#     "surface_id": "reactive_jpy",
+#     "surface_version": "1.0.0",
+#     "display_name": "Reactive JPY",
+# }
 ```
+
+---
+
+## Phase B — Runtime Propagation
+
+Phase B ensures that Behavioral Surface metadata flows continuously from
+experiment configuration through to manifest emission without being
+converted back into Trend/Vol-specific concepts.
+
+### Canonical runtime identity
+
+A run's Behavioral Surface identity is defined by:
+
+```
+surface_id           (e.g. "trend_vol", "reactive_jpy")
+surface_version      (e.g. "1.0.0")
+state_id             (e.g. "LVTF" for trend_vol; None for reactive_jpy)
+```
+
+`dl_regime` is treated as **deprecated compatibility metadata** — it is
+preserved in the manifest for backward compatibility but is no longer the
+primary routing key.
+
+### Runtime flow in `main()`
+
+```
+CLI --behavioral-surface
+         │
+         ▼
+_resolved_behavioral_surface_id  (validated against registry)
+_resolved_behavioral_surface     (loaded surface object)
+         │
+         ▼
+resolve_behavioral_state_for_surface(surface_id, dl_regime)
+         │
+         ├─ trend_vol  → state_id = dl_regime  (e.g. "LVTF")
+         └─ other      → state_id = None
+         │
+         ▼
+build_behavioral_surface_manifest_block(surface_id, state_id)
+build_runtime_experiment_surface(..., behavioral_surface_id, behavioral_surface_version, behavioral_state_id)
+         │
+         ▼
+run_manifest.json
+  behavioral_surface.surface_id
+  behavioral_surface.surface_version
+  behavioral_surface.behavioral_state.state_id   (trend_vol only)
+  experiment_surface.behavioral_surface
+  experiment_surface.behavioral_surface_version
+  experiment_surface.behavioral_state            (trend_vol only)
+```
+
+### DL artifact guard
+
+When `--behavioral-surface reactive_jpy` is used with `DL_SIGNALS_ENABLED=true`,
+the runtime emits a descriptive informational message and disables DL features:
+
+```
+[INFO] DL artifact loading is not yet implemented for behavioral surface
+'reactive_jpy' (only 'trend_vol' is supported).  DL features will not be
+attached for this run.  Implement a surface-specific artifact resolver to
+enable DL support.
+```
+
+This replaces the previous `KeyError` crash.  The run proceeds to completion
+using the ReactiveJPY surface without DL signals.
+
+### Manifest fields (Phase B additions)
+
+`experiment_surface` now includes:
+
+| Field | Type | Description |
+|---|---|---|
+| `behavioral_surface` | `str` | Canonical surface ID (e.g. `"trend_vol"`) |
+| `behavioral_surface_version` | `str` | Surface semantic version |
+| `behavioral_state` | `str` \| absent | State ID for the run (TrendVol only) |
+
+These fields are absent when the caller does not provide surface identity
+(e.g. legacy manifest parsing).  The existing `msml_regime` field is
+preserved as deprecated compatibility metadata.
+
+### `msml_regime` deprecation
+
+`msml_regime` in `experiment_surface` is a Trend × Volatility compatibility
+field.  From Phase B onwards:
+
+- For `trend_vol` runs: `msml_regime` is still populated from `dl_regime`.
+- For other surfaces: `msml_regime` is set to `"unknown"`.
+
+New runtime logic must not use `msml_regime` as a primary selector key.
+Use `behavioral_surface` + `behavioral_state` instead.
 
 ---
 
 ## Experiment Manifests
 
-Every run manifest now contains a `behavioral_surface` block:
+Every run manifest contains a `behavioral_surface` block and Phase B adds
+Behavioral Surface fields to `experiment_surface`:
 
 ```json
 {
@@ -254,11 +386,34 @@ Every run manifest now contains a `behavioral_surface` block:
       "display_name": "Low-Volatility Trend-Following",
       "description": "..."
     }
+  },
+  "experiment_surface": {
+    "behavioral_surface": "trend_vol",
+    "behavioral_surface_version": "1.0.0",
+    "behavioral_state": "LVTF",
+    "msml_regime": "LVTF",
+    "..."
   }
 }
 ```
 
-The `behavioral_state` key is present when a `dl_regime` is configured.
+For `reactive_jpy` runs, `behavioral_state` is absent (no DL regime mapping):
+
+```json
+{
+  "behavioral_surface": {
+    "surface_id": "reactive_jpy",
+    "surface_version": "1.0.0",
+    "display_name": "Reactive JPY"
+  },
+  "experiment_surface": {
+    "behavioral_surface": "reactive_jpy",
+    "behavioral_surface_version": "1.0.0",
+    "msml_regime": "unknown",
+    "..."
+  }
+}
+```
 
 ---
 
@@ -295,15 +450,15 @@ surfaces become available throughout MPML simply by being registered.
 
 ---
 
-## Out of Scope (Phase A)
+## Out of Scope (Phase B)
 
 The following are explicitly deferred to later roadmap phases:
 
-- Strategy Registry (Phase B)
-- Recommendation Engine (Phase C)
-- Rich experiment metadata / provenance (Phase D)
-- MRML integration (Phase E)
-- Plugin / external surface loading
+- Strategy Registry
+- Recommendation Engine
+- MRML integration
+- Strategy ranking redesign
+- DL artifact support for non-TrendVol surfaces
 
 ---
 
@@ -315,4 +470,6 @@ The following are explicitly deferred to later roadmap phases:
 - [`mpml/behavioral/trend_vol.py`](../../mpml/behavioral/trend_vol.py)
 - [`mpml/behavioral/reactive_jpy.py`](../../mpml/behavioral/reactive_jpy.py)
 - [`mpml/behavioral/compat.py`](../../mpml/behavioral/compat.py)
+- [`src/experiment_surface_runtime.py`](../../src/experiment_surface_runtime.py)
 - [`tests/test_behavioral_surface.py`](../../tests/test_behavioral_surface.py)
+- [`tests/test_runtime_experiment_surface.py`](../../tests/test_runtime_experiment_surface.py)
