@@ -48,6 +48,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 from pandas.api.types import is_datetime64_dtype, is_datetime64tz_dtype
 
+from mpml.behavioral.registry import default_registry
 from schemas.dl_artifact_schema import (
     DL_ARTIFACT_CREATED_COL,
     DL_AVAILABLE_TS_COL,
@@ -72,24 +73,49 @@ REQUIRED_ARTIFACT_COLUMNS: frozenset[str] = frozenset(
         "model",
         "target_horizon",
         "feature_set",
-        "dl_regime",
         "signal_strength",
     }
 )
 
 #: Columns that may optionally be present in the cube parquet.
 OPTIONAL_ARTIFACT_COLUMNS: frozenset[str] = frozenset(
-    {"dl_confidence", "pred_prob_up", "schema_version"}
+    {
+        "dl_confidence",
+        "pred_prob_up",
+        "schema_version",
+        "dl_regime",
+        "surface_id",
+        "surface_version",
+        "state_id",
+    }
 )
 # Backward-compatible aliases kept for existing imports in validation tooling.
 REQUIRED_CUBE_COLUMNS = REQUIRED_ARTIFACT_COLUMNS
 OPTIONAL_CUBE_COLUMNS = OPTIONAL_ARTIFACT_COLUMNS
 
-#: Keys that must appear in the *surface* selection dict.
-SURFACE_REQUIRED_KEYS: tuple[str, ...] = (
+#: Canonical identity keys required for runtime selection.
+CANONICAL_SURFACE_KEYS: tuple[str, ...] = (
+    "surface_id",
+    "surface_version",
+    "state_id",
+)
+
+#: Model keys required for runtime selection.
+PREDICTION_SELECTOR_KEYS: tuple[str, ...] = (
     "model",
     "target_horizon",
     "feature_set",
+)
+
+#: Full canonical selector (surface identity + artifact model identity).
+SURFACE_REQUIRED_KEYS: tuple[str, ...] = (
+    *CANONICAL_SURFACE_KEYS,
+    *PREDICTION_SELECTOR_KEYS,
+)
+
+#: Legacy TrendVol selector accepted via compatibility adapter.
+LEGACY_SURFACE_REQUIRED_KEYS: tuple[str, ...] = (
+    *PREDICTION_SELECTOR_KEYS,
     "dl_regime",
 )
 
@@ -97,10 +123,12 @@ SURFACE_REQUIRED_KEYS: tuple[str, ...] = (
 #: Matches the cube uniqueness contract minus ``entry_time``.
 MONOTONICITY_GROUP_COLUMNS: tuple[str, ...] = (
     DL_PAIR_COL,
+    "surface_id",
+    "surface_version",
+    "state_id",
     "model",
     "target_horizon",
     "feature_set",
-    "dl_regime",
 )
 
 #: Valid MSML-DL regime values.
@@ -174,7 +202,7 @@ def load_dl_surface(
     # 1. Validate surface dict
     # ------------------------------------------------------------------
     try:
-        _validate_surface_dict(surface)
+        canonical_surface = _normalize_surface_selector(surface)
     except ValueError as exc:
         return _handle_error(str(exc), strict)
 
@@ -199,13 +227,14 @@ def load_dl_surface(
     # 3. Validate DL artifact contract (fail-fast)
     # ------------------------------------------------------------------
     cube = validate_dl_artifact(cube, metadata)
+    cube = _apply_behavioral_identity(cube, metadata)
 
     # ------------------------------------------------------------------
     # 4. Select exact surface
     # ------------------------------------------------------------------
     mask = pd.Series(True, index=cube.index)
     for key in SURFACE_REQUIRED_KEYS:
-        val = surface[key]
+        val = canonical_surface[key]
         if key == "target_horizon":
             # Numeric comparison against nullable Int64
             mask &= cube[key] == int(val)
@@ -286,20 +315,61 @@ def empty_dl_surface_df() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def _validate_surface_dict(surface: dict) -> None:
-    """Raise ``ValueError`` if the surface dict is missing required keys."""
-    missing = sorted(set(SURFACE_REQUIRED_KEYS) - set(surface.keys()))
-    if missing:
-        raise ValueError(
-            f"surface dict missing required keys: {missing}. "
-            f"Required: {list(SURFACE_REQUIRED_KEYS)}"
-        )
-    regime = surface.get("dl_regime", "")
-    if regime not in VALID_DL_REGIMES:
-        raise ValueError(
-            f"Unknown dl_regime: {regime!r}. "
-            f"Valid values: {sorted(VALID_DL_REGIMES)}"
-        )
+def _normalize_surface_selector(surface: dict) -> dict[str, str | int]:
+    """Return canonical selector dict, adapting legacy TrendVol selectors."""
+    if not isinstance(surface, dict):
+        raise ValueError(f"surface must be a dict; got {type(surface).__name__}")
+
+    canonical_missing = sorted(set(SURFACE_REQUIRED_KEYS) - set(surface.keys()))
+    if not canonical_missing:
+        selector = {
+            "surface_id": str(surface["surface_id"]).strip(),
+            "surface_version": str(surface["surface_version"]).strip(),
+            "state_id": str(surface["state_id"]).strip(),
+            "model": str(surface["model"]).strip(),
+            "target_horizon": int(surface["target_horizon"]),
+            "feature_set": str(surface["feature_set"]).strip(),
+        }
+        if not selector["surface_id"] or not selector["surface_version"] or not selector["state_id"]:
+            raise ValueError(
+                "surface selector fields surface_id, surface_version and state_id must be non-empty."
+            )
+        if selector["surface_id"] in default_registry:
+            surface_obj = default_registry.load(selector["surface_id"])
+            try:
+                canonical_state = surface_obj.get_state(selector["state_id"]).state_id
+            except KeyError as exc:
+                raise ValueError(
+                    f"Unknown state_id {selector['state_id']!r} for surface_id "
+                    f"{selector['surface_id']!r}"
+                ) from exc
+            selector["state_id"] = canonical_state
+        return selector
+
+    legacy_missing = sorted(set(LEGACY_SURFACE_REQUIRED_KEYS) - set(surface.keys()))
+    if not legacy_missing:
+        regime = str(surface.get("dl_regime", "")).strip().upper()
+        if regime not in VALID_DL_REGIMES:
+            raise ValueError(
+                f"Unknown dl_regime: {regime!r}. "
+                f"Valid values: {sorted(VALID_DL_REGIMES)}"
+            )
+        trend_vol = default_registry.load("trend_vol")
+        state_id = trend_vol.get_state(regime).state_id
+        return {
+            "surface_id": trend_vol.surface_id,
+            "surface_version": trend_vol.surface_version,
+            "state_id": state_id,
+            "model": str(surface["model"]).strip(),
+            "target_horizon": int(surface["target_horizon"]),
+            "feature_set": str(surface["feature_set"]).strip(),
+        }
+
+    raise ValueError(
+        "surface dict missing required keys. "
+        f"Canonical required={list(SURFACE_REQUIRED_KEYS)}. "
+        f"Legacy TrendVol required={list(LEGACY_SURFACE_REQUIRED_KEYS)}."
+    )
 
 
 def validate_dl_artifact(
@@ -387,6 +457,71 @@ def validate_dl_artifact(
     return df
 
 
+def _apply_behavioral_identity(
+    df: pd.DataFrame,
+    metadata: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """
+    Ensure canonical Behavioral identity columns exist and are valid.
+
+    Canonical identity:
+    ``surface_id``, ``surface_version``, ``state_id``.
+
+    Legacy TrendVol artifacts are adapted through ``dl_regime``:
+    ``dl_regime`` -> ``surface_id=trend_vol``, canonical ``state_id``.
+    """
+    metadata = metadata or {}
+    out = df.copy()
+
+    for col in CANONICAL_SURFACE_KEYS:
+        if col not in out.columns:
+            out[col] = pd.NA
+
+    metadata_surface_id = _metadata_value(metadata, "surface_id")
+    metadata_surface_version = _metadata_value(metadata, "surface_version")
+    metadata_state_id = _metadata_value(metadata, "state_id")
+
+    if metadata_surface_id:
+        out["surface_id"] = out["surface_id"].fillna(metadata_surface_id)
+    if metadata_surface_version:
+        out["surface_version"] = out["surface_version"].fillna(metadata_surface_version)
+    if metadata_state_id:
+        out["state_id"] = out["state_id"].fillna(metadata_state_id)
+
+    if "dl_regime" in out.columns:
+        regime_series = out["dl_regime"].map(_normalize_legacy_dl_regime)
+        needs_state = out["state_id"].isna() | (out["state_id"].astype(str).str.strip() == "")
+        out.loc[needs_state, "state_id"] = regime_series[needs_state]
+
+        needs_surface = out["surface_id"].isna() | (out["surface_id"].astype(str).str.strip() == "")
+        out.loc[needs_surface & regime_series.notna(), "surface_id"] = "trend_vol"
+
+        needs_version = out["surface_version"].isna() | (
+            out["surface_version"].astype(str).str.strip() == ""
+        )
+        trend_vol_version = default_registry.load("trend_vol").surface_version
+        trend_vol_rows = out["surface_id"].astype(str) == "trend_vol"
+        out.loc[needs_version & trend_vol_rows, "surface_version"] = trend_vol_version
+
+    for col in CANONICAL_SURFACE_KEYS:
+        out[col] = out[col].astype("string").str.strip()
+        out.loc[out[col] == "", col] = pd.NA
+
+    missing_summary = {
+        col: int(out[col].isna().sum())
+        for col in CANONICAL_SURFACE_KEYS
+        if out[col].isna().any()
+    }
+    if missing_summary:
+        raise ValueError(
+            "missing canonical metadata in DL artifact after compatibility adaptation: "
+            f"{missing_summary}. Required keys={list(CANONICAL_SURFACE_KEYS)}."
+        )
+
+    _validate_behavioral_identity_values(out)
+    return out
+
+
 def _coerce_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     """Coerce critical columns to expected dtypes."""
     df = df.copy()
@@ -427,7 +562,8 @@ def _find_non_monotone_groups(df: pd.DataFrame) -> list[str]:
     Grain: ``(pair, model, target_horizon, feature_set, dl_regime)``.
     """
     non_monotone: list[str] = []
-    for keys, grp in df.groupby(list(MONOTONICITY_GROUP_COLUMNS)):
+    group_cols = [c for c in MONOTONICITY_GROUP_COLUMNS if c in df.columns]
+    for keys, grp in df.groupby(group_cols):
         if not grp[DL_TIMESTAMP_COL].is_monotonic_increasing:
             non_monotone.append(str(keys))
     return non_monotone
@@ -468,6 +604,24 @@ def _available_surfaces(cube: pd.DataFrame) -> list[dict]:
     if not cols:
         return []
     return cube[cols].drop_duplicates().to_dict("records")
+
+
+def _metadata_value(metadata: dict[str, str], key: str) -> str | None:
+    candidates = (
+        key,
+        f"msml.{key}",
+        f"behavioral.{key}",
+        f"surface.{key}",
+        f"mpml.{key}",
+    )
+    for candidate in candidates:
+        value = metadata.get(candidate)
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if normalized:
+            return normalized
+    return None
 
 
 def _read_parquet_metadata(cube_path: Path) -> dict[str, str]:
@@ -530,6 +684,55 @@ def _normalize_pair(pair: str) -> str | None:
     if len(p) == 7 and p[3] == "-" and p[:3].isalpha() and p[4:].isalpha():
         return p
     return None
+
+
+def _normalize_legacy_dl_regime(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().upper()
+    if not normalized:
+        return None
+    if normalized not in VALID_DL_REGIMES:
+        return None
+    return default_registry.get_state("trend_vol", normalized).state_id
+
+
+def _validate_behavioral_identity_values(df: pd.DataFrame) -> None:
+    invalid: list[str] = []
+    for surface_id in sorted(df["surface_id"].dropna().astype(str).unique().tolist()):
+        if surface_id not in default_registry:
+            continue
+        surface = default_registry.load(surface_id)
+        expected_version = str(surface.surface_version)
+        observed_versions = (
+            df.loc[df["surface_id"].astype(str) == surface_id, "surface_version"]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+        if any(v != expected_version for v in observed_versions):
+            invalid.append(
+                f"surface_version mismatch for surface_id={surface_id!r}: "
+                f"artifact={sorted(observed_versions)} runtime={expected_version!r}"
+            )
+        state_values = (
+            df.loc[df["surface_id"].astype(str) == surface_id, "state_id"]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+        for state_id in state_values:
+            try:
+                surface.get_state(state_id)
+            except KeyError:
+                invalid.append(
+                    f"unknown state_id={state_id!r} for surface_id={surface_id!r}"
+                )
+                break
+    if invalid:
+        raise ValueError("; ".join(invalid))
 
 
 def _validate_timezone_consistency(df: pd.DataFrame) -> list[str]:
