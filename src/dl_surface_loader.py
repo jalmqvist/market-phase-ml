@@ -279,8 +279,12 @@ def load_dl_surface(
     if DL_ARTIFACT_CREATED_COL in surface_df.columns:
         out["dl_artifact_created_timestamp"] = surface_df[DL_ARTIFACT_CREATED_COL]
 
-    # Add MPML regime equivalence (informational; must not be used as a feature)
-    out["mpml_regime_equiv"] = surface_df["dl_regime"].map(MSML_TO_MPML)
+    # Add MPML regime equivalence (informational; must not be used as a feature).
+    # Canonical non-TrendVol artifacts may not contain ``dl_regime``.
+    if "dl_regime" in surface_df.columns:
+        out["mpml_regime_equiv"] = surface_df["dl_regime"].map(MSML_TO_MPML)
+    else:
+        out["mpml_regime_equiv"] = pd.NA
 
     # Sort by (pair, timestamp)
     out = out.sort_values([DL_PAIR_COL, DL_TIMESTAMP_COL]).reset_index(drop=True)
