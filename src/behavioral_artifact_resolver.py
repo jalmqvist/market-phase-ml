@@ -15,6 +15,8 @@ from src.dl_config import (
 from src.dl_daily_features import compute_d1_features, empty_d1_df
 from src.dl_surface_loader import load_dl_surface
 
+# Legacy default retained to preserve historical TrendVol runtime behaviour
+# when no explicit state/regime is provided by configuration or artifact naming.
 _LEGACY_DEFAULT_TREND_VOL_REGIME = "LVTF"
 
 
@@ -92,7 +94,7 @@ def resolve_behavioral_artifact_runtime(
         )
     d1_predictions = compute_d1_features(h1_predictions)
 
-    pairs = sorted(h1_predictions["pair"].dropna().astype(str).unique().tolist())
+    pairs = sorted(h1_predictions["pair"].dropna().astype(str).unique())
     diagnostics = [
         f"Behavioral Surface: {behavioral_surface_id}",
         f"Behavioral Surface version: {behavioral_surface_version}",

@@ -1516,9 +1516,15 @@ def main(
     # msml_regime is a Trend/Vol compatibility concept; propagate it only for
     # trend_vol surfaces.  For other surfaces it is not meaningful.
     if _resolved_behavioral_surface_id == "trend_vol":
+        fallback_msml_state = str(
+            _resolved_behavioral_state_id
+            or dl_surface.get("dl_regime")
+            or dl_surface.get("state_id")
+            or "LVTF"
+        ).strip().upper()
         requested_msml_regime = (
             os.getenv("MSML_REGIME", dl_regime).strip().upper()
-            or str(_resolved_behavioral_state_id or "")
+            or fallback_msml_state
         )
     else:
         requested_msml_regime = os.getenv("MSML_REGIME", "").strip().upper() or "unknown"

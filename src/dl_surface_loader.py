@@ -284,6 +284,8 @@ def load_dl_surface(
     if "dl_regime" in surface_df.columns:
         out["mpml_regime_equiv"] = surface_df["dl_regime"].map(MSML_TO_MPML)
     else:
+        # Non-TrendVol canonical artifacts have no dl_regime concept.
+        # Keep the column for downstream schema stability, with null values.
         out["mpml_regime_equiv"] = pd.NA
 
     # Sort by (pair, timestamp)
@@ -569,7 +571,8 @@ def _find_non_monotone_groups(df: pd.DataFrame) -> list[str]:
     non_monotone: list[str] = []
     # validate_dl_artifact() runs before _apply_behavioral_identity(), so
     # canonical identity columns may still be absent for legacy artifacts here.
-    # Group only by currently-present columns.
+    # Group only by currently-present columns (legacy validation degrades to
+    # pre-canonical grouping while preserving historical compatibility).
     group_cols = [c for c in MONOTONICITY_GROUP_COLUMNS if c in df.columns]
     for keys, grp in df.groupby(group_cols):
         if not grp[DL_TIMESTAMP_COL].is_monotonic_increasing:
