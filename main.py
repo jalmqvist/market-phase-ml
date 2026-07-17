@@ -48,14 +48,12 @@ from src.repro import (
 )
 from src.dl_config import (
     infer_dl_feature_set_from_artifact_path,
-    infer_dl_regime_from_artifact_path,
-    resolve_dl_prediction_artifact_path,
 )
-from src.dl_surface_loader import VALID_DL_REGIMES
 from src.dl_daily_features import load_and_aggregate_d1, D1_FEATURE_COLS
+from src.behavioral_artifact_resolver import resolve_behavioral_artifact_runtime
 from src.experiment_surface_runtime import build_runtime_experiment_surface
 from mpml.behavioral import registry as behavioral_registry
-from mpml.behavioral.compat import build_behavioral_surface_manifest_block, resolve_behavioral_state_for_surface
+from mpml.behavioral.compat import build_behavioral_surface_manifest_block
 from experiment_semantics import (
     VALID_EXPERIMENT_VARIANTS,
     build_experiment_metadata_from_variant,
@@ -109,7 +107,6 @@ RUN_WALKFORWARD = True
 # DL surface integration (optional feature layer, v1 single-surface)
 # DL_SIGNALS_ENABLED = True
 DL_SIGNALS_ENABLED = os.environ.get("DL_SIGNALS_ENABLED", "false").lower() == "true"
-DEFAULT_DL_REGIME = "LVTF"
 DL_SIGNAL_SURFACE = {
     "model": os.getenv("DL_MODEL", "mlp"),
     "target_horizon": 24,
@@ -547,8 +544,9 @@ def _pair_to_dl_key(pair_name: str) -> str:
 
 def _dl_surface_string(surface: dict) -> str:
     return (
+        f"{surface.get('surface_id', '?')}@{surface.get('surface_version', '?')}/"
         f"{surface.get('model', '?')}/"
-        f"{surface.get('dl_regime', '?')}/"
+        f"{surface.get('state_id', surface.get('dl_regime', '?'))}/"
         f"h{surface.get('target_horizon', '?')}/"
         f"{surface.get('feature_set', '?')}"
     )
@@ -567,6 +565,7 @@ def attach_dl_features(
     pair_name: str,
     surface: dict,
     artifact_path: Path | None,
+    daily_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Attach D1-aggregated DL features to one processed pair frame via left join.
@@ -603,11 +602,12 @@ def attach_dl_features(
     # ------------------------------------------------------------------
     # Load + validate surface and aggregate to D1 daily features
     # ------------------------------------------------------------------
-    daily_df = load_and_aggregate_d1(
-        artifact_path=artifact_path,
-        surface=surface,
-        strict=True,
-    )
+    if daily_df is None:
+        daily_df = load_and_aggregate_d1(
+            artifact_path=artifact_path,
+            surface=surface,
+            strict=True,
+        )
     if daily_df.empty:
         print(f"  [DL] {pair_name}: D1 aggregation produced no rows; skipping attachment.")
         return processed_df
@@ -1473,81 +1473,38 @@ def main(
         )
     _resolved_behavioral_surface = behavioral_registry.load(_resolved_behavioral_surface_id)
     # ----------------------------------------------------------
-    # DL artifact resolution
-    #
-    # Precedence:
-    #   1. Explicit env override
-    #   2. Automatic resolver
+    # Behavioral prediction artifact resolution (Phase C)
     # ----------------------------------------------------------
-
     explicit_dl_artifact = os.getenv("DL_PREDICTION_ARTIFACT_PATH", "").strip()
-    artifact_regime = None
+    explicit_behavioral_state = os.getenv("BEHAVIORAL_STATE_ID", "").strip() or None
 
-    if dl_runtime_enabled:
-        if explicit_dl_artifact:
-            dl_artifact_path = Path(explicit_dl_artifact)
-            print("[DL] using explicit artifact override from environment")
-        else:
-            dl_artifact_path = resolve_dl_prediction_artifact_path()
+    if dl_regime:
+        dl_surface["dl_regime"] = dl_regime
 
-        if dl_artifact_path is not None:
-            dl_artifact_path = Path(dl_artifact_path)
-
-    else:
-        dl_artifact_path = None
-
-    if dl_runtime_enabled and dl_artifact_path is None:
-        print("[WARN] DL enabled but no artifact resolved; DL features will be skipped.")
-
-    if dl_runtime_enabled and dl_artifact_path is not None:
-        artifact_regime = infer_dl_regime_from_artifact_path(dl_artifact_path)
-    if dl_runtime_enabled and not dl_regime and artifact_regime:
-        dl_regime = artifact_regime
-        print(f"[DL] inferred dl_regime={dl_regime} from artifact path")
-
-    if not dl_regime:
-        dl_regime = DEFAULT_DL_REGIME
-        print(
-            "[WARN] DL_REGIME not set and artifact did not encode regime; "
-            f"defaulting dl_regime={DEFAULT_DL_REGIME}."
-        )
-
-    dl_surface["dl_regime"] = dl_regime
-
-    # Infer feature_set from the artifact path when not explicitly overridden
-    # via the DL_FEATURE_SET environment variable.
-    if dl_runtime_enabled and dl_artifact_path is not None and not os.getenv("DL_FEATURE_SET", "").strip():
-        artifact_feature_set = infer_dl_feature_set_from_artifact_path(dl_artifact_path)
+    if dl_runtime_enabled and explicit_dl_artifact and not os.getenv("DL_FEATURE_SET", "").strip():
+        artifact_feature_set = infer_dl_feature_set_from_artifact_path(Path(explicit_dl_artifact))
         if artifact_feature_set:
             dl_surface["feature_set"] = artifact_feature_set
             print(f"[DL] inferred feature_set={artifact_feature_set} from artifact path")
 
-    # Guard: DL artifact loading requires the TrendVol surface.
-    # Other surfaces do not yet have DL artifact support; disable DL with a
-    # descriptive message rather than failing silently or raising a KeyError.
-    if dl_runtime_enabled and _resolved_behavioral_surface_id != "trend_vol":
-        print(
-            f"[INFO] DL artifact loading is not yet implemented for behavioral surface "
-            f"{_resolved_behavioral_surface_id!r} (only 'trend_vol' is supported). "
-            "DL features will not be attached for this run.  "
-            "Implement a surface-specific artifact resolver to enable DL support."
-        )
-        dl_runtime_enabled = False
-
-    if dl_runtime_enabled and dl_regime not in VALID_DL_REGIMES:
-        print(
-            f"[WARN] DL features will not be attached (baseline mode): "
-            f"invalid dl_regime={dl_regime!r}. Valid values={sorted(VALID_DL_REGIMES)} "
-            f"(no 'all' support in v1)."
-        )
-        dl_runtime_enabled = False
-
-    # Resolve the canonical behavioral state for this run.
-    # For TrendVol: the dl_regime is the state ID.
-    # For other surfaces: no state mapping from DL artifacts yet; state is None.
-    _resolved_behavioral_state_id = resolve_behavioral_state_for_surface(
-        _resolved_behavioral_surface_id, dl_regime
+    artifact_runtime = resolve_behavioral_artifact_runtime(
+        dl_runtime_enabled=dl_runtime_enabled,
+        behavioral_surface_id=_resolved_behavioral_surface_id,
+        behavioral_surface_version=_resolved_behavioral_surface.surface_version,
+        dl_surface=dl_surface,
+        behavioral_state_id=explicit_behavioral_state,
+        explicit_artifact_path=explicit_dl_artifact or None,
     )
+    for line in artifact_runtime.diagnostics:
+        print(f"[DL] {line}")
+
+    dl_runtime_enabled = artifact_runtime.enabled
+    dl_artifact_path = artifact_runtime.artifact_path
+    dl_surface = artifact_runtime.surface_selector
+    dl_regime = str(dl_surface.get("dl_regime", "")).strip().upper()
+    _resolved_behavioral_state_id = artifact_runtime.state_id
+    preloaded_daily_dl = artifact_runtime.d1_predictions
+    artifact_regime = dl_surface.get("dl_regime")
 
     dl_mode_tag = "__dl_enabled" if dl_runtime_enabled else "__baseline"
     dl_surface_str = _dl_surface_string(dl_surface)
@@ -1559,7 +1516,16 @@ def main(
     # msml_regime is a Trend/Vol compatibility concept; propagate it only for
     # trend_vol surfaces.  For other surfaces it is not meaningful.
     if _resolved_behavioral_surface_id == "trend_vol":
-        requested_msml_regime = os.getenv("MSML_REGIME", dl_regime).strip().upper() or dl_regime
+        fallback_msml_state = str(
+            _resolved_behavioral_state_id
+            or dl_surface.get("dl_regime")
+            or dl_surface.get("state_id")
+            or "LVTF"
+        ).strip().upper()
+        requested_msml_regime = (
+            os.getenv("MSML_REGIME", dl_regime).strip().upper()
+            or fallback_msml_state
+        )
     else:
         requested_msml_regime = os.getenv("MSML_REGIME", "").strip().upper() or "unknown"
     overlap_only = os.getenv("OVERLAP_ONLY", "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -1848,6 +1814,7 @@ def main(
                         pair_name=pair_name,
                         surface=dl_surface,
                         artifact_path=dl_artifact_path,
+                        daily_df=preloaded_daily_dl if dl_runtime_enabled else None,
                     )
                     dl_cols_attached = get_dl_feature_columns(processed_df)
                     print(
