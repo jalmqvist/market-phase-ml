@@ -107,7 +107,6 @@ RUN_WALKFORWARD = True
 # DL surface integration (optional feature layer, v1 single-surface)
 # DL_SIGNALS_ENABLED = True
 DL_SIGNALS_ENABLED = os.environ.get("DL_SIGNALS_ENABLED", "false").lower() == "true"
-DEFAULT_DL_REGIME = "LVTF"
 DL_SIGNAL_SURFACE = {
     "model": os.getenv("DL_MODEL", "mlp"),
     "target_horizon": 24,
@@ -1479,12 +1478,6 @@ def main(
     explicit_dl_artifact = os.getenv("DL_PREDICTION_ARTIFACT_PATH", "").strip()
     explicit_behavioral_state = os.getenv("BEHAVIORAL_STATE_ID", "").strip() or None
 
-    if dl_runtime_enabled and not dl_regime:
-        dl_regime = DEFAULT_DL_REGIME
-        print(
-            "[WARN] DL_REGIME not set for legacy TrendVol compatibility; "
-            f"defaulting dl_regime={DEFAULT_DL_REGIME}."
-        )
     if dl_regime:
         dl_surface["dl_regime"] = dl_regime
 

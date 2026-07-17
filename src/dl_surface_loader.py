@@ -344,15 +344,11 @@ def _normalize_surface_selector(surface: dict) -> dict[str, str | int]:
                 f"{empty_identity_fields}"
             )
         if selector["surface_id"] in default_registry:
-            surface_obj = default_registry.load(selector["surface_id"])
-            try:
-                canonical_state = surface_obj.get_state(selector["state_id"]).state_id
-            except KeyError as exc:
-                raise ValueError(
-                    f"Unknown state_id {selector['state_id']!r} for surface_id "
-                    f"{selector['surface_id']!r}"
-                ) from exc
-            selector["state_id"] = canonical_state
+            selector["state_id"] = _canonicalize_state_id(
+                selector["surface_id"],
+                selector["state_id"],
+                context="surface selector",
+            )
         return selector
 
     legacy_missing = sorted(set(LEGACY_SURFACE_REQUIRED_KEYS) - set(surface.keys()))
@@ -571,8 +567,9 @@ def _find_non_monotone_groups(df: pd.DataFrame) -> list[str]:
     Grain: ``(pair, model, target_horizon, feature_set, dl_regime)``.
     """
     non_monotone: list[str] = []
-    # Canonical identity columns may be absent in legacy artifacts until the
-    # compatibility adapter runs, so only group by columns currently present.
+    # validate_dl_artifact() runs before _apply_behavioral_identity(), so
+    # canonical identity columns may still be absent for legacy artifacts here.
+    # Group only by currently-present columns.
     group_cols = [c for c in MONOTONICITY_GROUP_COLUMNS if c in df.columns]
     for keys, grp in df.groupby(group_cols):
         if not grp[DL_TIMESTAMP_COL].is_monotonic_increasing:
@@ -728,6 +725,15 @@ def _normalize_legacy_dl_regime(value: object) -> str | None:
     return _legacy_trend_vol_state_id(normalized)
 
 
+def _canonicalize_state_id(surface_id: str, state_id: str, *, context: str) -> str:
+    try:
+        return default_registry.get_state(surface_id, state_id).state_id
+    except KeyError as exc:
+        raise ValueError(
+            f"{context}: unknown state_id {state_id!r} for surface_id {surface_id!r}"
+        ) from exc
+
+
 def _validate_behavioral_identity_values(df: pd.DataFrame) -> None:
     invalid: list[str] = []
     for surface_id in sorted(df["surface_id"].dropna().astype(str).unique().tolist()):
@@ -756,11 +762,13 @@ def _validate_behavioral_identity_values(df: pd.DataFrame) -> None:
         )
         for state_id in state_values:
             try:
-                surface.get_state(state_id)
-            except KeyError:
-                invalid.append(
-                    f"unknown state_id={state_id!r} for surface_id={surface_id!r}"
+                _canonicalize_state_id(
+                    surface_id,
+                    state_id,
+                    context="artifact canonical metadata validation",
                 )
+            except ValueError as exc:
+                invalid.append(str(exc))
                 break
     if invalid:
         raise ValueError("; ".join(invalid))

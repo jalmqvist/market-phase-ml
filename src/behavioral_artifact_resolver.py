@@ -15,6 +15,8 @@ from src.dl_config import (
 from src.dl_daily_features import compute_d1_features, empty_d1_df
 from src.dl_surface_loader import load_dl_surface
 
+_LEGACY_DEFAULT_TREND_VOL_REGIME = "LVTF"
+
 
 @dataclass(frozen=True)
 class BehavioralArtifactRuntime:
@@ -143,13 +145,17 @@ def _resolve_state_id(
         regime = str(selector.get("dl_regime", "")).strip().upper()
         if not regime:
             regime = infer_dl_regime_from_artifact_path(artifact_path) or ""
+        if not regime:
+            regime = _LEGACY_DEFAULT_TREND_VOL_REGIME
         if regime:
             try:
                 state_id = dl_regime_to_state(regime).state_id
             except KeyError as exc:
                 raise ValueError(
                     "Legacy TrendVol compatibility adapter failed while resolving "
-                    f"dl_regime={regime!r} from artifact={artifact_path}."
+                    f"dl_regime={regime!r} from artifact={artifact_path}. "
+                    "Ensure dl_regime is a valid TrendVol state token or provide "
+                    "an explicit BEHAVIORAL_STATE_ID/state_id."
                 ) from exc
             return state_id, regime
 
