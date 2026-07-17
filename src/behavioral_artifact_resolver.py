@@ -159,7 +159,11 @@ def _pair_overlap_pct(pairs: list[str]) -> float:
     if not artifact_pairs:
         return 0.0
     raw_active = os.getenv("ACTIVE_PAIRS", "")
-    requested_pairs = [p.strip().upper() for p in raw_active.split(",") if p.strip()]
+    requested_pairs = []
+    for raw_pair in raw_active.split(","):
+        normalized = raw_pair.strip().upper()
+        if normalized:
+            requested_pairs.append(normalized)
     if not requested_pairs:
         return 100.0
     requested_set = set(requested_pairs)

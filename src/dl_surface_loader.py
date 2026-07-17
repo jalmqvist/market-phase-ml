@@ -334,9 +334,14 @@ def _normalize_surface_selector(surface: dict) -> dict[str, str | int]:
             "target_horizon": int(surface["target_horizon"]),
             "feature_set": str(surface["feature_set"]).strip(),
         }
-        if not selector["surface_id"] or not selector["surface_version"] or not selector["state_id"]:
+        empty_identity_fields = [
+            key for key in ("surface_id", "surface_version", "state_id")
+            if not selector[key]
+        ]
+        if empty_identity_fields:
             raise ValueError(
-                "surface selector fields surface_id, surface_version and state_id must be non-empty."
+                "surface selector contains empty canonical identity fields: "
+                f"{empty_identity_fields}"
             )
         if selector["surface_id"] in default_registry:
             surface_obj = default_registry.load(selector["surface_id"])
@@ -566,6 +571,8 @@ def _find_non_monotone_groups(df: pd.DataFrame) -> list[str]:
     Grain: ``(pair, model, target_horizon, feature_set, dl_regime)``.
     """
     non_monotone: list[str] = []
+    # Canonical identity columns may be absent in legacy artifacts until the
+    # compatibility adapter runs, so only group by columns currently present.
     group_cols = [c for c in MONOTONICITY_GROUP_COLUMNS if c in df.columns]
     for keys, grp in df.groupby(group_cols):
         if not grp[DL_TIMESTAMP_COL].is_monotonic_increasing:
