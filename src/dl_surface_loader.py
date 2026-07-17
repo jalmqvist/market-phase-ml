@@ -363,8 +363,8 @@ def _normalize_surface_selector(surface: dict) -> dict[str, str | int]:
                 f"Unknown dl_regime: {regime!r}. "
                 f"Valid values: {sorted(VALID_DL_REGIMES)}"
             )
-        trend_vol = default_registry.load("trend_vol")
-        state_id = trend_vol.get_state(regime).state_id
+        trend_vol = _load_trend_vol_surface()
+        state_id = _legacy_trend_vol_state_id(regime)
         return {
             "surface_id": trend_vol.surface_id,
             "surface_version": trend_vol.surface_version,
@@ -508,7 +508,7 @@ def _apply_behavioral_identity(
         needs_version = out["surface_version"].isna() | (
             out["surface_version"].astype(str).str.strip() == ""
         )
-        trend_vol_version = default_registry.load("trend_vol").surface_version
+        trend_vol_version = _load_trend_vol_surface().surface_version
         trend_vol_rows = out["surface_id"].astype(str) == "trend_vol"
         out.loc[needs_version & trend_vol_rows, "surface_version"] = trend_vol_version
 
@@ -697,6 +697,26 @@ def _normalize_pair(pair: str) -> str | None:
     return None
 
 
+def _load_trend_vol_surface():
+    try:
+        return default_registry.load("trend_vol")
+    except KeyError as exc:
+        raise ValueError(
+            "Legacy TrendVol compatibility adapter requires 'trend_vol' surface "
+            "to be registered, but it was not available in the behavioral registry."
+        ) from exc
+
+
+def _legacy_trend_vol_state_id(dl_regime: str) -> str:
+    try:
+        return default_registry.get_state("trend_vol", dl_regime).state_id
+    except KeyError as exc:
+        raise ValueError(
+            "Legacy TrendVol compatibility adapter failed while resolving "
+            f"dl_regime={dl_regime!r}. Expected a valid TrendVol state token."
+        ) from exc
+
+
 def _normalize_legacy_dl_regime(value: object) -> str | None:
     if value is None:
         return None
@@ -705,7 +725,7 @@ def _normalize_legacy_dl_regime(value: object) -> str | None:
         return None
     if normalized not in VALID_DL_REGIMES:
         return None
-    return default_registry.get_state("trend_vol", normalized).state_id
+    return _legacy_trend_vol_state_id(normalized)
 
 
 def _validate_behavioral_identity_values(df: pd.DataFrame) -> None:

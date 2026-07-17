@@ -7,7 +7,7 @@ from typing import Any
 
 import pandas as pd
 
-from mpml.behavioral.registry import default_registry
+from mpml.behavioral.compat import dl_regime_to_state
 from src.dl_config import (
     infer_dl_regime_from_artifact_path,
     resolve_dl_prediction_artifact_path,
@@ -133,14 +133,10 @@ def _resolve_state_id(
     if explicit_state_id:
         state_id = str(explicit_state_id).strip()
         if state_id:
-            if behavioral_surface_id in default_registry:
-                state_id = default_registry.get_state(behavioral_surface_id, state_id).state_id
             return state_id, None
 
     selector_state = str(selector.get("state_id", "")).strip()
     if selector_state:
-        if behavioral_surface_id in default_registry:
-            selector_state = default_registry.get_state(behavioral_surface_id, selector_state).state_id
         return selector_state, None
 
     if behavioral_surface_id == "trend_vol":
@@ -148,7 +144,13 @@ def _resolve_state_id(
         if not regime:
             regime = infer_dl_regime_from_artifact_path(artifact_path) or ""
         if regime:
-            state_id = default_registry.get_state("trend_vol", regime).state_id
+            try:
+                state_id = dl_regime_to_state(regime).state_id
+            except KeyError as exc:
+                raise ValueError(
+                    "Legacy TrendVol compatibility adapter failed while resolving "
+                    f"dl_regime={regime!r} from artifact={artifact_path}."
+                ) from exc
             return state_id, regime
 
     return None, None
