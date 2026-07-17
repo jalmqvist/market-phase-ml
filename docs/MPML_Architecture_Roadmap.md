@@ -678,6 +678,26 @@ MPML
 
 Each repository owns exactly one layer.
 
+## Repository Boundary
+
+Behavioral prediction artifacts form the contractual boundary between MSML and MPML.
+
+MSML is responsible for
+
+- constructing Behavioral Surfaces
+- generating Behavioral predictions
+- exporting canonical artifact metadata
+
+MPML is responsible for
+
+- discovering compatible artifacts
+- validating artifact metadata
+- consuming predictions during walk-forward evaluation
+
+MPML should never recreate Behavioral Surface identity internally.
+
+Instead, Behavioral identity is imported directly from MSML artifacts.
+
 ---
 
 # Behavioral Surface Ownership
@@ -839,60 +859,82 @@ Deliverables
 
 This phase intentionally preserves existing runtime behaviour.
 
----
+## Phase B (Completed)
 
-## Phase B
+### Behavioral Surface Runtime Integration
 
-Behavioral Surface Integration
+### Objective
 
-Objective
+Replace hardcoded runtime assumptions based on `dl_regime` with Behavioral Surface metadata while preserving existing runtime behaviour.
 
-Replace all runtime assumptions based on `dl_regime` with Behavioral Surface identity (`surface_id`, `surface_version`, `state_id`). Runtime components should consume the canonical artifact identity directly rather than reconstructing Behavioral Surface information from legacy fields.
-
-The Behavioral Surface Registry introduced in Phase A establishes the required
-abstractions, but MPML still propagates Trend/Vol concepts (for example
-`DL_REGIME`) throughout the runtime.
-
-This phase removes those assumptions and allows the runtime to operate on
-
-```
-surface_id
-
-+
-
-state_id
-```
-
-rather than
-
-```
-LVTF
-
-HVTF
-
-LVR
-
-HVR
-```
+The Behavioral Surface Registry introduced in Phase A now propagates canonical Behavioral Surface metadata throughout the runtime.
 
 Deliverables
 
 - Surface-aware runtime
 - Behavioral Surface propagated through experiment pipeline
-- Behavioral State propagated through selector pipeline
-- Surface-aware manifests
-- Surface-aware artifact loading
-- Surface-aware experiment metadata
+- Behavioral Surface manifests
+- Canonical experiment metadata
+- Runtime compatibility bridge
+- Backward-compatible Trend/Vol execution
 
-No Strategy Registry work is included in this phase.
+Notes
 
----
+Runtime behaviour intentionally remains unchanged.
+
+Non-Trend/Vol Behavioral Surfaces may execute without DL predictions while the runtime migration is completed.
+
+------
 
 ## Phase C
 
-Strategy Registry
+### Behavioral Prediction Artifact Integration
 
-Objective
+### Objective
+
+Enable MPML to consume canonical Behavioral prediction artifacts produced by MSML.
+
+Behavioral prediction artifacts are no longer identified by `dl_regime`.
+
+Instead, every artifact is identified by
+
+```
+surface_id
+
+surface_version
+
+state_id
+
+model
+
+target_horizon
+
+feature_set
+```
+
+MPML should discover, validate and consume these artifacts directly without reconstructing Behavioral identity from legacy metadata.
+
+Deliverables
+
+- Behavioral Artifact Resolver
+- Surface-aware artifact discovery
+- Canonical artifact validation
+- Runtime prediction loading
+- Prediction cache integration
+- Backward compatibility with legacy Trend/Vol artifacts
+- Runtime logging for Behavioral artifact loading
+
+No strategy-selection changes are included in this phase.
+
+The purpose of Phase C is to establish a clean producer–consumer boundary between MSML and MPML.
+
+------
+
+## Phase D
+
+### Strategy Registry
+
+### Objective
 
 Generalize strategy selection using metadata.
 
@@ -904,16 +946,15 @@ Deliverables
 - Supported Behavioral States
 - Strategy compatibility metadata
 
-Strategies become metadata-driven objects rather than hardcoded selector
-choices.
+Strategies become metadata-driven objects rather than hardcoded selector choices.
 
----
+------
 
-## Phase D
+## Phase E
 
-Recommendation Engine
+### Recommendation Engine
 
-Objective
+### Objective
 
 Generate metadata-driven strategy recommendations.
 
@@ -921,18 +962,18 @@ Deliverables
 
 - Ranked recommendations
 - Recommendation object
-- Recommendation export
 - Generic ranking engine
+- Recommendation export
 
 Recommendations become the primary interface consumed by MRML.
 
----
+------
 
-## Phase E
+## Phase F
 
-Experiment Metadata
+### Experiment Metadata
 
-Objective
+### Objective
 
 Strengthen experiment provenance.
 
@@ -944,13 +985,13 @@ Deliverables
 - Strategy Registry provenance
 - Recommendation provenance
 
----
+------
 
-## Phase F
+## Phase G
 
-MRML Integration
+### MRML Integration
 
-Objective
+### Objective
 
 Expose a stable recommendation interface.
 
