@@ -439,6 +439,58 @@ identical results.
 
 ---
 
+## Phase C — Runtime Hardening
+
+Phase C hardens the Behavioral Prediction Artifact runtime without introducing
+new functionality.
+
+### Changes
+
+| Area | Change |
+|---|---|
+| **Canonical Identity** | `BEHAVIORAL_SURFACE_ID`, `BEHAVIORAL_SURFACE_VERSION`, `BEHAVIORAL_STATE_ID` are now documented in `src/dl_config.py` alongside the legacy `DL_SURFACE_REGIME` variable. `get_canonical_behavioral_identity()` returns a canonical identity dict when all three are set. |
+| **Artifact Validation** | Duplicate detection in `validate_dl_artifact` uses the full canonical identity key `(pair, timestamp, surface_id, surface_version, state_id, model, target_horizon, feature_set)` for canonical artifacts, allowing multi-state cubes while still rejecting true duplicates. Legacy artifacts without canonical columns fall back to the MSML uniqueness contract. |
+| **Runtime Diagnostics** | `resolve_behavioral_artifact_runtime` now emits structured diagnostics with three sections: **Behavioral Prediction Artifact** (canonical identity fields), **Artifact Discovery** (resolved path, discovery mode, state resolution method), and **Prediction Coverage** (h1/d1 row counts, pairs, overlap percentage). |
+| **Internal Cleanup** | Parquet KV metadata decoding is centralised in `schemas/parquet_utils.read_parquet_kv_metadata()`, removing the duplicate implementation in `src/experiment_surface_runtime.py`. Deprecated `is_datetime64tz_dtype` replaced with `isinstance(dtype, pd.DatetimeTZDtype)`. |
+| **Monotonicity docstring** | `_find_non_monotone_groups` docstring now correctly describes the canonical identity grouping grain. |
+
+### Canonical identity env vars
+
+| Variable | Description |
+|---|---|
+| `BEHAVIORAL_SURFACE_ID` | Canonical surface identifier (e.g. `"trend_vol"`) |
+| `BEHAVIORAL_SURFACE_VERSION` | Surface semantic version (e.g. `"1.0.0"`) |
+| `BEHAVIORAL_STATE_ID` | Canonical state identifier (e.g. `"LVTF"`) |
+
+When all three are set the runtime operates on canonical Behavioral Identity
+directly, without deriving state from `dl_regime`.  When any is absent the
+runtime falls back to the legacy `DL_SURFACE_REGIME` → `dl_regime` path via
+the TrendVol compatibility adapter.
+
+### Phase C diagnostics example
+
+```
+[DL] --- Behavioral Prediction Artifact ---
+[DL]   surface_id      : trend_vol
+[DL]   surface_version : 1.0.0
+[DL]   state_id        : LVTF
+[DL]   model           : mlp
+[DL]   target_horizon  : 24
+[DL]   feature_set     : price_trend
+[DL] --- Artifact Discovery ---
+[DL]   path            : /path/to/artifact.parquet
+[DL]   discovery       : explicit path
+[DL]   state_resolution: canonical state_id
+[DL] --- Prediction Coverage ---
+[DL]   h1_rows         : 4800
+[DL]   d1_rows         : 200
+[DL]   pairs           : EUR-USD GBP-USD USD-JPY
+[DL]   pair_overlap    : 100.0%
+[DL] Behavioral prediction runtime ready.
+```
+
+---
+
 ## Adding a New Behavioral Surface
 
 1. Create `mpml/behavioral/<your_surface>.py` and implement `BehavioralSurface`.
@@ -450,7 +502,7 @@ surfaces become available throughout MPML simply by being registered.
 
 ---
 
-## Out of Scope (Phase B)
+## Out of Scope (Phase B / Phase C)
 
 The following are explicitly deferred to later roadmap phases:
 
@@ -470,6 +522,10 @@ The following are explicitly deferred to later roadmap phases:
 - [`mpml/behavioral/trend_vol.py`](../../mpml/behavioral/trend_vol.py)
 - [`mpml/behavioral/reactive_jpy.py`](../../mpml/behavioral/reactive_jpy.py)
 - [`mpml/behavioral/compat.py`](../../mpml/behavioral/compat.py)
+- [`schemas/parquet_utils.py`](../../schemas/parquet_utils.py)
+- [`src/dl_config.py`](../../src/dl_config.py)
 - [`src/experiment_surface_runtime.py`](../../src/experiment_surface_runtime.py)
 - [`tests/test_behavioral_surface.py`](../../tests/test_behavioral_surface.py)
 - [`tests/test_runtime_experiment_surface.py`](../../tests/test_runtime_experiment_surface.py)
+- [`tests/test_behavioral_artifact_resolver.py`](../../tests/test_behavioral_artifact_resolver.py)
+

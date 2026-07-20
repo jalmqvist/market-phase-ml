@@ -45,8 +45,7 @@ import warnings
 from pathlib import Path
 
 import pandas as pd
-import pyarrow.parquet as pq
-from pandas.api.types import is_datetime64_dtype, is_datetime64tz_dtype
+from pandas.api.types import is_datetime64_dtype
 
 from mpml.behavioral.registry import default_registry
 from schemas.dl_artifact_schema import (
@@ -57,6 +56,7 @@ from schemas.dl_artifact_schema import (
     DL_SCHEMA_VERSION,
     DL_TIMESTAMP_COL,
 )
+from schemas.parquet_utils import read_parquet_kv_metadata
 
 # ---------------------------------------------------------------------------
 # Schema constants
@@ -217,7 +217,7 @@ def load_dl_surface(
 
     try:
         cube = pd.read_parquet(cube_path)
-        metadata = _read_parquet_metadata(cube_path)
+        metadata = read_parquet_kv_metadata(cube_path)
     except (OSError, ValueError, RuntimeError) as exc:
         return _handle_error(
             f"Failed to read DL signal cube {cube_path}: {exc}", strict
@@ -436,10 +436,29 @@ def validate_dl_artifact(
         raise ValueError(f"invalid pair values for normalization: {bad_values}")
     df[DL_PAIR_COL] = normalized_pairs
 
-    dup_mask = df.duplicated(subset=[DL_PAIR_COL, DL_TIMESTAMP_COL], keep=False)
+    # Determine the uniqueness grain from the columns available in the artifact.
+    # Canonical artifacts carry the full Behavioral Identity and use a broader key;
+    # legacy artifacts fall back to the MSML uniqueness contract.
+    _canonical_present = all(c in df.columns for c in ("surface_id", "surface_version", "state_id"))
+    if _canonical_present:
+        _uniqueness_cols: list[str] = [
+            DL_PAIR_COL, DL_TIMESTAMP_COL,
+            "surface_id", "surface_version", "state_id",
+            "model", "target_horizon", "feature_set",
+        ]
+    else:
+        _uniqueness_cols = [
+            c for c in (
+                DL_PAIR_COL, DL_TIMESTAMP_COL,
+                "model", "target_horizon", "feature_set", "dl_regime",
+            )
+            if c in df.columns
+        ] or [DL_PAIR_COL, DL_TIMESTAMP_COL]
+    dup_mask = df.duplicated(subset=_uniqueness_cols, keep=False)
     if dup_mask.any():
         raise ValueError(
-            f"duplicate ({DL_PAIR_COL}, {DL_TIMESTAMP_COL}) rows: {int(dup_mask.sum())}"
+            f"duplicate artifact identity rows — uniqueness key {_uniqueness_cols}: "
+            f"{int(dup_mask.sum())} affected rows"
         )
 
     non_monotone = _find_non_monotone_groups(df)
@@ -566,7 +585,11 @@ def _find_non_monotone_groups(df: pd.DataFrame) -> list[str]:
     """
     Return group identifiers where ``timestamp`` is not monotone increasing.
 
-    Grain: ``(pair, model, target_horizon, feature_set, dl_regime)``.
+    Grain: canonical identity columns from ``MONOTONICITY_GROUP_COLUMNS``
+    (``pair``, ``surface_id``, ``surface_version``, ``state_id``, ``model``,
+    ``target_horizon``, ``feature_set``) that are present in *df*.
+    For legacy artifacts that lack canonical identity columns the grain
+    degrades gracefully to whichever subset is available.
     """
     non_monotone: list[str] = []
     # validate_dl_artifact() runs before _apply_behavioral_identity(), so
@@ -633,23 +656,6 @@ def _metadata_value(metadata: dict[str, str], key: str) -> str | None:
         if normalized:
             return normalized
     return None
-
-
-def _read_parquet_metadata(cube_path: Path) -> dict[str, str]:
-    """Read file-level parquet metadata as decoded strings."""
-    try:
-        raw_metadata = pq.read_metadata(cube_path).metadata
-    except (OSError, ValueError, RuntimeError):
-        return {}
-    if not raw_metadata:
-        return {}
-    decoded: dict[str, str] = {}
-    for key, value in raw_metadata.items():
-        try:
-            decoded[key.decode("utf-8")] = value.decode("utf-8")
-        except (AttributeError, UnicodeDecodeError):
-            continue
-    return decoded
 
 
 def _extract_schema_version(df: pd.DataFrame, metadata: dict[str, str]) -> str | None:
@@ -807,7 +813,7 @@ def _validate_timezone_consistency(df: pd.DataFrame) -> list[str]:
 
 def _timezone_mode(series: pd.Series) -> str:
     """Return naive/aware/mixed timezone mode for a datetime-like series."""
-    if is_datetime64tz_dtype(series.dtype):
+    if isinstance(series.dtype, pd.DatetimeTZDtype):
         return "aware"
     try:
         converted = pd.to_datetime(series, errors="coerce", utc=False)
@@ -815,7 +821,7 @@ def _timezone_mode(series: pd.Series) -> str:
         return "mixed"
     if converted.isna().all():
         return "naive"
-    if is_datetime64tz_dtype(converted.dtype):
+    if isinstance(converted.dtype, pd.DatetimeTZDtype):
         return "aware"
     if is_datetime64_dtype(converted.dtype):
         return "naive"
