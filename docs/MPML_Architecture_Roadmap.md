@@ -619,6 +619,8 @@ behavioral_surface
 
 surface_version
 
+behavioral_feature_version
+
 git_commit
 
 experiment_type
@@ -661,7 +663,7 @@ BSVE
 
 ↓
 
-Behavioral Surface
+Behavioral Surfaces
 
 ↓
 
@@ -669,14 +671,29 @@ MSML
 
 ↓
 
-Behavioral Prediction Artifacts
+Behavioral Prediction Artifacts (H1)
+
+↓
+
+Behavioral Aggregation Layer
+
+↓
+
+Daily Behavioral Features (D1)
 
 ↓
 
 MPML
 ```
 
-Each repository owns exactly one layer.
+Each repository owns exactly one architectural layer.
+
+- **BSVE** defines Behavioral Surfaces and Behavioral States.
+- **MSML** generates predictive Behavioral Artifacts at the native modeling resolution.
+- **MPML** transforms those artifacts into features suitable for walk-forward trading evaluation.
+- **MRML** consumes MPML recommendations for portfolio construction and execution.
+
+The Behavioral Aggregation Layer forms MPML's adaptation boundary between hourly behavioral predictions and daily trading models. It is an internal MPML component and is not part of the external MSML artifact contract.
 
 ## Repository Boundary
 
@@ -697,6 +714,80 @@ MPML is responsible for
 MPML should never recreate Behavioral Surface identity internally.
 
 Instead, Behavioral identity is imported directly from MSML artifacts.
+
+---
+
+## Behavioral Aggregation Layer
+
+Behavioral prediction artifacts produced by MSML currently operate at **hourly (H1)** resolution, while MPML performs walk-forward evaluation on **daily (D1)** market data.
+
+To preserve causal evaluation while allowing behavioral information to influence D1 models, MPML introduces a Behavioral Aggregation Layer.
+
+Responsibilities:
+
+```
+Behavioral Prediction Artifact (H1)
+
+↓
+
+Temporal validation
+
+↓
+
+Leakage-safe aggregation
+
+↓
+
+Daily behavioral feature generation
+
+↓
+
+D1 feature matrix
+```
+
+The aggregation layer:
+
+- validates prediction timestamps
+- preserves causal ordering
+- performs H1→D1 temporal alignment
+- generates deterministic daily behavioral summary features
+- exposes a stable D1 interface to downstream models
+
+This layer is an internal implementation detail of MPML.
+
+MSML remains unaware of the aggregation process.
+
+Future versions of MPML operating natively on H1 data may bypass this layer entirely while preserving the external repository interface.
+
+---
+
+## Behavioral Feature Contract
+
+Behavioral prediction artifacts remain the canonical interface between MSML and MPML.
+
+Within MPML, these artifacts are transformed into a stable set of daily behavioral features suitable for D1 machine-learning models.
+
+Current features include
+
+```
+dl_signal_mean_24h
+
+dl_signal_std_24h
+
+dl_signal_last
+
+dl_signal_abs_mean
+
+dl_signal_flip_count
+```
+
+These features summarize the behavior of hourly prediction signals over the previous trading day while preserving causal ordering.
+
+They are intentionally treated as optional model features.
+
+Models remain fully functional when behavioral features are unavailable, allowing historical Trend/Vol experiments and non-behavioral evaluations to execute without modification.
+
+Future behavioral features may be added without changing the external artifact contract.
 
 ---
 
@@ -886,7 +977,21 @@ Non-Trend/Vol Behavioral Surfaces may execute without DL predictions while the r
 
 ------
 
-## Phase C
+## Phase C (Completed)
+
+---
+
+### Phase C Completion Note
+
+Phase C establishes the architectural integration between MSML and MPML.
+
+Completion of this phase refers to the implementation of the canonical artifact interface, runtime discovery, behavioral aggregation and feature propagation.
+
+Future Behavioral Surfaces (Reactive CHF, Persistent, etc.) require no architectural changes and therefore do not extend Phase C.
+
+They are considered research assets operating within the completed Behavioral Prediction Artifact framework.
+
+---
 
 ### Behavioral Prediction Artifact Integration
 
@@ -914,19 +1019,51 @@ feature_set
 
 MPML should discover, validate and consume these artifacts directly without reconstructing Behavioral identity from legacy metadata.
 
-Deliverables
+### Deliverables
 
 - Behavioral Artifact Resolver
 - Surface-aware artifact discovery
 - Canonical artifact validation
 - Runtime prediction loading
 - Prediction cache integration
+- Behavioral Aggregation Layer
+- Leakage-safe H1→D1 aggregation
+- Daily behavioral feature generation
 - Backward compatibility with legacy Trend/Vol artifacts
 - Runtime logging for Behavioral artifact loading
 
-No strategy-selection changes are included in this phase.
+Behavioral prediction artifacts become optional behavioral features within the existing walk-forward machine-learning pipeline.
 
-The purpose of Phase C is to establish a clean producer–consumer boundary between MSML and MPML.
+This phase intentionally preserves existing phase prediction, strategy-selection and recommendation algorithms.
+
+Its purpose is to establish a clean producer–consumer boundary between MSML and MPML while enabling behavioral information to participate in existing model pipelines through stable interfaces.
+
+### Phase C Validation
+
+Phase C has now been validated through end-to-end integration between MSML and MPML.
+
+Behavioral Prediction Artifacts produced by MSML have been successfully consumed by MPML using the canonical Behavioral Surface identity
+
+```
+surface_id
+surface_version
+state_id
+```
+
+without reconstructing Behavioral identity from legacy runtime metadata.
+
+Validation has demonstrated:
+
+- successful artifact discovery
+- canonical identity propagation
+- leakage-safe H1→D1 behavioral aggregation
+- downstream feature generation
+- walk-forward strategy adaptation
+- measurable trading impact across multiple Behavioral Surfaces
+
+Behavioral Prediction Artifacts therefore constitute the stable producer–consumer interface between MSML and MPML.
+
+Future Behavioral Surfaces should integrate through this interface without requiring architectural changes to MPML.
 
 ------
 
@@ -1016,6 +1153,7 @@ Possible future work
 - Reinforcement-learning selectors
 - Online adaptation
 - Experiment database / MLflow backend
+- Native H1 MPML execution (removing the D1 aggregation layer)
 
 ---
 
