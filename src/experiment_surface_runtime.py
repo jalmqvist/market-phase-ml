@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from experiment_semantics import EXPERIMENT_SURFACE_VERSION
+from schemas.parquet_utils import read_parquet_kv_metadata as _read_parquet_kv_metadata
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
@@ -71,26 +72,6 @@ def _flatten_metadata(raw: Any, *, prefix: str = "") -> dict[str, Any]:
         if isinstance(value, dict):
             flattened.update(_flatten_metadata(value, prefix=full_key))
     return flattened
-
-
-def _read_parquet_kv_metadata(path: Path) -> dict[str, Any]:
-    try:
-        import pyarrow.parquet as pq
-    except Exception:
-        return {}
-    try:
-        raw_metadata = pq.read_metadata(path).metadata
-    except Exception:
-        return {}
-    if not raw_metadata:
-        return {}
-    decoded: dict[str, Any] = {}
-    for key, value in raw_metadata.items():
-        try:
-            decoded[key.decode("utf-8")] = value.decode("utf-8")
-        except Exception:
-            continue
-    return decoded
 
 
 def _read_sidecar_metadata(path: Path) -> dict[str, Any]:

@@ -11,11 +11,26 @@ DL_PREDICTION_ARTIFACT_PATH absolute or relative path to one exported
                             DL surface parquet artifact (preferred).
 DL_SIGNALS_CUBE_PATH        backward-compatible alias for
                             DL_PREDICTION_ARTIFACT_PATH.
+
+Canonical Behavioral Identity (Phase C — preferred)
+-----------------------------------
+BEHAVIORAL_SURFACE_ID       Behavioral Surface identifier (e.g. "trend_vol",
+                            "reactive_jpy").  Overrides DL_SURFACE_REGIME-based
+                            surface inference when all three canonical vars are
+                            set.
+BEHAVIORAL_SURFACE_VERSION  Semantic version of the Behavioral Surface
+                            (e.g. "1.0.0").
+BEHAVIORAL_STATE_ID         Canonical state identifier within the surface
+                            (e.g. "LVTF" for trend_vol).
+
+Legacy surface selection (backward compatible)
+-----------------------------------
 DL_SURFACE_MODEL            model name identifier  (default: lstm)
 DL_SURFACE_TARGET_HORIZON   target horizon in bars as an integer (default: 24)
 DL_SURFACE_FEATURE_SET      feature set identifier (default: price_trend)
 DL_SURFACE_REGIME           dl_regime for surface selection (default: HVTF)
                             Valid values: HVTF, LVTF, HVR, LVR
+                            Deprecated: prefer BEHAVIORAL_STATE_ID.
 """
 from __future__ import annotations
 
@@ -88,7 +103,8 @@ def resolve_dl_prediction_artifact_path(path: Path | None = None) -> Path | None
 # Surface selection dict
 #
 # Identifies one unique signal surface in the consolidated cube.
-# dl_regime is required and must be one of: HVTF, LVTF, HVR, LVR.
+# dl_regime is a legacy TrendVol compatibility field — use BEHAVIORAL_STATE_ID
+# for canonical Behavioral Identity selection (Phase C and later).
 # target_horizon is the number of H1 bars (Int64).
 # ---------------------------------------------------------------------------
 DL_SIGNAL_SURFACE: dict = {
@@ -97,6 +113,50 @@ DL_SIGNAL_SURFACE: dict = {
     "feature_set": os.environ.get("DL_SURFACE_FEATURE_SET", "price_trend"),
     "dl_regime": os.environ.get("DL_SURFACE_REGIME", "HVTF"),
 }
+
+# ---------------------------------------------------------------------------
+# Canonical Behavioral Identity (Phase C)
+#
+# These variables provide the preferred, surface-agnostic identity for runtime
+# artifact selection.  When all three are set, runtime components can operate
+# on the canonical identity directly without falling back to dl_regime.
+#
+# Read by main.py and resolve_behavioral_artifact_runtime().  Exposed here for
+# centralised documentation and import convenience.
+# ---------------------------------------------------------------------------
+BEHAVIORAL_SURFACE_ID: str | None = os.environ.get("BEHAVIORAL_SURFACE_ID") or None
+BEHAVIORAL_SURFACE_VERSION: str | None = os.environ.get("BEHAVIORAL_SURFACE_VERSION") or None
+BEHAVIORAL_STATE_ID: str | None = os.environ.get("BEHAVIORAL_STATE_ID") or None
+
+
+def get_canonical_behavioral_identity() -> dict[str, str] | None:
+    """Return the canonical Behavioral Identity dict when all three env vars are set.
+
+    Returns a dict with keys ``surface_id``, ``surface_version``, ``state_id``
+    when ``BEHAVIORAL_SURFACE_ID``, ``BEHAVIORAL_SURFACE_VERSION`` and
+    ``BEHAVIORAL_STATE_ID`` are all non-empty.  Returns ``None`` otherwise so
+    that callers can fall back to the legacy ``dl_regime``-based path.
+
+    Example
+    -------
+    ::
+
+        identity = get_canonical_behavioral_identity()
+        if identity:
+            # Use canonical identity — no dl_regime needed.
+            ...
+        else:
+            # Fall back to legacy DL_SIGNAL_SURFACE / dl_regime path.
+            ...
+    """
+    if BEHAVIORAL_SURFACE_ID and BEHAVIORAL_SURFACE_VERSION and BEHAVIORAL_STATE_ID:
+        return {
+            "surface_id": BEHAVIORAL_SURFACE_ID,
+            "surface_version": BEHAVIORAL_SURFACE_VERSION,
+            "state_id": BEHAVIORAL_STATE_ID,
+        }
+    return None
+
 
 _VALID_DL_REGIMES: frozenset[str] = frozenset({"HVTF", "LVTF", "HVR", "LVR"})
 _DL_REGIME_PATTERN = re.compile(
