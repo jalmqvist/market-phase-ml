@@ -1,6 +1,10 @@
 # MPML Architecture Roadmap
 
-**Status:** Draft (July 2026)
+**Status:** Living Architecture (July 2026)
+
+This document describes both the long-term architecture and the current implementation state of MPML.
+
+Completed phases represent architectural milestones that have been implemented and experimentally validated. Future phases describe planned evolution while preserving compatibility with the completed architecture.
 
 ---
 
@@ -105,7 +109,42 @@ if strategy == TF4
 special-case logic
 ```
 
+---
 
+## Stable Repository Boundaries
+
+The boundary between repositories should be defined by canonical research artifacts rather than implementation details.
+
+Each repository owns exactly one stage of the research pipeline and communicates exclusively through stable artifact contracts.
+
+For example,
+
+```
+Behavioral Surface
+
+↓
+
+Behavioral Prediction Artifact
+
+↓
+
+Behavioral Features
+
+↓
+
+Strategy Recommendation
+```
+
+rather than through repository-specific internal data structures.
+
+Whenever practical:
+
+- producers define canonical metadata
+- consumers validate rather than reconstruct metadata
+- compatibility adapters remain isolated
+- canonical identities flow unchanged across repository boundaries
+
+This principle allows Behavioral Surfaces to evolve independently of MPML while preserving reproducibility and backward compatibility.
 
 ---
 
@@ -983,13 +1022,24 @@ Non-Trend/Vol Behavioral Surfaces may execute without DL predictions while the r
 
 ### Phase C Completion Note
 
-Phase C establishes the architectural integration between MSML and MPML.
+Phase C establishes the permanent architectural boundary between MSML and MPML.
 
-Completion of this phase refers to the implementation of the canonical artifact interface, runtime discovery, behavioral aggregation and feature propagation.
+Completion of this phase represents more than implementation of the Behavioral Prediction Artifact interface. It confirms that independently developed Behavioral Surfaces can be exported by MSML and consumed by MPML through a stable, surface-agnostic contract.
 
-Future Behavioral Surfaces (Reactive CHF, Persistent, etc.) require no architectural changes and therefore do not extend Phase C.
+Behavioral Prediction Artifacts now constitute the canonical producer–consumer interface between the repositories.
 
-They are considered research assets operating within the completed Behavioral Prediction Artifact framework.
+This interface has been validated through end-to-end walk-forward evaluation using multiple Behavioral Surfaces, demonstrating:
+
+- canonical Behavioral Identity propagation
+- deterministic artifact discovery
+- leakage-safe H1→D1 behavioral aggregation
+- behavioral feature generation
+- downstream strategy adaptation
+- reproducible changes in trading performance
+
+Future Behavioral Surfaces are expected to integrate through this interface without requiring architectural modifications to MPML.
+
+Subsequent phases therefore focus on extending MPML capabilities rather than continuing Behavioral Surface integration.
 
 ---
 
@@ -1037,6 +1087,10 @@ Behavioral prediction artifacts become optional behavioral features within the e
 This phase intentionally preserves existing phase prediction, strategy-selection and recommendation algorithms.
 
 Its purpose is to establish a clean producer–consumer boundary between MSML and MPML while enabling behavioral information to participate in existing model pipelines through stable interfaces.
+
+Behavioral Prediction Artifacts should now be regarded as stable research infrastructure rather than experimental extensions.
+
+Future architectural evolution should build upon this interface rather than replacing it.
 
 ### Phase C Validation
 
