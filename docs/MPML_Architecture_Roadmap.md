@@ -429,6 +429,18 @@ custom
 
 Evaluation Policies exist to preserve reproducible research while preventing unnecessary combinatorial growth.
 
+Current implementation status
+
+- `src/strategy_registry.py` defines `StrategyDefinition`,
+  `StrategyCapabilities`, `StrategyRegistry`, `EvaluationPolicy` and
+  `EvaluationPolicyRegistry`.
+- The default registry wraps existing TF and MR implementations rather than
+  rewriting them.
+- `phaseaware_default` preserves the legacy benchmark by resolving to
+  `TF4 + MR42` through policy metadata.
+- Runtime code now resolves the PhaseAware benchmark pair through the policy
+  registry while keeping walk-forward behavior unchanged.
+
 They are not recommendation engines.
 
 They simply define experimental scope.
@@ -1198,6 +1210,15 @@ Deliverables
 - Backward compatibility
 
 Strategies become metadata-driven objects rather than hardcoded selector choices.
+
+Status
+
+- Implemented
+- Default strategy metadata lives in `src/strategy_registry.py`
+- Capability queries include `all()`, `get()`, `by_family()`,
+  `supporting_surface()`, `supporting_state()`, and `supporting_asset()`
+- Evaluation policy `phaseaware_default` now supplies the legacy TF4/MR42
+  benchmark without hardcoded selector logic
 
 ------
 

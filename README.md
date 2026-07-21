@@ -243,6 +243,48 @@ and [`docs/MPML_Architecture_Roadmap.md`](docs/MPML_Architecture_Roadmap.md) for
 
 ---
 
+## Strategy Registry & Evaluation Policies
+
+MPML Phase D introduces a metadata-driven **Strategy Registry** and
+**Evaluation Policy Registry** for trading behaviors.
+
+```python
+from src.strategy_registry import (
+    get_default_policy_registry,
+    get_default_strategy_registry,
+    resolve_phaseaware_strategy_pair,
+)
+
+strategy_registry = get_default_strategy_registry()
+policy_registry = get_default_policy_registry()
+
+strategy_registry.by_family("TrendFollowing")
+strategy_registry.supporting_surface("trend_vol")
+
+resolve_phaseaware_strategy_pair("phaseaware_default")
+# ("TF4", "MR42")
+```
+
+The Strategy Registry is now the single source of truth for:
+
+- strategy definitions
+- strategy families
+- supported Behavioral Surfaces and Behavioral States
+- asset support
+- required indicators and features
+- metadata tags
+
+Evaluation Policies remain separate from compatibility metadata.
+
+For example, `phaseaware_default` preserves the legacy PhaseAware benchmark by
+expanding to `TF4 + MR42` through policy metadata rather than selector
+hardcoding.
+
+This PR does **not** change ranking, recommendation behavior, or walk-forward
+evaluation.
+
+---
+
 # Key Findings
 
 ## Classical MPML Findings

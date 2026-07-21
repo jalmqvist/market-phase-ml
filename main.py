@@ -22,11 +22,6 @@ from src.data import (
 )
 from src.phases import MarketPhaseDetector
 from src.strategies import run_backtests
-from src.strategies import (
-    TF1Strategy, TF2Strategy, TF3Strategy, TF4Strategy, TF5Strategy,
-    MR1Strategy, MR2Strategy, MR32Strategy, MR42Strategy, MR5Strategy,
-    TradeResult  # if needed for reporting
-)
 from src import visualization as viz
 from src.visualization import PhaseVisualizer
 from src.cache import (
@@ -52,6 +47,12 @@ from src.dl_config import (
 from src.dl_daily_features import load_and_aggregate_d1, D1_FEATURE_COLS
 from src.behavioral_artifact_resolver import resolve_behavioral_artifact_runtime
 from src.experiment_surface_runtime import build_runtime_experiment_surface
+from src.strategy_registry import (
+    DEFAULT_PHASEAWARE_POLICY_ID,
+    get_default_strategy_registry,
+    phaseaware_strategy_name,
+    resolve_phaseaware_strategy_pair,
+)
 from mpml.behavioral import registry as behavioral_registry
 from mpml.behavioral.compat import build_behavioral_surface_manifest_block
 from experiment_semantics import (
@@ -1272,13 +1273,14 @@ def generate_walkforward_folds_by_pos(
 
 def _make_strategy_dicts() -> tuple[dict, dict]:
     """Return fresh TF and MR strategy instances (call per fold to avoid state sharing)."""
+    registry = get_default_strategy_registry()
     tf_strategies = {
-        'TF1': TF1Strategy(), 'TF2': TF2Strategy(), 'TF3': TF3Strategy(),
-        'TF4': TF4Strategy(), 'TF5': TF5Strategy(),
+        definition.strategy_id: definition.instantiate()
+        for definition in registry.by_family("TrendFollowing")
     }
     mr_strategies = {
-        'MR1': MR1Strategy(), 'MR2': MR2Strategy(), 'MR32': MR32Strategy(),
-        'MR42': MR42Strategy(), 'MR5': MR5Strategy(),
+        definition.strategy_id: definition.instantiate()
+        for definition in registry.by_family("MeanReversion")
     }
     return tf_strategies, mr_strategies
 
@@ -1295,7 +1297,7 @@ def _compute_vol_threshold(df_train_bars: pd.DataFrame) -> float | None:
 
 
 def _run_baseline_bt(df_test: pd.DataFrame, pip_value: float) -> dict:
-    """Run PhaseAware(TF4/MR42) baseline backtest on a test slice.
+    """Run the default PhaseAware policy baseline backtest on a test slice.
 
     Uses module globals INITIAL_CAPITAL, SPREAD_PIPS, SLIPPAGE_PIPS,
     COMMISSION_PER_TRADE.
@@ -1308,9 +1310,16 @@ def _run_baseline_bt(df_test: pd.DataFrame, pip_value: float) -> dict:
         pip_value=pip_value,
         use_atr_sizing=False,
     )
-    pa = PhaseAwareStrategy("TF4", "MR42")
+    baseline_tf, baseline_mr = resolve_phaseaware_strategy_pair()
+    pa = PhaseAwareStrategy(baseline_tf, baseline_mr)
     pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
-    return backtester.run(df_test, pa_signals, "PhaseAware_TF4_MR42_WF", pa_sl, pa_tp)
+    return backtester.run(
+        df_test,
+        pa_signals,
+        f"{phaseaware_strategy_name()}_WF",
+        pa_sl,
+        pa_tp,
+    )
 
 
 def _build_causal_selector_training_data(
@@ -2040,8 +2049,7 @@ def main(
         **predictor_params,
         initial_capital=INITIAL_CAPITAL,
         use_atr_sizing=False,
-        tf_strategy_name='TF4',
-        mr_strategy_name='MR42',
+        evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
         spread_pips=SPREAD_PIPS,
         slippage_pips=SLIPPAGE_PIPS,
         commission_per_trade=COMMISSION_PER_TRADE,
@@ -2074,20 +2082,19 @@ def main(
                     df=df_ml_swap,
                     initial_capital=INITIAL_CAPITAL,
                     use_atr_sizing=False,
-                    tf_strategy_name='TF4',
-                    mr_strategy_name='MR42',
+                    evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
                     spread_pips=SPREAD_PIPS,
                     slippage_pips=SLIPPAGE_PIPS,
                     commission_per_trade=COMMISSION_PER_TRADE,
                     pip_value=pip_value,
                 )
 
-                # Extract just the PhaseAware_TF4_MR42 result
-                if 'PhaseAware_TF4_MR42' in result:
-                    ml_backtest_results[pair_name] = result['PhaseAware_TF4_MR42']
+                baseline_key = phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID)
+                if baseline_key in result:
+                    ml_backtest_results[pair_name] = result[baseline_key]
                     print(f'  ✓ {pair_name}: ML backtest complete')
                 else:
-                    print(f'  ✗ {pair_name}: PhaseAware_TF4_MR42 not in results')
+                    print(f'  ✗ {pair_name}: {baseline_key} not in results')
 
             except Exception as e:
                 traceback.print_exc()
@@ -2101,7 +2108,8 @@ def main(
         print('  Loaded ML backtest results from cache.')
 
     # ── Print and save ML backtest results ────────────────────────────────
-    print('\n  ML Backtest Results Summary (PhaseAware_TF4_MR42_ML):')
+    ml_strategy_name = f"{phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID)}_ML"
+    print(f'\n  ML Backtest Results Summary ({ml_strategy_name}):')
     print(f'  {"Pair":<12} {"Return %":>10} {"Sharpe":>8} '
           f'{"MaxDD %":>10} {"WinRate %":>10} {"Trades":>8}')
     print(f'  {"-" * 62}')
@@ -2116,7 +2124,7 @@ def main(
               f'{result["n_trades"]:>8}')
         ml_rows.append({
             'Pair': pair_name,
-            'Strategy': 'PhaseAware_TF4_MR42_ML',
+            'Strategy': ml_strategy_name,
             'Total Return (%)': result['total_return'],
             'Sharpe Ratio': result['sharpe_ratio'],
             'Max Drawdown (%)': result['max_drawdown'],
@@ -2167,8 +2175,7 @@ def main(
                     df=df,
                     initial_capital=INITIAL_CAPITAL,
                     use_atr_sizing=False,
-                    tf_strategy_name='TF4',
-                    mr_strategy_name='MR42',
+                    evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
                     spread_pips=SPREAD_PIPS,
                     slippage_pips=SLIPPAGE_PIPS,
                     commission_per_trade=COMMISSION_PER_TRADE,
@@ -2184,8 +2191,7 @@ def main(
                     df=df,
                     initial_capital=INITIAL_CAPITAL,
                     use_atr_sizing=True,
-                    tf_strategy_name='TF4',
-                    mr_strategy_name='MR42',
+                    evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
                     spread_pips=SPREAD_PIPS,
                     slippage_pips=SLIPPAGE_PIPS,
                     commission_per_trade=COMMISSION_PER_TRADE,
@@ -2411,8 +2417,7 @@ def main(
                     selector_trained=selector_trained,
                     tf_strategies=tf_strats,
                     mr_strategies=mr_strats,
-                    default_tf="TF4",
-                    default_mr="MR42",
+                    evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
                     tau_enter=WF_TAU,
                     tau_exit=max(0.0, WF_TAU - 0.05),
                     dl_debug_verbose=DL_DEBUG_VERBOSE,
@@ -2477,17 +2482,17 @@ def main(
     # 4d. COMPARE BASELINE VS DYNAMIC SELECTOR
     # ─────────────────────────────────────────
     if dynamic_results:
-        print('\n[4d/5] Comparing Baseline (PhaseAware_TF4_MR42) vs Dynamic Selector...\n')
+        baseline_key = phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID)
+        print(f'\n[4d/5] Comparing Baseline ({baseline_key}) vs Dynamic Selector...\n')
 
         comparison = []
 
         for pair_name in sorted(dynamic_results.keys()):
             if DEBUG_BASELINE_KEYS:
                 print(f"{pair_name}: available baseline keys: {list(hardcoded_results.get(pair_name, {}).keys())}")
-            baseline_key = 'PhaseAware_TF4_MR42'
 
             if pair_name not in hardcoded_results or baseline_key not in hardcoded_results[pair_name]:
-                print(f'  ⚠️  {pair_name}: No baseline PhaseAware_TF4_MR42')
+                print(f'  ⚠️  {pair_name}: No baseline {baseline_key}')
                 continue
 
             baseline = hardcoded_results[pair_name][baseline_key]
@@ -2512,7 +2517,7 @@ def main(
 
         if comp_df.empty:
             print(
-                "\nNo baseline comparison could be made. Check if run_backtests produced 'PhaseAware_TF4_MR42_hardcoded' for each pair.")
+                f"\nNo baseline comparison could be made. Check if run_backtests produced '{baseline_key}' for each pair.")
         else:
             print(f'\n--- Summary ---')
             print(f'Avg Return Δ:     {comp_df["Return Δ"].mean():+.2f}%')
@@ -2539,7 +2544,10 @@ def main(
         variants = {
             "A0_TF4": ("hardcoded", "TF4"),
             "A1_MR42": ("hardcoded", "MR42"),
-            "A2_PhaseAware_TF4_MR42": ("hardcoded", "PhaseAware_TF4_MR42"),
+            f"A2_{phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID)}": (
+                "hardcoded",
+                phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID),
+            ),
             A3_LABEL: ("dynamic", "StrategySelector_Dynamic"),  # key unused for dynamic source
         }
 
@@ -2704,8 +2712,7 @@ def main(
                     selector_trained={pair_name: selector},
                     tf_strategies=tf_strats,
                     mr_strategies=mr_strats,
-                    default_tf='TF4',
-                    default_mr='MR42',
+                    evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
                     tau_enter=WF_TAU,
                     tau_exit=max(0.0, WF_TAU - 0.05),
                     dl_debug_verbose=DL_DEBUG_VERBOSE,
@@ -2767,9 +2774,16 @@ def main(
                         saved_selected_folds[pair_name] += 1
 
                 # Baseline on same test slice
-                pa = PhaseAwareStrategy('TF4', 'MR42')
+                baseline_tf, baseline_mr = resolve_phaseaware_strategy_pair()
+                pa = PhaseAwareStrategy(baseline_tf, baseline_mr)
                 pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
-                base_res = backtester.run(df_test, pa_signals, 'PhaseAware_TF4_MR42_WF', pa_sl, pa_tp)
+                base_res = backtester.run(
+                    df_test,
+                    pa_signals,
+                    f"{phaseaware_strategy_name()}_WF",
+                    pa_sl,
+                    pa_tp,
+                )
 
                 # --- Optional: save equity curves + spike masks for plotting (small whitelist) ---
                 if DEBUG_SAVE_EQUITY_SERIES and (pair_name in DEBUG_SELECTED_PAIRS):
@@ -3156,8 +3170,7 @@ def main(
                         selector_trained={pair_name: selector},
                         tf_strategies=tf_strats,
                         mr_strategies=mr_strats,
-                        default_tf="TF4",
-                        default_mr="MR42",
+                        evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
                         tau_enter=tau,
                         tau_exit=max(0.0, tau - 0.05),
                         dl_debug_verbose=DL_DEBUG_VERBOSE,
@@ -3374,8 +3387,7 @@ def main(
                         selector_trained={pair_name: selector},
                         tf_strategies=tf_strats,
                         mr_strategies=mr_strats,
-                        default_tf="TF4",
-                        default_mr="MR42",
+                        evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
                         # policy-specific gating params (override defaults)
                         tau_enter=pol["tau_enter"],
                         tau_exit=pol["tau_exit"],

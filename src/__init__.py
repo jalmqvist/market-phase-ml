@@ -12,6 +12,15 @@ from src.strategies import (
 )
 from src.models import PhaseMLExperiment, PhaseMLPredictor
 from src.visualization import PhaseVisualizer
+from src.strategy_registry import (
+    StrategyCapabilities,
+    StrategyDefinition,
+    StrategyRegistry,
+    EvaluationPolicy,
+    EvaluationPolicyRegistry,
+    get_default_strategy_registry,
+    get_default_policy_registry,
+)
 
 __all__ = [
     'MarketDataPipeline',
@@ -25,4 +34,11 @@ __all__ = [
     'PhaseMLExperiment',
     'PhaseVisualizer',
     'PhaseMLPredictor',
+    'StrategyCapabilities',
+    'StrategyDefinition',
+    'StrategyRegistry',
+    'EvaluationPolicy',
+    'EvaluationPolicyRegistry',
+    'get_default_strategy_registry',
+    'get_default_policy_registry',
 ]
