@@ -191,7 +191,13 @@ class EvaluationPolicyRegistry:
                     f"EvaluationPolicyRegistry: {policy.policy_id!r} must reference at least one strategy."
                 )
             for strategy_id in policy.strategies:
-                self._strategy_registry.get(strategy_id)
+                try:
+                    self._strategy_registry.get(strategy_id)
+                except KeyError as exc:
+                    raise ValueError(
+                        f"EvaluationPolicyRegistry: {policy.policy_id!r} references "
+                        f"unknown strategy_id {strategy_id!r}."
+                    ) from exc
             self._policies[policy.policy_id] = policy
 
     def all(self) -> list[EvaluationPolicy]:

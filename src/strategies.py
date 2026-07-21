@@ -1415,6 +1415,10 @@ class Backtester:
                 'profit_factor': 0.0,
                 'n_trades': 0,
                 'avg_trade_pnl': 0.0,
+                'trades_per_year': 0.0,
+                'avg_pnl_per_trade': 0.0,
+                'avg_trade_duration': 0.0,
+                'pct_time_in_market': 0.0,
                 'gross_profit': 0.0,
                 'gross_loss': 0.0,
                 'phase_performance': pd.DataFrame()

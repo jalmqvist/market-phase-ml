@@ -98,7 +98,7 @@ class TestStrategyRegistry(unittest.TestCase):
                 )
             ]
         )
-        with self.assertRaises(KeyError):
+        with self.assertRaises(ValueError):
             EvaluationPolicyRegistry(
                 [
                     EvaluationPolicy(
