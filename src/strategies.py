@@ -9,6 +9,12 @@ from ta.trend import SMAIndicator, ADXIndicator
 from ta.momentum import StochasticOscillator, RSIIndicator
 
 from src.dl_daily_features import D1_FEATURE_COLS as _DL_D1_FEATURE_COLS
+from src.strategy_registry import (
+    DEFAULT_PHASEAWARE_POLICY_ID,
+    get_default_strategy_registry,
+    log_default_registry_summary,
+    resolve_phaseaware_strategy_pair,
+)
 
 @dataclass
 class TradeResult:
@@ -922,22 +928,6 @@ class PhaseAwareStrategy:
         'LV_Ranging': 1.0,
     }
 
-    # All available strategies per type
-    TF_STRATEGIES = {
-        'TF1': TF1Strategy,
-        'TF2': TF2Strategy,
-        'TF3': TF3Strategy,
-        'TF4': TF4Strategy,
-        'TF5': TF5Strategy,
-    }
-    MR_STRATEGIES = {
-        'MR1': MR1Strategy,
-        'MR2': MR2Strategy,
-        'MR32': MR32Strategy,
-        'MR42': MR42Strategy,
-        'MR5': MR5Strategy,
-    }
-
     def __init__(self,
                  tf_strategy_name: str = 'TF3',
                  mr_strategy_name: str = 'MR3'):
@@ -950,19 +940,25 @@ class PhaseAwareStrategy:
                               One of: MR1, MR2, MR3, MR32, MR42, MR5
                               Default: MR3 (RSI crossover — most robust baseline)
         """
-        if tf_strategy_name not in self.TF_STRATEGIES:
+        registry = get_default_strategy_registry()
+        trend_strategy_ids = [definition.strategy_id for definition in registry.by_family("TrendFollowing")]
+        mean_reversion_strategy_ids = [definition.strategy_id for definition in registry.by_family("MeanReversion")]
+
+        if tf_strategy_name not in trend_strategy_ids:
             raise ValueError(
                 f"Unknown TF strategy '{tf_strategy_name}'. "
-                f"Choose from: {list(self.TF_STRATEGIES.keys())}"
+                f"Choose from: {trend_strategy_ids}"
             )
-        if mr_strategy_name not in self.MR_STRATEGIES:
+        if mr_strategy_name not in mean_reversion_strategy_ids:
             raise ValueError(
                 f"Unknown MR strategy '{mr_strategy_name}'. "
-                f"Choose from: {list(self.MR_STRATEGIES.keys())}"
+                f"Choose from: {mean_reversion_strategy_ids}"
             )
 
-        self.tf_strategy = self.TF_STRATEGIES[tf_strategy_name]()
-        self.mr_strategy = self.MR_STRATEGIES[mr_strategy_name]()
+        tf_definition = registry.get(tf_strategy_name)
+        mr_definition = registry.get(mr_strategy_name)
+        self.tf_strategy = tf_definition.instantiate()
+        self.mr_strategy = mr_definition.instantiate()
         self.tf_strategy_name = tf_strategy_name
         self.mr_strategy_name = mr_strategy_name
         self.name = f'PhaseAware_{tf_strategy_name}_{mr_strategy_name}'
@@ -1419,6 +1415,10 @@ class Backtester:
                 'profit_factor': 0.0,
                 'n_trades': 0,
                 'avg_trade_pnl': 0.0,
+                'trades_per_year': 0.0,
+                'avg_pnl_per_trade': 0.0,
+                'avg_trade_duration': 0.0,
+                'pct_time_in_market': 0.0,
                 'gross_profit': 0.0,
                 'gross_loss': 0.0,
                 'phase_performance': pd.DataFrame()
@@ -1527,6 +1527,7 @@ def run_backtests(
         use_atr_sizing:  bool  = False,
         tf_strategy_name: str  = 'TF3',
         mr_strategy_name: str  = 'MR3',
+        evaluation_policy_id: str | None = None,
         spread_pips: float = 1.0,
         slippage_pips: float = 0.5,
         commission_per_trade: float = 0.0,
@@ -1549,11 +1550,20 @@ def run_backtests(
                           If False, use hardcoded size multipliers.
         tf_strategy_name: TF strategy to use in PhaseAware (default: TF3)
         mr_strategy_name: MR strategy to use in PhaseAware (default: MR3)
+        evaluation_policy_id: Optional evaluation policy that resolves the
+                              PhaseAware TF/MR pair via the policy registry.
 
     Returns:
         Dictionary keyed by strategy name, each containing
         metrics dict from Backtester.run()
     """
+    log_default_registry_summary()
+
+    if evaluation_policy_id is not None:
+        tf_strategy_name, mr_strategy_name = resolve_phaseaware_strategy_pair(
+            evaluation_policy_id
+        )
+
     # Verify required columns
     required_cols = [
         'rsi', 'adx', 'plus_di', 'minus_di',
@@ -1575,19 +1585,14 @@ def run_backtests(
         use_atr_sizing=use_atr_sizing,
     )
 
+    strategy_registry = get_default_strategy_registry()
     tf_strategies = {
-        'TF1': TF1Strategy(),
-        'TF2': TF2Strategy(),
-        'TF3': TF3Strategy(),
-        'TF4': TF4Strategy(),
-        'TF5': TF5Strategy(),
+        definition.strategy_id: definition.instantiate()
+        for definition in strategy_registry.by_family("TrendFollowing")
     }
     mr_strategies = {
-        'MR1':  MR1Strategy(),
-        'MR2':  MR2Strategy(),
-        'MR32': MR32Strategy(),
-        'MR42': MR42Strategy(),
-        'MR5':  MR5Strategy(),
+        definition.strategy_id: definition.instantiate()
+        for definition in strategy_registry.by_family("MeanReversion")
     }
 
     results = {}
@@ -1675,8 +1680,9 @@ class StrategySelector_Dynamic:
             selector_trained: dict,
             tf_strategies: dict,
             mr_strategies: dict,
-            default_tf: str = "TF4",
-            default_mr: str = "MR42",
+            default_tf: str | None = None,
+            default_mr: str | None = None,
+            evaluation_policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
             tau_enter: float = 0.55,
             tau_exit: float = 0.50,
             min_hold_bars: int = 5,
@@ -1718,6 +1724,12 @@ class StrategySelector_Dynamic:
             default_tf:       Fallback TF strategy if selector fails
             default_mr:       Fallback MR strategy if selector fails
         """
+        if default_tf is None or default_mr is None:
+            policy_tf, policy_mr = resolve_phaseaware_strategy_pair(evaluation_policy_id)
+            if default_tf is None:
+                default_tf = policy_tf
+            if default_mr is None:
+                default_mr = policy_mr
         self.selector_trained = selector_trained
         self.tf_strategies = tf_strategies
         self.mr_strategies = mr_strategies
