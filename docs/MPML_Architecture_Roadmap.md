@@ -383,6 +383,58 @@ The Strategy Registry should describe strategy capabilities rather than encode s
 
 ---
 
+# Evaluation Policies
+
+Strategy compatibility and experiment scope are independent concepts.
+
+The Strategy Registry describes which strategies are capable of operating under a given Behavioral Surface or Behavioral State.
+
+Evaluation Policies determine which compatible strategies participate in a particular experiment.
+
+For example
+
+```
+Behavioral Surface
+
+↓
+
+Strategy Registry
+
+↓
+
+Compatible Strategies
+
+↓
+
+Evaluation Policy
+
+↓
+
+Strategies Evaluated
+```
+
+Typical policies may include
+
+```
+phaseaware_default
+
+registry_all
+
+trend_following_only
+
+mean_reversion_only
+
+custom
+```
+
+Evaluation Policies exist to preserve reproducible research while preventing unnecessary combinatorial growth.
+
+They are not recommendation engines.
+
+They simply define experimental scope.
+
+---
+
 # 8. Walk-forward Evaluation
 
 Walk-forward remains the canonical evaluation procedure.
@@ -1127,15 +1179,23 @@ Future Behavioral Surfaces should integrate through this interface without requi
 
 ### Objective
 
-Generalize strategy selection using metadata.
+Introduce trading behaviors as first-class architectural objects.
 
 Deliverables
 
-- Strategy metadata
+- StrategyDefinition abstraction
+
 - Strategy Registry
-- Supported Behavioral Surfaces
-- Supported Behavioral States
-- Strategy compatibility metadata
+
+- Capability metadata
+
+- Capability queries
+
+- Evaluation Policy Registry
+
+- Default PhaseAware policy
+
+- Backward compatibility
 
 Strategies become metadata-driven objects rather than hardcoded selector choices.
 
