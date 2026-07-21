@@ -429,7 +429,7 @@ def resolve_phaseaware_strategy_pair(
     ]
     if len(trend) != 1 or len(mean_reversion) != 1:
         raise ValueError(
-            f"EvaluationPolicyRegistry: {policy_id!r} must resolve exactly one "
+            f"resolve_phaseaware_strategy_pair: policy {policy_id!r} must resolve exactly one "
             "TrendFollowing and one MeanReversion strategy for PhaseAware."
         )
     strategy_registry.get(trend[0])
