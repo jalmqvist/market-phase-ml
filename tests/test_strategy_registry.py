@@ -9,7 +9,12 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from src.strategies import PhaseAwareStrategy, StrategySelector_Dynamic, run_backtests
+from src.strategies import (
+    PhaseAwareStrategy,
+    StrategySelector_Dynamic,
+    instantiate_evaluated_strategy_dicts,
+    run_backtests,
+)
 from src.strategy_registry import (
     DEFAULT_PHASEAWARE_POLICY_ID,
     EvaluationPolicy,
@@ -185,12 +190,20 @@ class TestStrategyRegistryIntegration(unittest.TestCase):
         _, _, _, selected = dynamic.generate_signals(df, "EURUSD", return_selected=True)
         self.assertTrue((selected == "MeanReversion").all())
 
+    def test_legacy_standalone_strategy_sets_exclude_mr3(self):
+        tf_strategies, mr_strategies = instantiate_evaluated_strategy_dicts()
+
+        self.assertEqual(list(tf_strategies), ["TF1", "TF2", "TF3", "TF4", "TF5"])
+        self.assertEqual(list(mr_strategies), ["MR1", "MR2", "MR32", "MR42", "MR5"])
+        self.assertNotIn("MR3", mr_strategies)
+
     def test_run_backtests_accepts_evaluation_policy_id(self):
         results = run_backtests(
             self._make_df(),
             initial_capital=1000.0,
             evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
         )
+        self.assertNotIn("MR3", results)
         self.assertIn("TF4", results)
         self.assertIn("MR42", results)
         self.assertIn(phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID), results)
