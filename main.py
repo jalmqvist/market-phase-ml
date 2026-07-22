@@ -21,7 +21,7 @@ from src.data import (
     resolve_market_data_source,
 )
 from src.phases import MarketPhaseDetector
-from src.strategies import run_backtests
+from src.strategies import instantiate_evaluated_strategy_dicts, run_backtests
 from src import visualization as viz
 from src.visualization import PhaseVisualizer
 from src.cache import (
@@ -49,7 +49,6 @@ from src.behavioral_artifact_resolver import resolve_behavioral_artifact_runtime
 from src.experiment_surface_runtime import build_runtime_experiment_surface
 from src.strategy_registry import (
     DEFAULT_PHASEAWARE_POLICY_ID,
-    get_default_strategy_registry,
     phaseaware_strategy_name,
     resolve_phaseaware_strategy_pair,
 )
@@ -1273,16 +1272,7 @@ def generate_walkforward_folds_by_pos(
 
 def _make_strategy_dicts() -> tuple[dict, dict]:
     """Return fresh TF and MR strategy instances (call per fold to avoid state sharing)."""
-    registry = get_default_strategy_registry()
-    tf_strategies = {
-        definition.strategy_id: definition.instantiate()
-        for definition in registry.by_family("TrendFollowing")
-    }
-    mr_strategies = {
-        definition.strategy_id: definition.instantiate()
-        for definition in registry.by_family("MeanReversion")
-    }
-    return tf_strategies, mr_strategies
+    return instantiate_evaluated_strategy_dicts()
 
 
 def _compute_vol_threshold(df_train_bars: pd.DataFrame) -> float | None:

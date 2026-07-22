@@ -16,6 +16,9 @@ from src.strategy_registry import (
     resolve_phaseaware_strategy_pair,
 )
 
+_DEFAULT_EVALUATED_TF_STRATEGY_IDS = ("TF1", "TF2", "TF3", "TF4", "TF5")
+_DEFAULT_EVALUATED_MR_STRATEGY_IDS = ("MR1", "MR2", "MR32", "MR42", "MR5")
+
 @dataclass
 class TradeResult:
     """Represents a single completed trade."""
@@ -32,6 +35,20 @@ class TradeResult:
     pnl:             float
     pnl_pct:         float
     exit_reason:     str          # 'SL', 'TP', or 'signal'
+
+
+def instantiate_evaluated_strategy_dicts() -> tuple[dict[str, object], dict[str, object]]:
+    """Instantiate the legacy standalone strategy set used by backtests."""
+    strategy_registry = get_default_strategy_registry()
+    tf_strategies = {
+        strategy_id: strategy_registry.get(strategy_id).instantiate()
+        for strategy_id in _DEFAULT_EVALUATED_TF_STRATEGY_IDS
+    }
+    mr_strategies = {
+        strategy_id: strategy_registry.get(strategy_id).instantiate()
+        for strategy_id in _DEFAULT_EVALUATED_MR_STRATEGY_IDS
+    }
+    return tf_strategies, mr_strategies
 
 # ─────────────────────────────────────────────
 #  NEW STRATEGIES
@@ -1585,15 +1602,7 @@ def run_backtests(
         use_atr_sizing=use_atr_sizing,
     )
 
-    strategy_registry = get_default_strategy_registry()
-    tf_strategies = {
-        definition.strategy_id: definition.instantiate()
-        for definition in strategy_registry.by_family("TrendFollowing")
-    }
-    mr_strategies = {
-        definition.strategy_id: definition.instantiate()
-        for definition in strategy_registry.by_family("MeanReversion")
-    }
+    tf_strategies, mr_strategies = instantiate_evaluated_strategy_dicts()
 
     results = {}
 
