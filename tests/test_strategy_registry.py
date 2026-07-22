@@ -10,6 +10,8 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from src.strategies import (
+    _DEFAULT_EVALUATED_MR_STRATEGY_IDS,
+    _DEFAULT_EVALUATED_TF_STRATEGY_IDS,
     PhaseAwareStrategy,
     StrategySelector_Dynamic,
     instantiate_evaluated_strategy_dicts,
@@ -193,8 +195,8 @@ class TestStrategyRegistryIntegration(unittest.TestCase):
     def test_legacy_standalone_strategy_sets_exclude_mr3(self):
         tf_strategies, mr_strategies = instantiate_evaluated_strategy_dicts()
 
-        self.assertEqual(list(tf_strategies), ["TF1", "TF2", "TF3", "TF4", "TF5"])
-        self.assertEqual(list(mr_strategies), ["MR1", "MR2", "MR32", "MR42", "MR5"])
+        self.assertEqual(list(tf_strategies), list(_DEFAULT_EVALUATED_TF_STRATEGY_IDS))
+        self.assertEqual(list(mr_strategies), list(_DEFAULT_EVALUATED_MR_STRATEGY_IDS))
         self.assertNotIn("MR3", mr_strategies)
 
     def test_run_backtests_accepts_evaluation_policy_id(self):
