@@ -54,9 +54,8 @@ from src.strategy_registry import (
 )
 from src.evaluation import (
     EVALUATION_SCHEMA_VERSION,
-    StrategyEvaluation,
+    build_strategy_evaluations,
     build_experiment_id,
-    build_strategy_evaluation_id,
     write_strategy_evaluations_parquet,
 )
 from mpml.behavioral import registry as behavioral_registry
@@ -577,94 +576,6 @@ def _write_manifests(
     write_manifest(run_manifest_path, manifest)
     write_manifest(experiment_manifest_path, manifest)
 
-
-def _build_strategy_evaluations_from_walkforward(
-    *,
-    wf_df: pd.DataFrame,
-    surface_id: str,
-    surface_version: str,
-    state_id: str,
-    experiment_id: str,
-    dl_mode_tag: str,
-) -> list[StrategyEvaluation]:
-    if wf_df.empty:
-        return []
-
-    strategy_specs = [
-        {
-            "strategy_id": phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID),
-            "expected_return_col": "Baseline Return (%)",
-            "expected_sharpe_col": "Baseline Sharpe",
-            "expected_drawdown_col": "Baseline Max DD (%)",
-            "n_trades_col": "Baseline Trades",
-            "confidence_col": None,
-            "strategy_role": "baseline",
-        },
-        {
-            "strategy_id": "StrategySelector_Dynamic_WF",
-            "expected_return_col": "Dynamic Return (%)",
-            "expected_sharpe_col": "Dynamic Sharpe",
-            "expected_drawdown_col": "Dynamic Max DD (%)",
-            "n_trades_col": "Dynamic Trades",
-            "confidence_col": "Confident Bars (%)",
-            "strategy_role": "dynamic_selector",
-        },
-    ]
-
-    evaluations: list[StrategyEvaluation] = []
-    pair_count = int(wf_df["Pair"].nunique()) if "Pair" in wf_df.columns else 0
-    fold_count = int(len(wf_df))
-    for spec in strategy_specs:
-        expected_return = float(pd.to_numeric(wf_df[spec["expected_return_col"]], errors="coerce").mean())
-        expected_sharpe_series = pd.to_numeric(wf_df[spec["expected_sharpe_col"]], errors="coerce")
-        expected_sharpe = float(expected_sharpe_series.mean())
-        expected_drawdown = float(pd.to_numeric(wf_df[spec["expected_drawdown_col"]], errors="coerce").mean())
-        n_trades = int(pd.to_numeric(wf_df[spec["n_trades_col"]], errors="coerce").fillna(0).sum())
-
-        confidence = None
-        confidence_col = spec["confidence_col"]
-        if confidence_col and confidence_col in wf_df.columns:
-            confidence_value = float(pd.to_numeric(wf_df[confidence_col], errors="coerce").mean())
-            if not np.isnan(confidence_value):
-                confidence = confidence_value / 100.0
-
-        stability_value = float(expected_sharpe_series.std(ddof=0))
-        stability = None if np.isnan(stability_value) else stability_value
-        strategy_id = str(spec["strategy_id"])
-        evaluation_id = build_strategy_evaluation_id(
-            surface_id=surface_id,
-            surface_version=surface_version,
-            state_id=state_id,
-            strategy_id=strategy_id,
-            experiment_id=experiment_id,
-        )
-        metadata = {
-            "experiment_id": experiment_id,
-            "source": "walkforward",
-            "mode_tag": dl_mode_tag,
-            "strategy_role": spec["strategy_role"],
-            "pair_count": pair_count,
-            "fold_count": fold_count,
-        }
-        evaluations.append(
-            StrategyEvaluation(
-                evaluation_id=evaluation_id,
-                surface_id=surface_id,
-                surface_version=surface_version,
-                state_id=state_id,
-                strategy_id=strategy_id,
-                expected_return=expected_return,
-                expected_sharpe=expected_sharpe,
-                expected_drawdown=expected_drawdown,
-                win_rate=None,
-                confidence=confidence,
-                stability=stability,
-                n_folds=fold_count,
-                n_trades=n_trades,
-                metadata=metadata,
-            )
-        )
-    return evaluations
 
 def attach_dl_features(
     processed_df: pd.DataFrame,
@@ -3185,13 +3096,34 @@ def main(
             elif EXPORT_SELECTOR_STATE_TIMELINE:
                 print("  ⚠  selector_state_timeline: no bars collected (no folds completed).")
 
-        strategy_evaluations = _build_strategy_evaluations_from_walkforward(
+        strategy_specs = [
+            {
+                "strategy_id": phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID),
+                "expected_return_col": "Baseline Return (%)",
+                "expected_sharpe_col": "Baseline Sharpe",
+                "expected_drawdown_col": "Baseline Max DD (%)",
+                "n_trades_col": "Baseline Trades",
+                "confidence_col": None,
+                "strategy_role": "baseline",
+            },
+            {
+                "strategy_id": "StrategySelector_Dynamic_WF",
+                "expected_return_col": "Dynamic Return (%)",
+                "expected_sharpe_col": "Dynamic Sharpe",
+                "expected_drawdown_col": "Dynamic Max DD (%)",
+                "n_trades_col": "Dynamic Trades",
+                "confidence_col": "Confident Bars (%)",
+                "strategy_role": "dynamic_selector",
+            },
+        ]
+        strategy_evaluations = build_strategy_evaluations(
             wf_df=wf_df,
             surface_id=_resolved_behavioral_surface_id,
             surface_version=_resolved_behavioral_surface.surface_version,
             state_id=str(_resolved_behavioral_state_id or "unknown"),
             experiment_id=experiment_id,
-            dl_mode_tag=dl_mode_tag,
+            mode_tag=dl_mode_tag,
+            strategy_specs=strategy_specs,
         )
         strategy_evaluations_path = _run_output_dir() / "strategy_evaluations.parquet"
         write_strategy_evaluations_parquet(
