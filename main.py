@@ -52,6 +52,13 @@ from src.strategy_registry import (
     phaseaware_strategy_name,
     resolve_phaseaware_strategy_pair,
 )
+from src.evaluation import (
+    EVALUATION_SCHEMA_VERSION,
+    StrategyEvaluation,
+    build_experiment_id,
+    build_strategy_evaluation_id,
+    write_strategy_evaluations_parquet,
+)
 from mpml.behavioral import registry as behavioral_registry
 from mpml.behavioral.compat import build_behavioral_surface_manifest_block
 from experiment_semantics import (
@@ -559,6 +566,105 @@ def _with_mode_tag(path: str, mode_tag: str) -> str:
     tagged = target.with_name(f"{stem}{mode_tag}{suffix}") if suffix else target.with_name(f"{stem}{mode_tag}")
     tagged.parent.mkdir(parents=True, exist_ok=True)
     return str(tagged)
+
+
+def _write_manifests(
+    *,
+    manifest: dict[str, object],
+    run_manifest_path: str,
+    experiment_manifest_path: str,
+) -> None:
+    write_manifest(run_manifest_path, manifest)
+    write_manifest(experiment_manifest_path, manifest)
+
+
+def _build_strategy_evaluations_from_walkforward(
+    *,
+    wf_df: pd.DataFrame,
+    surface_id: str,
+    surface_version: str,
+    state_id: str,
+    experiment_id: str,
+    dl_mode_tag: str,
+) -> list[StrategyEvaluation]:
+    if wf_df.empty:
+        return []
+
+    strategy_specs = [
+        {
+            "strategy_id": phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID),
+            "expected_return_col": "Baseline Return (%)",
+            "expected_sharpe_col": "Baseline Sharpe",
+            "expected_drawdown_col": "Baseline Max DD (%)",
+            "n_trades_col": "Baseline Trades",
+            "confidence_col": None,
+            "strategy_role": "baseline",
+        },
+        {
+            "strategy_id": "StrategySelector_Dynamic_WF",
+            "expected_return_col": "Dynamic Return (%)",
+            "expected_sharpe_col": "Dynamic Sharpe",
+            "expected_drawdown_col": "Dynamic Max DD (%)",
+            "n_trades_col": "Dynamic Trades",
+            "confidence_col": "Confident Bars (%)",
+            "strategy_role": "dynamic_selector",
+        },
+    ]
+
+    evaluations: list[StrategyEvaluation] = []
+    pair_count = int(wf_df["Pair"].nunique()) if "Pair" in wf_df.columns else 0
+    fold_count = int(len(wf_df))
+    for spec in strategy_specs:
+        expected_return = float(pd.to_numeric(wf_df[spec["expected_return_col"]], errors="coerce").mean())
+        expected_sharpe_series = pd.to_numeric(wf_df[spec["expected_sharpe_col"]], errors="coerce")
+        expected_sharpe = float(expected_sharpe_series.mean())
+        expected_drawdown = float(pd.to_numeric(wf_df[spec["expected_drawdown_col"]], errors="coerce").mean())
+        n_trades = int(pd.to_numeric(wf_df[spec["n_trades_col"]], errors="coerce").fillna(0).sum())
+
+        confidence = None
+        confidence_col = spec["confidence_col"]
+        if confidence_col and confidence_col in wf_df.columns:
+            confidence_value = float(pd.to_numeric(wf_df[confidence_col], errors="coerce").mean())
+            if not np.isnan(confidence_value):
+                confidence = confidence_value / 100.0
+
+        stability_value = float(expected_sharpe_series.std(ddof=0))
+        stability = None if np.isnan(stability_value) else stability_value
+        strategy_id = str(spec["strategy_id"])
+        evaluation_id = build_strategy_evaluation_id(
+            surface_id=surface_id,
+            surface_version=surface_version,
+            state_id=state_id,
+            strategy_id=strategy_id,
+            experiment_id=experiment_id,
+        )
+        metadata = {
+            "experiment_id": experiment_id,
+            "source": "walkforward",
+            "mode_tag": dl_mode_tag,
+            "strategy_role": spec["strategy_role"],
+            "pair_count": pair_count,
+            "fold_count": fold_count,
+        }
+        evaluations.append(
+            StrategyEvaluation(
+                evaluation_id=evaluation_id,
+                surface_id=surface_id,
+                surface_version=surface_version,
+                state_id=state_id,
+                strategy_id=strategy_id,
+                expected_return=expected_return,
+                expected_sharpe=expected_sharpe,
+                expected_drawdown=expected_drawdown,
+                win_rate=None,
+                confidence=confidence,
+                stability=stability,
+                n_folds=fold_count,
+                n_trades=n_trades,
+                metadata=metadata,
+            )
+        )
+    return evaluations
 
 def attach_dl_features(
     processed_df: pd.DataFrame,
@@ -1564,6 +1670,11 @@ def main(
         behavioral_surface_version=_resolved_behavioral_surface.surface_version,
         behavioral_state_id=_resolved_behavioral_state_id,
     )
+    experiment_id = build_experiment_id(
+        experiment=experiment_meta,
+        experiment_surface=experiment_surface,
+        seed=resolved_seed,
+    )
     missing_indicators_enabled = bool(
         (experiment_meta.get("factors") or {}).get("missing_indicators_enabled", True)
     )
@@ -1639,7 +1750,10 @@ def main(
             "run_variant": experiment_meta["variant"],
         },
         "experiment": experiment_meta,
+        "experiment_id": experiment_id,
         "experiment_surface": experiment_surface,
+        "evaluation_schema_version": EVALUATION_SCHEMA_VERSION,
+        "strategy_evaluation_count": 0,
         "behavioral_surface": build_behavioral_surface_manifest_block(
             surface_id=_resolved_behavioral_surface_id,
             state_id=_resolved_behavioral_state_id,
@@ -1728,8 +1842,14 @@ def main(
     }
 
     manifest_path = str(_run_output_dir() / "run_manifest.json")
-    write_manifest(manifest_path, manifest)
+    experiment_manifest_path = str(_run_output_dir() / "experiment_manifest.json")
+    _write_manifests(
+        manifest=manifest,
+        run_manifest_path=manifest_path,
+        experiment_manifest_path=experiment_manifest_path,
+    )
     print(f"Saved: {manifest_path}")
+    print(f"Saved: {experiment_manifest_path}")
 
     print('=' * 60)
     print('MARKET PHASE ML - MULTI-PAIR ANALYSIS')
@@ -1857,7 +1977,11 @@ def main(
     manifest["dl"]["dl_feature_columns"] = _stable_feature_columns(_run_dl_feature_cols)
     manifest["dl"]["dl_feature_count"] = len(_run_dl_feature_cols)
     manifest["feature_ordering"]["dl_feature_columns"] = _stable_feature_columns(_run_dl_feature_cols)
-    write_manifest(manifest_path, manifest)
+    _write_manifests(
+        manifest=manifest,
+        run_manifest_path=manifest_path,
+        experiment_manifest_path=experiment_manifest_path,
+    )
 
     for pair_name in sorted(processed_data.keys()):
         df = processed_data[pair_name]
@@ -2017,7 +2141,11 @@ def main(
         pair_name: predictor_feature_ordering[pair_name]
         for pair_name in sorted(predictor_feature_ordering)
     }
-    write_manifest(manifest_path, manifest)
+    _write_manifests(
+        manifest=manifest,
+        run_manifest_path=manifest_path,
+        experiment_manifest_path=experiment_manifest_path,
+    )
 
     # ── Print accuracy scores regardless of cache hit ─────────────────────
     print('\n  ML Phase Prediction Accuracy Summary:')
@@ -2302,7 +2430,11 @@ def main(
         pair_name: selector_feature_ordering[pair_name]
         for pair_name in sorted(selector_feature_ordering)
     }
-    write_manifest(manifest_path, manifest)
+    _write_manifests(
+        manifest=manifest,
+        run_manifest_path=manifest_path,
+        experiment_manifest_path=experiment_manifest_path,
+    )
 
     # Aggregate by group for both sizing methods
     # DL pipeline diagnostics before aggregation
@@ -3052,6 +3184,28 @@ def main(
                 print(f"Saved: {timeline_path} ({len(_timeline_rows)} bars)")
             elif EXPORT_SELECTOR_STATE_TIMELINE:
                 print("  ⚠  selector_state_timeline: no bars collected (no folds completed).")
+
+        strategy_evaluations = _build_strategy_evaluations_from_walkforward(
+            wf_df=wf_df,
+            surface_id=_resolved_behavioral_surface_id,
+            surface_version=_resolved_behavioral_surface.surface_version,
+            state_id=str(_resolved_behavioral_state_id or "unknown"),
+            experiment_id=experiment_id,
+            dl_mode_tag=dl_mode_tag,
+        )
+        strategy_evaluations_path = _run_output_dir() / "strategy_evaluations.parquet"
+        write_strategy_evaluations_parquet(
+            evaluations=strategy_evaluations,
+            output_path=strategy_evaluations_path,
+        )
+        manifest["strategy_evaluation_count"] = len(strategy_evaluations)
+        _write_manifests(
+            manifest=manifest,
+            run_manifest_path=manifest_path,
+            experiment_manifest_path=experiment_manifest_path,
+        )
+        print(f"Generated {len(strategy_evaluations)} StrategyEvaluation objects.")
+        print(f"Saved: {strategy_evaluations_path}")
 
     # ─────────────────────────────────────────
     if RUN_TAU_SWEEP:

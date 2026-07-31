@@ -389,6 +389,12 @@ python main.py
 
 Outputs are written into immutable run-owned directories under: `results_archive/`
 
+Canonical evaluation/provenance artifacts now include:
+
+- `strategy_evaluations.parquet` (one row per `StrategyEvaluation`)
+- `experiment_manifest.json` (includes `evaluation_schema_version` and `strategy_evaluation_count`)
+- `run_manifest.json` (backward-compatible manifest retained for existing tooling)
+
 Optional market-data backend override:
 
 ```bash
