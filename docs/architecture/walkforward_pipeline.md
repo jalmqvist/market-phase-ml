@@ -348,6 +348,8 @@ Modern MPML runs emit:
 - feature-surface metadata
 - training/evaluation family metadata
 - reproducibility metadata
+- strategy evaluation evidence (`strategy_evaluations.parquet`)
+- evaluation manifest metadata (`evaluation_schema_version`, `strategy_evaluation_count`)
 
 The analysis layer consumes these manifests directly.
 
@@ -422,4 +424,3 @@ Current evaluation-focused research includes:
 | Analysis/provenance framework | `docs/research/analysis_framework_v2.md` |
 | Regime taxonomy | `docs/regimes/` |
 | Experimental findings | `RESULTS.md` |
-
