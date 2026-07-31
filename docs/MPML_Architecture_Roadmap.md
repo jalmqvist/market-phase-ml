@@ -1343,13 +1343,13 @@ Phase F intentionally does not alter evaluation or recommendation semantics.
 
 Objective
 
-Transform StrategyEvaluation artifacts into stable Recommendation artifacts.
+Recommendation objects SHALL reference StrategyEvaluation objects and MUST NOT duplicate evaluation evidence already represented by StrategyEvaluation.
 
-Recommendation objects form the canonical interface between MPML and MRML.
+Recommendation exists to express ranking and interpretation only.
 
-Unlike StrategyEvaluation, Recommendation objects represent interpreted ranking rather than historical evidence.
+Historical performance metrics, confidence estimates and other evaluation evidence remain the responsibility of StrategyEvaluation.
 
-Recommendation remains intentionally lightweight by referencing StrategyEvaluation rather than duplicating evaluation metrics.
+This separation preserves a single canonical evidence layer while allowing recommendation policies to evolve independently.
 
 ### Phase G1 — Recommendation Representation
 
@@ -1424,6 +1424,10 @@ Behavioral Prediction Artifact
 MPML
         │
         ▼
+Walk-forward Evaluation
+
+        │
+        ▼
 StrategyEvaluation
 
         │
@@ -1432,6 +1436,7 @@ Recommendation
 
         │
         ▼
+
 MRML
         │
         ▼
@@ -1461,7 +1466,7 @@ Behavioral Surfaces describe market structure.
 
 Strategies describe trading behavior.
 
-StrategyEvaluation records historical evidence.
+StrategyEvaluation records canonical historical evidence.
 
 Recommendations interpret that evidence.
 
