@@ -21,14 +21,19 @@ Completed architectural foundations:
 ✓ Behavioral Aggregation Layer
 ✓ Metadata-driven Strategy Registry
 ✓ Evaluation Policy Registry
+✓ StrategyEvaluation representation
+✓ Canonical evaluation serialization
 
-These components now form the stable architectural foundation of MPML.
+MPML now exposes two stable research artifacts:
 
-The next stage of development shifts from repository integration toward
-representation of evaluation evidence and eventual MRML integration.
+- Behavioral Prediction Artifacts (imported from MSML)
+- StrategyEvaluation artifacts (produced by MPML)
 
-No additional infrastructure work is currently planned for Behavioral Surface
-integration.
+These form the canonical evidence layer upon which Recommendation objects will be constructed.
+
+The next architectural milestone is to establish Recommendation as MPML's public interface while preserving StrategyEvaluation as the permanent scientific evidence layer.
+
+No further architectural work is currently planned for Behavioral Surface integration or StrategyEvaluation representation.
 
 ---
 
@@ -1261,157 +1266,176 @@ Status
 
 ------
 
-### Phase E
+## Phase E (Completed)
 
 ### Strategy Evaluation Representation
+
+> Phase E is considered architecturally complete.
+>
+> StrategyEvaluation now forms MPML's canonical evaluation artifact.
+>
+> Walk-forward evaluation, deterministic identity, serialization and experiment provenance have been unified into a stable evidence layer.
+>
+> Future work may extend evaluation metadata, but Recommendation semantics should build upon StrategyEvaluation rather than modifying it.
 
 ### Objective
 
 Represent the evidence produced by walk-forward evaluation as stable,
 repository-independent domain objects.
 
-The purpose of this phase is to expose the historical evidence naturally
-produced by MPML while remaining completely agnostic regarding portfolio
-construction, execution policies and downstream recommendation semantics.
-
-The primary output of this phase is the `StrategyEvaluation` abstraction.
-
-A `StrategyEvaluation` represents the observed historical performance of one
-strategy under one Behavioral State and forms the canonical evidence layer
-upon which future Recommendation objects will be constructed.
-
 ### Deliverables
 
-- StrategyEvaluation abstraction
-- Stable evaluation identity
-- Canonical evaluation metadata
-- Strategy evaluation serialization (`strategy_evaluations.parquet`)
-- Evaluation schema versioning
-- Evaluation provenance in experiment manifests
-- Backward-compatible runtime integration
+✓ StrategyEvaluation abstraction
 
-Non-objectives
+✓ Deterministic evaluation identity
 
-- Portfolio decisions
-- Trade recommendations
-- Risk allocation
-- Execution policies
-- MRML APIs
+✓ Canonical evaluation metadata
 
-### Phase E Design Principles
+✓ strategy_evaluations.parquet
 
-These remain the responsibility of MRML.
+✓ Evaluation schema versioning
 
-Phase E intentionally avoids speculative architecture.
+✓ Experiment manifest integration
 
-The purpose of this phase is not to predict the future needs of MRML.
+✓ Backward-compatible runtime integration
 
-Instead, MPML should expose the evidence it naturally produces while remaining agnostic regarding downstream portfolio decisions.
+### Validation
 
-Objects introduced during this phase must therefore be intrinsically useful within MPML itself.
+Phase E has been validated through end-to-end execution.
 
-Components should not be introduced solely because they may eventually be consumed by MRML.
+Validation confirms:
 
-### StrategyEvaluation Philosophy
+- byte-identical legacy benchmark outputs
+- unchanged walk-forward behaviour
+- deterministic evaluation identity
+- stable parquet serialization
+- backward-compatible experiment manifests
 
-StrategyEvaluation objects describe observed historical evidence.
-
-They answer the question
-
-> "How has this strategy performed under this Behavioral State?"
-
-They deliberately avoid answering
-
-> "Should this strategy be traded?"
-
-That interpretation belongs to Recommendation objects introduced in Phase G.
-
-Separating evaluation evidence from recommendation semantics allows
-recommendation algorithms to evolve independently while preserving historical
-walk-forward results as stable scientific artifacts.
+StrategyEvaluation should now be regarded as a stable research artifact rather than an implementation detail.
 
 ------
 
 ## Phase F
 
-### Experiment Metadata
+### Experiment Provenance
 
-### Objective
+Objective
 
-Strengthen experiment provenance.
+Continue strengthening experiment reproducibility and provenance.
 
-Deliverables
+This phase extends existing experiment manifests while preserving compatibility with earlier evaluation artifacts.
 
-- Rich manifests
-- Dataset traceability
+Typical additions may include:
+
+- registry versions
 - Behavioral Surface provenance
-- Strategy Registry provenance
 - Recommendation provenance
+- software version metadata
+- execution environment metadata
+
+Phase F intentionally does not alter evaluation or recommendation semantics.
 
 ------
 
 ## Phase G
 
-MRML Interface Definition
+### Recommendation Representation
 
-↓
+Objective
 
-## Phase H
+Transform StrategyEvaluation artifacts into stable Recommendation artifacts.
 
-MRML Runtime Integration
+Recommendation objects form the canonical interface between MPML and MRML.
 
-### MRML Integration
+Unlike StrategyEvaluation, Recommendation objects represent interpreted ranking rather than historical evidence.
 
-> The exact interface between MPML and MRML intentionally remains provisional.
->
-> Implementation of Recommendation objects and external APIs should follow
-> definition of the MRML architecture.
->
-> Until that interface is better understood, MPML focuses on exposing stable
-> evaluation evidence rather than portfolio recommendations.
+Recommendation remains intentionally lightweight by referencing StrategyEvaluation rather than duplicating evaluation metrics.
 
-### Objective
+### Phase G1 — Recommendation Representation
 
-Transform StrategyEvaluation objects into ranked Recommendation objects that
-form the stable interface between MPML and MRML.
-
-Recommendations represent interpreted evaluation evidence rather than raw
-walk-forward results.
-
-This phase introduces recommendation semantics without modifying the
-underlying evaluation artifacts.
-
-### Deliverables
+Deliverables
 
 - Recommendation abstraction
-- Recommendation ranking
+- Deterministic recommendation identity
 - Recommendation serialization (`recommendations.parquet`)
 - Recommendation schema versioning
-- Stable MPML–MRML interface
+- Recommendation manifest integration
 - Backward-compatible runtime integration
+
+This phase introduces representation only.
+
+Recommendation policy remains unchanged.
+
+### Phase G2 — Recommendation Policy
+
+Deliverables
+
+- Generic recommendation builder
+- Ranking policy
+- Top-N recommendation support
+- Recommendation confidence
+- Stable MPML recommendation interface
+
+This phase introduces recommendation semantics while preserving StrategyEvaluation unchanged.
 
 ---
 
 ## Current architectural priorities
 
-1. Stabilize Behavioral Surface infrastructure (completed)
+Completed
 
-2. Stabilize Strategy metadata (completed)
+✓ Behavioral Surface infrastructure
 
-3. Stabilize evaluation evidence
+✓ Strategy metadata
 
-   ↓
+✓ StrategyEvaluation evidence layer
 
-   Freeze StrategyEvaluation schema
+Current
 
-   ↓
+→ Recommendation representation
 
-   Define Recommendation interface
+Next
 
-   ↓
+→ Recommendation policy
 
-   Implement MPML–MRML boundary
+→ Stable MPML–MRML interface
 
+Future
+
+→ MRML runtime integration
+
+
+---
+
+BSVE
+        │
+        ▼
+Behavioral Surface
+
+        │
+        ▼
+MSML
+        │
+        ▼
+Behavioral Prediction Artifact
+
+        │
+        ▼
+MPML
+        │
+        ▼
+StrategyEvaluation
+
+        │
+        ▼
+Recommendation
+
+        │
+        ▼
+MRML
+        │
+        ▼
+Portfolio Decision
 
 ---
 
@@ -1431,19 +1455,19 @@ Possible future work
 
 ---
 
-# 19. Guiding Principle
+# Guiding Principle
 
-Behavioral States describe markets.
+Behavioral Surfaces describe market structure.
 
 Strategies describe trading behavior.
 
-Recommendations connect the two.
+StrategyEvaluation records historical evidence.
 
-MPML should therefore evolve from a collection of backtests into a reusable
-behavioral strategy recommendation engine.
+Recommendations interpret that evidence.
 
-MRML can then focus exclusively on the independent problem of portfolio risk
-management and live execution.
+MRML decides how (or whether) to act upon those recommendations.
+
+Each architectural layer therefore contributes exactly one new abstraction while preserving the contracts established by the previous layer.
 
 ---
 
