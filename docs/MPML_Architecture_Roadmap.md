@@ -23,17 +23,18 @@ Completed architectural foundations:
 ✓ Evaluation Policy Registry
 ✓ StrategyEvaluation representation
 ✓ Canonical evaluation serialization
+✓ Recommendation representation
 
-MPML now exposes two stable research artifacts:
+MPML now exposes three stable research artifacts:
 
 - Behavioral Prediction Artifacts (imported from MSML)
 - StrategyEvaluation artifacts (produced by MPML)
+- Recommendation artifacts (produced by MPML, public MPML→MRML interface)
 
-These form the canonical evidence layer upon which Recommendation objects will be constructed.
+StrategyEvaluation remains the canonical evidence layer.
+Recommendation is the canonical repository boundary between MPML and MRML.
 
-The next architectural milestone is to establish Recommendation as MPML's public interface while preserving StrategyEvaluation as the permanent scientific evidence layer.
-
-No further architectural work is currently planned for Behavioral Surface integration or StrategyEvaluation representation.
+No further architectural work is currently planned for Behavioral Surface integration, StrategyEvaluation representation, or Recommendation representation.
 
 ---
 
@@ -1353,14 +1354,53 @@ This separation preserves a single canonical evidence layer while allowing recom
 
 ### Phase G1 — Recommendation Representation
 
+**Status: Complete (Phase G1)**
+
 Deliverables
 
-- Recommendation abstraction
-- Deterministic recommendation identity
+- Recommendation abstraction (`src/recommendation.py`)
+- Deterministic recommendation identity (`build_recommendation_id`)
 - Recommendation serialization (`recommendations.parquet`)
-- Recommendation schema versioning
-- Recommendation manifest integration
+- Recommendation schema versioning (`RECOMMENDATION_SCHEMA_VERSION = "1.0.0"`)
+- Recommendation manifest integration (`recommendation_schema_version`, `recommendation_count`)
 - Backward-compatible runtime integration
+
+#### Recommendation
+
+`Recommendation` is MPML's canonical recommendation artifact and the public MPML→MRML interface.
+
+```python
+@dataclass(frozen=True)
+class Recommendation:
+    recommendation_id: str   # deterministic SHA-256 derived ID
+    evaluation_id: str       # references StrategyEvaluation
+    rank: int
+    recommendation_policy: str
+    metadata: dict[str, Any]
+```
+
+`Recommendation` is intentionally lightweight.  It references `StrategyEvaluation` through
+`evaluation_id` and does not duplicate evaluation evidence (expected_return, expected_sharpe,
+expected_drawdown, confidence, stability, fold statistics).  Those belong exclusively to
+`StrategyEvaluation`.
+
+`recommendation_id` is derived deterministically from `RECOMMENDATION_SCHEMA_VERSION`,
+`evaluation_id`, `recommendation_policy`, and `rank`.  IDs are stable across runs.
+
+#### recommendations.parquet
+
+One row per `Recommendation`.  Columns mirror the dataclass fields.
+`metadata` is JSON-encoded.
+
+`Recommendation` artifacts reference `StrategyEvaluation` through `evaluation_id`.
+
+MPML produces the following artifacts after a completed run:
+
+```
+strategy_evaluations.parquet   — canonical historical evidence (StrategyEvaluation)
+recommendations.parquet        — public MPML→MRML interface (Recommendation)
+experiment_manifest.json       — run manifest with recommendation_schema_version and recommendation_count
+```
 
 This phase introduces representation only.
 
@@ -1390,13 +1430,13 @@ Completed
 
 ✓ StrategyEvaluation evidence layer
 
+✓ Recommendation representation
+
 Current
 
-→ Recommendation representation
+→ Recommendation policy
 
 Next
-
-→ Recommendation policy
 
 → Stable MPML–MRML interface
 
