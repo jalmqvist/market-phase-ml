@@ -58,6 +58,11 @@ from src.evaluation import (
     build_experiment_id,
     write_strategy_evaluations_parquet,
 )
+from src.recommendation import (
+    RECOMMENDATION_SCHEMA_VERSION,
+    recommendations_from_evaluations,
+    write_recommendations_parquet,
+)
 from mpml.behavioral import registry as behavioral_registry
 from mpml.behavioral.compat import build_behavioral_surface_manifest_block
 from experiment_semantics import (
@@ -1665,6 +1670,8 @@ def main(
         "experiment_surface": experiment_surface,
         "evaluation_schema_version": EVALUATION_SCHEMA_VERSION,
         "strategy_evaluation_count": 0,
+        "recommendation_schema_version": RECOMMENDATION_SCHEMA_VERSION,
+        "recommendation_count": 0,
         "behavioral_surface": build_behavioral_surface_manifest_block(
             surface_id=_resolved_behavioral_surface_id,
             state_id=_resolved_behavioral_state_id,
@@ -3131,13 +3138,23 @@ def main(
             output_path=strategy_evaluations_path,
         )
         manifest["strategy_evaluation_count"] = len(strategy_evaluations)
+        print(f"Generated {len(strategy_evaluations)} StrategyEvaluation objects.")
+        print(f"Saved: {strategy_evaluations_path}")
+
+        recommendations = recommendations_from_evaluations(strategy_evaluations)
+        recommendations_path = _run_output_dir() / "recommendations.parquet"
+        write_recommendations_parquet(
+            recommendations=recommendations,
+            output_path=recommendations_path,
+        )
+        manifest["recommendation_count"] = len(recommendations)
         _write_manifests(
             manifest=manifest,
             run_manifest_path=manifest_path,
             experiment_manifest_path=experiment_manifest_path,
         )
-        print(f"Generated {len(strategy_evaluations)} StrategyEvaluation objects.")
-        print(f"Saved: {strategy_evaluations_path}")
+        print(f"Generated {len(recommendations)} Recommendation objects.")
+        print(f"Saved: {recommendations_path}")
 
     # ─────────────────────────────────────────
     if RUN_TAU_SWEEP:
