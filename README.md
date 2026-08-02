@@ -45,6 +45,25 @@ The framework emphasizes:
 
 ---
 
+## Reference Benchmarks
+
+MPML includes reproducible reference benchmarks demonstrating end-to-end integration of Behavioral Prediction Artifacts produced by the companion MSML project.
+
+Current benchmark:
+
+- **Reactive-JPY LSTM Reference Benchmark**
+  - Dataset: v1.6.1
+  - Random seed: 42
+  - Reference training horizons established through dedicated epoch sweeps
+  - Walk-forward evaluation against the no-DL PhaseAware baseline
+  - Consistent out-of-sample improvements within the Reactive-JPY target family
+
+Benchmark report:
+
+- `docs/benchmarks/reactive_jpy_lstm_reference_v1.6.1.md`
+
+---
+
 # System Architecture
 
 ```mermaid
@@ -127,6 +146,8 @@ Context-aware strategy routing
         ↓
 Walk-forward evaluation
 ```
+
+This architecture establishes a stable producer–consumer boundary between MSML and MPML. Behavioral Prediction Artifacts are imported as versioned research artifacts and evaluated through reproducible walk-forward experiments without exposing MPML to model-specific implementation details.
 
 This separation allows:
 
@@ -315,18 +336,18 @@ as a first-class research objective.
 
 ---
 
-## MSML Integration Findings
+## Reference Benchmark Findings
 
-The DL integration experiments showed:
+The current Reactive-JPY LSTM reference benchmark demonstrates:
 
-- conditional rather than universal uplift
-- strong dependence on pair-family transfer structure
-- sensitivity to temporal coverage windows
-- important interactions between sentiment features and volatility structure
+- consistent walk-forward improvements relative to the no-DL baseline
+- improvements concentrated within the Reactive-JPY target family
+- comparable downstream trading value across both supported Reactive-JPY Behavioral Surfaces
+- reproducible evaluation using frozen datasets, fixed random seeds and reference training configurations
 
-Several experiments produced weak or negative results.
+See:
 
-Those findings are intentionally documented rather than hidden.
+`docs/benchmarks/reactive_jpy_lstm_reference_v1.6.1.md`
 
 ---
 
@@ -389,11 +410,12 @@ python main.py
 
 Outputs are written into immutable run-owned directories under: `results_archive/`
 
-Canonical evaluation/provenance artifacts now include:
+Canonical artifacts produced by every experiment:
 
-- `strategy_evaluations.parquet` (one row per `StrategyEvaluation`)
-- `experiment_manifest.json` (includes `evaluation_schema_version` and `strategy_evaluation_count`)
-- `run_manifest.json` (backward-compatible manifest retained for existing tooling)
+- `strategy_evaluations.parquet` — canonical evaluation evidence
+- `recommendations.parquet` — canonical MPML→MRML interface
+- `experiment_manifest.json` — provenance and schema metadata
+- `run_manifest.json` — backward-compatible legacy manifest
 
 Optional market-data backend override:
 
@@ -431,10 +453,11 @@ python analysis/pipeline.py results_archive/
 
 | Topic | Location |
 |---|---|
+| Reference benchmark | `docs/benchmarks/reactive_jpy_lstm_reference_v1.6.1.md` |
+| Architecture roadmap | `docs/MPML_Architecture_Roadmap.md` |
 | Experimental findings | `RESULTS.md` |
-| Selector/gating architecture | `docs/architecture/selector_architecture.md` |
-| Walk-forward evaluation pipeline | `docs/architecture/walkforward_pipeline.md` |
-| DL integration contract | `docs/integration/dl_surface_integration.md` |
+| Walk-forward evaluation | `docs/architecture/walkforward_pipeline.md` |
+| DL integration | `docs/integration/dl_surface_integration.md` |
 | Analysis/provenance framework | `docs/research/analysis_framework_v2.md` |
 | Regime taxonomy | `docs/regimes/` |
 
@@ -485,23 +508,18 @@ MPML consumes those exported artifacts as validated feature surfaces during walk
 
 # Current Status
 
-The repository currently supports:
+The current implementation provides:
 
-- classical regime-aware routing
-- dynamic selector experiments
-- DL surface integration
-- factor-conditioned experiment analysis
-- provenance-aware experiment infrastructure
-- reproducible walk-forward evaluation
+- Behavioral Surface Registry
+- Strategy Registry and Evaluation Policies
+- leakage-safe Behavioral Prediction Artifact integration
+- walk-forward strategy evaluation
+- StrategyEvaluation evidence artifacts
+- Recommendation artifacts (MPML → MRML interface)
+- reproducible experiment manifests
+- reference benchmark infrastructure
 
-Current research directions include:
-
-- transfer-learning behavior across pair families
-- overlap-aware DL evaluation windows
-- HTF vs LVTF surface transfer
-- selector calibration
-- online adaptation
-- feature attribution analysis
+Current architectural work focuses on Recommendation Policy (Phase G2) and the MPML→MRML interface.
 
 ---
 
