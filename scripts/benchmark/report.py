@@ -103,129 +103,127 @@ def print_report(benchmark) -> None:
 
     comparisons  = compare_to_baseline(benchmark)
     architecture = benchmark.architectures[0]
+    TARGET_PAIRS = ["EURJPY", "GBPJPY", "USDJPY"]
 
     # ------------------------------------------------------------------
     # Header
     # ------------------------------------------------------------------
 
-    section("MPML REFERENCE BENCHMARK")
-    print()
-    print(f"Architecture : {architecture}")
-    print(f"Experiments  : {len(comparisons)}")
-    print("Baseline     : No-DL PhaseAware (aggregate)")
+    print(f"""
+# MPML REFERENCE BENCHMARK
+
+**Architecture**: {architecture}  
+**Experiments**: {len(comparisons)}  
+**Baseline**: No-DL PhaseAware (aggregate)  
+**Target pairs**: EURJPY, GBPJPY, USDJPY (Reactive-JPY family)  
+
+> Δ values are walk-forward OOS deltas vs no-DL baseline.  
+> `+` = positive Sharpe uplift.  
+> All values rounded to 3 decimals for readability.
+""")
 
     # ------------------------------------------------------------------
-    # Section 1 — Architectural Uplift
+    # Section 1 — Uplift Matrix (Markdown Table)
     # ------------------------------------------------------------------
 
-    section("1. Architectural Uplift — Walk-Forward OOS vs No-DL Baseline")
+    print("## 1. Uplift Matrix — ΔRet and ΔSh per State and Pair")
 
-    for comp in comparisons:
+    # Table header
+    header = (
+        "| Architecture | Behavioral Surface | Feature Set | State | "
+        + " | ".join(f"ΔRet {p}" for p in TARGET_PAIRS)
+        + " | "
+        + " | ".join(f"ΔSh {p}" for p in TARGET_PAIRS)
+        + " | Mean ΔSh |"
+    )
+    separator = (
+        "|---|---|---|---|"
+        + "---|" * (len(TARGET_PAIRS) * 2)
+        + "---|"
+    )
 
+    print(header)
+    print(separator)
+
+    # Sort for consistent display
+    from itertools import groupby
+
+    def group_key(comp):
         exp = comp.experiment
-        print()
-        print(
-            f"  {representation_name(exp.representation)}"
-            f" | {exp.state}"
-            f" | {exp.feature_set}"
-            f" | {exp.sentiment_surface}"
+        return (
+            representation_name(exp.representation),
+            exp.feature_set,
         )
-        print()
-        print(f"  FX Pair Family     : {exp.pair_family}")
-        print(f"  Behavioral Surface : {representation_name(exp.representation)}")
-        print(f"  State              : {exp.state}")
-        print(f"  Feature Set        : {exp.feature_set}")
-        print()
 
-        print(
-            "{:<8s}"
-            "{:>10s}"
-            "{:>10s}"
-            "{:>10s}"
-            "{:>10s}"
-            "{:>10s}"
-            "{:>8s}".format(
-                "Pair",
-                "Ret(B)",
-                "ΔRet",
-                "Sh(B)",
-                "ΔSh",
-                "DD(B)",
-                "ΔDD",
-            )
+    sorted_comps = sorted(comparisons, key=group_key)
+
+    for comp in sorted_comps:
+        exp = comp.experiment
+
+        wf = {p.pair: p for p in comp.target_pairs}
+        sharpe_values = []
+
+        row = (
+            f"| {architecture} "
+            f"| {representation_name(exp.representation)} "
+            f"| {exp.feature_set} "
+            f"| {exp.state} "
         )
-        print("-" * 66)
 
-        for pair in comp.target_pairs:
-            print(
-                "{:<8s}"
-                "{:>10.2f}"
-                "{:>10.2f}"
-                "{:>10.3f}"
-                "{:>10.3f}"
-                "{:>10.2f}"
-                "{:>8.2f}".format(
-                    pair.pair,
-                    pair.baseline.total_return,
-                    pair.return_uplift,
-                    pair.baseline.sharpe,
-                    pair.sharpe_uplift,
-                    pair.baseline.max_drawdown,
-                    pair.drawdown_uplift,
-                )
-            )
+        # ΔRet columns
+        for p in TARGET_PAIRS:
+            result = wf.get(p)
+            if result is not None:
+                d_ret = result.return_uplift
+                row += f" | {d_ret:6.2f} "
+            else:
+                row += " | n/a "
 
-        score = benchmark_scorecard(comp)
-        print()
-        print("  Target Family Summary")
-        print()
-        print(f"  Mean Return Uplift : {score['Target Return']:.2f}")
-        print(f"  Median Return      : {score['Target Return Median']:.2f}")
-        print(f"  Mean Sharpe Uplift : {score['Target Sharpe']:.3f}")
-        print(f"  Median Sharpe      : {score['Target Sharpe Median']:.3f}")
-        print(f"  Mean DD Uplift     : {score['Target Drawdown']:.2f}")
-        print(
-            f"  Positive Pairs     : "
-            f"{score['Positive Target']}"
-            f"/{len(comp.target_pairs)}"
-        )
+        # ΔSh columns
+        for p in TARGET_PAIRS:
+            result = wf.get(p)
+            if result is not None:
+                d_sh = result.sharpe_uplift
+                sharpe_values.append(d_sh)
+                flag = "+" if d_sh > 0 else ""
+                row += f" | {d_sh:6.3f}{flag} "
+            else:
+                row += " | n/a "
+
+        # Mean ΔSh
+        mean_sh = mean(sharpe_values) if sharpe_values else float("nan")
+        row += f" | {mean_sh:6.3f} |"
+
+        print(row)
+
+    print("\n")
 
     # ------------------------------------------------------------------
-    # Section 2 — Internal MPML Improvement
+    # Section 2 — Dynamic Selector Improvement
     # ------------------------------------------------------------------
 
-    section("2. Internal MPML Improvement")
-    print()
+    print("## 2. Internal MPML Improvement — Dynamic Selector")
+
     print(
-        "  Dynamic selector improvement over the "
-        "static PhaseAware baseline."
+        "> Dynamic selector improvement over the static PhaseAware baseline.\n"
+        "> All 14 pairs shown. Target pairs: EURJPY, GBPJPY, USDJPY.\n"
     )
 
     for comp in comparisons:
-
         exp      = comp.experiment
         selector = comp.selector_metrics
 
-        print()
-        print(
-            f"  {exp.state}"
-            f" ({representation_name(exp.representation)})"
-            f" | {exp.feature_set}"
-            f" | {exp.sentiment_surface}"
-        )
+        print(f"### {representation_name(exp.representation)} — {exp.state} — {exp.feature_set}")
 
         if not selector:
-            print("    No selector diagnostics.\n")
+            print("No selector diagnostics.\n")
             continue
 
-        print()
-        print(
-            "  {:<10s}"
-            "{:>12s}"
-            "{:>12s}"
-            "{:>12s}".format("Pair", "ΔReturn", "ΔSharpe", "ΔDD")
-        )
-        print("  " + "-" * 48)
+        # Table header
+        header = "| Pair | ΔReturn | ΔSharpe | ΔDD |"
+        separator = "|---|---|---|---|"
+        print(header)
+        print(separator)
 
         def find(row, candidates):
             for key in candidates:
@@ -233,51 +231,51 @@ def print_report(benchmark) -> None:
                     return row[key]
             return None
 
+        target_set = set(TARGET_PAIRS)
+
         for pair in sorted(selector):
             row      = selector[pair]
-            d_return = find(row, ["Return Δ", "Return Delta",
-                                   "Return Improvement"])
-            d_sharpe = find(row, ["Sharpe Δ", "Sharpe Delta",
-                                   "Sharpe Improvement"])
-            d_dd     = find(row, ["DD Δ", "Drawdown Δ",
-                                   "Drawdown Delta", "DD Difference"])
+            d_return = find(row, ["Return Δ", "Return Delta", "Return Improvement"])
+            d_sharpe = find(row, ["Sharpe Δ", "Sharpe Delta", "Sharpe Improvement"])
+            d_dd     = find(row, ["DD Δ", "Drawdown Δ", "Drawdown Delta", "DD Difference"])
+
             if d_return is None or d_sharpe is None or d_dd is None:
                 continue
 
+            marker = " *" if pair in target_set else ""
             print(
-                "  {:<10s}"
-                "{:>12.2f}"
-                "{:>12.3f}"
-                "{:>12.2f}".format(
-                    pair,
-                    float(d_return),
-                    float(d_sharpe),
-                    float(d_dd),
-                )
+                f"| {pair}{marker} "
+                f"| {float(d_return):6.2f} "
+                f"| {float(d_sharpe):6.3f} "
+                f"| {float(d_dd):6.2f} |"
             )
+
+        print("\n")
+
+    print("**(* = Reactive-JPY target pair)**\n")
 
     # ------------------------------------------------------------------
     # Section 3 — Target Family vs Negative Controls
     # ------------------------------------------------------------------
 
-    section("3. Target Family vs Negative Controls")
-    print()
-    print("  Negative Controls")
-    print()
+    print("## 3. Target Family vs Negative Controls")
 
+    print(
+        "> Control pair averages (mean across all 12 experiments)\n"
+        "> Separation: mean ΔSh (target) minus mean ΔSh (controls)\n"
+    )
+
+    # Control pair averages
     control_pair_names = sorted({
         p.pair
         for comp in comparisons
         for p in comp.control_pairs
     })
 
-    print(
-        "  {:<10s}"
-        "{:>12s}"
-        "{:>12s}"
-        "{:>12s}".format("Pair", "ΔReturn", "ΔSharpe", "ΔDD")
-    )
-    print("  " + "-" * 48)
+    header = "| Pair | ΔReturn | ΔSharpe | ΔDD |"
+    separator = "|---|---|---|---|"
+    print(header)
+    print(separator)
 
     for pair_name in control_pair_names:
         deltas = [
@@ -292,79 +290,49 @@ def print_report(benchmark) -> None:
         avg_sharpe = mean(p.sharpe_uplift   for p in deltas)
         avg_dd     = mean(p.drawdown_uplift for p in deltas)
         print(
-            "  {:<10s}"
-            "{:>12.2f}"
-            "{:>12.3f}"
-            "{:>12.2f}".format(
-                pair_name,
-                avg_return,
-                avg_sharpe,
-                avg_dd,
-            )
+            f"| {pair_name} "
+            f"| {avg_return:6.2f} "
+            f"| {avg_sharpe:6.3f} "
+            f"| {avg_dd:6.2f} |"
         )
 
-    print()
-    print("  Experiment Summary")
-    print()
-    print(
-        "  {:<28s}"
-        "{:<16s}"
-        "{:>10s}"
-        "{:>10s}"
-        "{:>10s}".format(
-            "State",
-            "Feature Set",
-            "Target",
-            "Control",
-            "Sep",
-        )
-    )
-    print("  " + "-" * 76)
+    print("\n")
 
-    for comp in comparisons:
+    # Separation summary
+    print("### Separation Summary (mean ΔSh: target vs controls)")
+
+    header = "| State | Feature Set | Target ΔSh | Control ΔSh | Separation |"
+    separator = "|---|---|---|---|---|"
+    print(header)
+    print(separator)
+
+    for comp in sorted_comps:
         exp   = comp.experiment
         score = benchmark_scorecard(comp)
         print(
-            "  {:<28s}"
-            "{:<16s}"
-            "{:>10.3f}"
-            "{:>10.3f}"
-            "{:>10.3f}".format(
-                exp.state,
-                exp.feature_set,
-                score["Target Sharpe"],
-                score["Control Sharpe"],
-                score["Sharpe Separation"],
-            )
+            f"| {exp.state} "
+            f"| {exp.feature_set} "
+            f"| {score['Target Sharpe']:6.3f} "
+            f"| {score['Control Sharpe']:6.3f} "
+            f"| {score['Sharpe Separation']:6.3f} |"
         )
+
+    print("\n")
 
     # ------------------------------------------------------------------
     # Section 4 — Behavioral Family Comparison
-    #
-    # Compares the two Behavioral Surfaces of the Reactive-JPY family:
-    #
-    #   Consensus Lifecycle Surface  (reactive_jpy)
-    #       4 states, all price_trend + sentiment
-    #
-    #   Trend / Volatility Surface   (trend_vol)
-    #       4 regimes × 2 feature sets
-    #       split shown as price_trend vs trend_vol_only
-    #
-    # Primary metric: mean walk-forward ΔSharpe per target pair.
     # ------------------------------------------------------------------
 
-    section("4. Behavioral Family Comparison — Reactive-JPY")
-    print()
+    print("## 4. Behavioral Family Comparison — Reactive-JPY")
+
     print(
-        "  Compares the two Behavioral Surfaces of the Reactive-JPY family.\n"
-        "  Metric: mean walk-forward ΔSharpe across surface states.\n"
-        "  Trend/Volatility is split by feature set.\n"
+        "> Compares the two Behavioral Surfaces of the Reactive-JPY family.\n"
+        "> Metric: mean walk-forward ΔSharpe across surface states.\n"
+        "> Trend/Volatility is split by feature set.\n"
     )
 
-    TARGET_PAIRS = ["EURJPY", "GBPJPY", "USDJPY"]
+    from collections import defaultdict
 
-    # Accumulate per-representation, per-feature-set, per-pair uplifts
-    # data[representation][feature_set][pair] = [uplift, ...]
     data: dict = defaultdict(
         lambda: defaultdict(
             lambda: defaultdict(list)
@@ -378,21 +346,18 @@ def print_report(benchmark) -> None:
                 pair.sharpe_uplift
             )
 
-    # ------------------------------------------------------------------
-    # Family-level summary table
-    # ------------------------------------------------------------------
-
-    col_w   = 12
-    label_w = 38
-
-    print(
-        "  {:<{lw}s}".format("Surface / Feature Set", lw=label_w) +
-        "".join(f"{p:>{col_w}s}" for p in TARGET_PAIRS) +
-        f"{'Mean':>{col_w}s}"
+    # Family-level summary
+    header = (
+        "| Surface / Feature Set | "
+        + " | ".join(TARGET_PAIRS)
+        + " | Mean |"
     )
-    print("  " + "-" * (label_w + col_w * (len(TARGET_PAIRS) + 1)))
+    separator = (
+        "|---|" + "---|" * len(TARGET_PAIRS) + "---|"
+    )
+    print(header)
+    print(separator)
 
-    # Define display order explicitly
     surface_rows = [
         ("reactive_jpy", "price_trend"),
         ("trend_vol",    "price_trend"),
@@ -403,73 +368,57 @@ def print_report(benchmark) -> None:
         pairs = data.get(rep, {}).get(fs, {})
         if not pairs:
             continue
-
-        family_label = representation_family_label(rep)
-        label        = f"{family_label}  [{fs}]"
-
-        line   = f"  {label:<{label_w}s}"
+        label  = f"{representation_family_label(rep)}  [{fs}]"
+        row    = f"| {label} "
         values = []
         for p in TARGET_PAIRS:
             v = mean(pairs[p]) if pairs.get(p) else None
             if v is not None:
-                line   += f"{v:>{col_w}.3f}"
+                row   += f" | {v:6.3f} "
                 values.append(v)
             else:
-                line   += f"{'n/a':>{col_w}s}"
+                row   += " | n/a "
         row_mean = mean(values) if values else float("nan")
-        line += f"{row_mean:>{col_w}.3f}"
-        print(line)
+        row += f" | {row_mean:6.3f} |"
+        print(row)
 
-    print()
+    print("\n")
 
-    # ------------------------------------------------------------------
     # Per-experiment breakdown
-    # ------------------------------------------------------------------
+    print("### Per-experiment breakdown")
 
-    print("  Per-experiment breakdown\n")
-
-    col_w   = 10
-    label_w = 54
-
-    print(
-        "  {:<{lw}s}".format("Surface  State / Feature Set", lw=label_w) +
-        "".join(f"{p:>{col_w}s}" for p in TARGET_PAIRS) +
-        f"{'Mean':>{col_w}s}"
+    header = (
+        "| Surface | State | Feature Set | "
+        + " | ".join(TARGET_PAIRS)
+        + " | Mean |"
     )
-    print("  " + "-" * (label_w + col_w * (len(TARGET_PAIRS) + 1)))
+    separator = (
+        "|---|---|---|" + "---|" * len(TARGET_PAIRS) + "---|"
+    )
+    print(header)
+    print(separator)
 
-    for comp in comparisons:
+    for comp in sorted_comps:
         exp        = comp.experiment
         wf_by_pair = {p.pair: p.sharpe_uplift for p in comp.target_pairs}
-
-        tag   = representation_tag(exp.representation)
-        label = f"{tag:<6s}{exp.state:<30s}{exp.feature_set}"
-
-        line   = f"  {label:<{label_w}s}"
-        values = []
+        tag        = representation_tag(exp.representation)
+        row        = f"| {tag} | {exp.state} | {exp.feature_set} "
+        values     = []
         for p in TARGET_PAIRS:
             v = wf_by_pair.get(p)
             if v is not None:
-                line   += f"{v:>{col_w}.3f}"
+                row   += f" | {v:6.3f} "
                 values.append(v)
             else:
-                line   += f"{'n/a':>{col_w}s}"
+                row   += " | n/a "
         row_mean = mean(values) if values else float("nan")
-        line += f"{row_mean:>{col_w}.3f}"
-        print(line)
+        row += f" | {row_mean:6.3f} |"
+        print(row)
 
-    print()
-    print(
-        "  (ΔSh = walk-forward OOS Sharpe uplift vs no-DL baseline.\n"
-        "   cLife = Consensus Lifecycle Surface,  "
-        "tVol = Trend/Volatility Surface.)"
-    )
+    print("\n")
 
-    # ------------------------------------------------------------------
     # Footer
-    # ------------------------------------------------------------------
-
-    print()
-    print(LINE)
-    print("END OF REPORT")
-    print(LINE)
+    print("---")
+    print("Generated by `compare_to_baseline.py` — MPML Stage 3 OOS validator.")
+    print("Validated against VALIDATION_SPEC_JPY.md (frozen June 2026).")
+    print("Report format: Markdown — optimized for GitHub, Jupyter, VS Code, Obsidian.")
