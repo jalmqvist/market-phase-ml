@@ -119,6 +119,7 @@ def print_report(benchmark) -> None:
 
 > Δ values are walk-forward OOS deltas vs no-DL baseline.  
 > `+` = positive Sharpe uplift.  
+> For ΔDD: **smaller = better** (less drawdown).  
 > All values rounded to 3 decimals for readability.
 """)
 
@@ -126,19 +127,21 @@ def print_report(benchmark) -> None:
     # Section 1 — Uplift Matrix (Markdown Table)
     # ------------------------------------------------------------------
 
-    print("## 1. Uplift Matrix — ΔRet and ΔSh per State and Pair")
+    print("## 1. Uplift Matrix — ΔRet, ΔSh, and ΔDD per State and Pair")
 
-    # Table header
+    # Table header: ΔRet, ΔSh, ΔDD grouped by pair
     header = (
         "| Architecture | Behavioral Surface | Feature Set | State | "
         + " | ".join(f"ΔRet {p}" for p in TARGET_PAIRS)
         + " | "
         + " | ".join(f"ΔSh {p}" for p in TARGET_PAIRS)
+        + " | "
+        + " | ".join(f"ΔDD {p}" for p in TARGET_PAIRS)
         + " | Mean ΔSh |"
     )
     separator = (
         "|---|---|---|---|"
-        + "---|" * (len(TARGET_PAIRS) * 2)
+        + "---|" * (len(TARGET_PAIRS) * 3)
         + "---|"
     )
 
@@ -187,6 +190,15 @@ def print_report(benchmark) -> None:
                 sharpe_values.append(d_sh)
                 flag = "+" if d_sh > 0 else ""
                 row += f" | {d_sh:6.3f}{flag} "
+            else:
+                row += " | n/a "
+
+        # ΔDD columns (smaller = better)
+        for p in TARGET_PAIRS:
+            result = wf.get(p)
+            if result is not None:
+                d_dd = result.drawdown_uplift
+                row += f" | {d_dd:6.2f} "
             else:
                 row += " | n/a "
 

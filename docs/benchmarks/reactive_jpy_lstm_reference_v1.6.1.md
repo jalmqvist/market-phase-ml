@@ -8,23 +8,24 @@
 
 > Δ values are walk-forward OOS deltas vs no-DL baseline.  
 > `+` = positive Sharpe uplift.  
+> For ΔDD: **smaller = better** (less drawdown).  
 > All values rounded to 3 decimals for readability.
 
-## 1. Uplift Matrix — ΔRet and ΔSh per State and Pair
-| Architecture | Behavioral Surface | Feature Set | State | ΔRet EURJPY | ΔRet GBPJPY | ΔRet USDJPY | ΔSh EURJPY | ΔSh GBPJPY | ΔSh USDJPY | Mean ΔSh |
-|---|---|---|---|---|---|---|---|---|---|---|
-| lstm | Consensus Lifecycle Surface | price_trend | JPY_CONSENSUS_YOUNG  |   0.64  |   0.08  |   0.53  |  0.237+  |  0.081+  |  0.144+  |  0.154 |
-| lstm | Consensus Lifecycle Surface | price_trend | JPY_CONSENSUS_MATURING  |   0.62  |   0.03  |   0.70  |  0.254+  |  0.053+  |  0.187+  |  0.165 |
-| lstm | Consensus Lifecycle Surface | price_trend | JPY_CONSENSUS_MATURE  |   0.73  |   0.06  |   0.65  |  0.273+  |  0.058+  |  0.176+  |  0.169 |
-| lstm | Consensus Lifecycle Surface | price_trend | JPY_NON_EXTREME  |   0.66  |   0.01  |   0.58  |  0.267+  |  0.052+  |  0.147+  |  0.155 |
-| lstm | Trend / Volatility Surface | price_trend | LVTF  |   0.62  |  -0.16  |   0.33  |  0.240+  |  0.011+  |  0.082+  |  0.111 |
-| lstm | Trend / Volatility Surface | price_trend | HVTF  |   0.57  |  -0.09  |   0.69  |  0.232+  |  0.032+  |  0.192+  |  0.152 |
-| lstm | Trend / Volatility Surface | price_trend | LVR  |   0.67  |   0.09  |   0.86  |  0.269+  |  0.079+  |  0.233+  |  0.194 |
-| lstm | Trend / Volatility Surface | price_trend | HVR  |   0.87  |   0.06  |   0.64  |  0.332+  |  0.070+  |  0.174+  |  0.192 |
-| lstm | Trend / Volatility Surface | trend_vol_only | LVTF  |   0.64  |   0.08  |   0.47  |  0.277+  |  0.078+  |  0.128+  |  0.161 |
-| lstm | Trend / Volatility Surface | trend_vol_only | HVTF  |   0.70  |  -0.00  |   0.33  |  0.255+  |  0.042+  |  0.081+  |  0.126 |
-| lstm | Trend / Volatility Surface | trend_vol_only | LVR  |   0.83  |  -0.11  |   0.62  |  0.323+  |  0.025+  |  0.165+  |  0.171 |
-| lstm | Trend / Volatility Surface | trend_vol_only | HVR  |   0.81  |  -0.02  |   0.59  |  0.295+  |  0.051+  |  0.167+  |  0.171 |
+## 1. Uplift Matrix — ΔRet, ΔSh, and ΔDD per State and Pair
+| Architecture | Behavioral Surface | Feature Set | State | ΔRet EURJPY | ΔRet GBPJPY | ΔRet USDJPY | ΔSh EURJPY | ΔSh GBPJPY | ΔSh USDJPY | ΔDD EURJPY | ΔDD GBPJPY | ΔDD USDJPY | Mean ΔSh |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| lstm | Consensus Lifecycle Surface | price_trend | JPY_CONSENSUS_YOUNG  |   0.64  |   0.08  |   0.53  |  0.237+  |  0.081+  |  0.144+  |  -0.35  |  -0.33  |  -0.13  |  0.154 |
+| lstm | Consensus Lifecycle Surface | price_trend | JPY_CONSENSUS_MATURING  |   0.62  |   0.03  |   0.70  |  0.254+  |  0.053+  |  0.187+  |  -0.34  |  -0.33  |  -0.02  |  0.165 |
+| lstm | Consensus Lifecycle Surface | price_trend | JPY_CONSENSUS_MATURE  |   0.73  |   0.06  |   0.65  |  0.273+  |  0.058+  |  0.176+  |  -0.26  |  -0.29  |   0.05  |  0.169 |
+| lstm | Consensus Lifecycle Surface | price_trend | JPY_NON_EXTREME  |   0.66  |   0.01  |   0.58  |  0.267+  |  0.052+  |  0.147+  |  -0.30  |  -0.39  |  -0.08  |  0.155 |
+| lstm | Trend / Volatility Surface | price_trend | LVTF  |   0.62  |  -0.16  |   0.33  |  0.240+  |  0.011+  |  0.082+  |  -0.41  |  -0.53  |  -0.25  |  0.111 |
+| lstm | Trend / Volatility Surface | price_trend | HVTF  |   0.57  |  -0.09  |   0.69  |  0.232+  |  0.032+  |  0.192+  |  -0.27  |  -0.42  |  -0.14  |  0.152 |
+| lstm | Trend / Volatility Surface | price_trend | LVR  |   0.67  |   0.09  |   0.86  |  0.269+  |  0.079+  |  0.233+  |  -0.25  |  -0.28  |   0.10  |  0.194 |
+| lstm | Trend / Volatility Surface | price_trend | HVR  |   0.87  |   0.06  |   0.64  |  0.332+  |  0.070+  |  0.174+  |  -0.18  |  -0.33  |  -0.05  |  0.192 |
+| lstm | Trend / Volatility Surface | trend_vol_only | LVTF  |   0.64  |   0.08  |   0.47  |  0.277+  |  0.078+  |  0.128+  |  -0.39  |  -0.37  |  -0.14  |  0.161 |
+| lstm | Trend / Volatility Surface | trend_vol_only | HVTF  |   0.70  |  -0.00  |   0.33  |  0.255+  |  0.042+  |  0.081+  |  -0.24  |  -0.32  |  -0.23  |  0.126 |
+| lstm | Trend / Volatility Surface | trend_vol_only | LVR  |   0.83  |  -0.11  |   0.62  |  0.323+  |  0.025+  |  0.165+  |  -0.23  |  -0.41  |   0.02  |  0.171 |
+| lstm | Trend / Volatility Surface | trend_vol_only | HVR  |   0.81  |  -0.02  |   0.59  |  0.295+  |  0.051+  |  0.167+  |  -0.20  |  -0.38  |  -0.21  |  0.171 |
 
 
 ## 2. Internal MPML Improvement — Dynamic Selector
