@@ -47,6 +47,17 @@ def _make_evaluation(evaluation_id: str = "eval_abc123") -> StrategyEvaluation:
     )
 
 
+class _AltPolicy(RecommendationPolicy):
+    """Alternative policy used in tests to produce a distinct policy_name."""
+
+    @property
+    def policy_name(self) -> str:
+        return "other_v1"
+
+    def rank(self, evaluations: list[StrategyEvaluation]) -> list[StrategyEvaluation]:
+        return sorted(evaluations, key=lambda e: e.evaluation_id)
+
+
 class TestRecommendationSchemaVersion(unittest.TestCase):
     def test_schema_version_is_string(self):
         self.assertIsInstance(RECOMMENDATION_SCHEMA_VERSION, str)
@@ -249,17 +260,9 @@ class TestRecommendationsFromEvaluations(unittest.TestCase):
         self.assertEqual(recs, [])
 
     def test_policy_is_set(self):
-        class _NamedPolicy(RecommendationPolicy):
-            @property
-            def policy_name(self) -> str:
-                return "test_policy"
-
-            def rank(self, evaluations):
-                return sorted(evaluations, key=lambda e: e.evaluation_id)
-
         evals = [_make_evaluation()]
-        recs = recommendations_from_evaluations(evals, policy=_NamedPolicy())
-        self.assertEqual(recs[0].recommendation_policy, "test_policy")
+        recs = recommendations_from_evaluations(evals, policy=_AltPolicy())
+        self.assertEqual(recs[0].recommendation_policy, "other_v1")
 
 
 class TestRecommendationsToFrame(unittest.TestCase):
@@ -534,34 +537,18 @@ class TestRecommendationsFromEvaluationsG2(unittest.TestCase):
         self.assertEqual(recs[0].evaluation_id, "eval_specific")
 
     def test_different_policy_objects_produce_distinct_policy_names(self):
-        class _OtherPolicy(RecommendationPolicy):
-            @property
-            def policy_name(self) -> str:
-                return "other_v1"
-
-            def rank(self, evaluations):
-                return sorted(evaluations, key=lambda e: e.evaluation_id)
-
         evals = [_make_eval("eval_a")]
         recs_default = recommendations_from_evaluations(evals)
-        recs_other = recommendations_from_evaluations(evals, policy=_OtherPolicy())
+        recs_other = recommendations_from_evaluations(evals, policy=_AltPolicy())
         self.assertNotEqual(
             recs_default[0].recommendation_policy,
             recs_other[0].recommendation_policy,
         )
 
     def test_different_policies_distinct_recommendation_ids(self):
-        class _OtherPolicy(RecommendationPolicy):
-            @property
-            def policy_name(self) -> str:
-                return "other_v1"
-
-            def rank(self, evaluations):
-                return sorted(evaluations, key=lambda e: e.evaluation_id)
-
         evals = [_make_eval("eval_a")]
         recs_default = recommendations_from_evaluations(evals)
-        recs_other = recommendations_from_evaluations(evals, policy=_OtherPolicy())
+        recs_other = recommendations_from_evaluations(evals, policy=_AltPolicy())
         self.assertNotEqual(
             recs_default[0].recommendation_id,
             recs_other[0].recommendation_id,

@@ -89,7 +89,11 @@ class SharpeRankingPolicy(RecommendationPolicy):
     def rank(self, evaluations: list[StrategyEvaluation]) -> list[StrategyEvaluation]:
         return sorted(
             evaluations,
-            key=lambda e: (-e.expected_sharpe, -e.expected_return, e.evaluation_id),
+            key=lambda e: (
+                -(e.expected_sharpe if e.expected_sharpe is not None else float("-inf")),
+                -(e.expected_return if e.expected_return is not None else float("-inf")),
+                e.evaluation_id,
+            ),
         )
 
 

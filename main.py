@@ -59,7 +59,6 @@ from src.evaluation import (
     write_strategy_evaluations_parquet,
 )
 from src.recommendation import (
-    DEFAULT_POLICY,
     RECOMMENDATION_SCHEMA_VERSION,
     recommendations_from_evaluations,
     write_recommendations_parquet,
@@ -3145,7 +3144,6 @@ def main(
 
         recommendations = recommendations_from_evaluations(
             strategy_evaluations,
-            policy=DEFAULT_POLICY,
             top_n=recommendation_top_n,
         )
         recommendations_path = _run_output_dir() / "recommendations.parquet"
