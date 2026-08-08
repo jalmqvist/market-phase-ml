@@ -2853,11 +2853,12 @@ def main(
 
                 # Individual strategy runs — expose TF and MR as independently
                 # evaluatable units for G3 scope-targeted evaluation.
-                _tf_inst = get_default_strategy_registry().get(baseline_tf).instantiate()
+                _strategy_registry = get_default_strategy_registry()
+                _tf_inst = _strategy_registry.get(baseline_tf).instantiate()
                 _tf_signals, _tf_sl, _tf_tp = _tf_inst.generate_signals(df_test)
                 tf_res = backtester.run(df_test, _tf_signals, baseline_tf, _tf_sl, _tf_tp)
 
-                _mr_inst = get_default_strategy_registry().get(baseline_mr).instantiate()
+                _mr_inst = _strategy_registry.get(baseline_mr).instantiate()
                 _mr_signals, _mr_sl, _mr_tp = _mr_inst.generate_signals(df_test)
                 mr_res = backtester.run(df_test, _mr_signals, baseline_mr, _mr_sl, _mr_tp)
 
