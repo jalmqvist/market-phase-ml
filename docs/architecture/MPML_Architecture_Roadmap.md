@@ -1402,21 +1402,140 @@ recommendations.parquet        — public MPML→MRML interface (Recommendation)
 experiment_manifest.json       — run manifest with recommendation_schema_version and recommendation_count
 ```
 
-This phase introduces representation only.
+This phase introduced Recommendation representation only. Recommendation semantics are introduced in G2.
 
 Recommendation policy remains unchanged.
 
 ### Phase G2 — Recommendation Policy
 
-Deliverables
+### Objective
+
+Introduce deterministic recommendation semantics on top of the canonical
+StrategyEvaluation evidence layer.
+
+G2 defines how a collection of StrategyEvaluation objects is interpreted and
+converted into an ordered collection of Recommendation objects.
+
+A recommendation policy is defined as a deterministic mapping:
+
+    StrategyEvaluation[]
+            ↓
+    Recommendation Policy
+            ↓
+    Recommendation[]
+
+Recommendation policies operate on evaluation evidence. They do not perform
+walk-forward evaluation and do not modify StrategyEvaluation objects.
+
+### Deliverables
 
 - Generic recommendation builder
-- Ranking policy
+- Explicit recommendation policy abstraction
+- Deterministic default ranking policy
 - Top-N recommendation support
-- Recommendation confidence
+- Stable recommendation ordering
 - Stable MPML recommendation interface
 
-This phase introduces recommendation semantics while preserving StrategyEvaluation unchanged.
+The initial policy should remain deliberately simple and transparent. It should
+provide a deterministic ranking over StrategyEvaluation evidence without
+introducing sophisticated multi-objective or statistical ranking machinery.
+
+Recommendation identity remains deterministic and continues to be derived from
+the evaluation identity, policy and rank.
+
+### Recommendation Confidence
+
+G2 does not introduce a new statistical definition of recommendation confidence.
+
+Although confidence is a potential recommendation attribute, no arbitrary
+confidence metric should be invented solely to satisfy the architectural
+interface. Until a justified confidence methodology exists, confidence remains
+optional metadata rather than a required ranking input.
+
+Confidence calibration is therefore deferred to future research.
+
+### Architectural Constraints
+
+G2 MUST:
+
+- preserve StrategyEvaluation unchanged
+- preserve walk-forward evaluation unchanged
+- keep recommendation policies independent of individual strategies and
+  Behavioral Surfaces
+- produce deterministic recommendations from deterministic evaluation input
+- avoid hardcoded strategy-specific ranking logic
+
+G2 MUST NOT introduce:
+
+- new Behavioral Surface abstractions
+- new evaluation evidence models
+- live or portfolio decision logic
+- complex ranking frameworks without a demonstrated research requirement
+
+Recommendation semantics remain an interpretation layer over the existing
+evidence layer.
+
+### Phase G3 — Evaluation Scope and Strategy Selection
+
+### Objective
+
+Provide explicit user control over which registered strategies participate in an
+MPML evaluation.
+
+The Strategy Registry already defines strategy capabilities, while Evaluation
+Policies define the experimental scope. G3 exposes this capability through the
+MPML runtime without introducing a separate strategy-selection framework.
+
+The objective is practical experiment control:
+
+    Strategy Registry
+            ↓
+    Evaluation Scope
+            ↓
+    Strategies Evaluated
+            ↓
+    StrategyEvaluation
+            ↓
+    Recommendation
+
+### Deliverables
+
+- CLI option for evaluating a specific strategy
+- CLI option for evaluating an explicit set of strategies
+- Validation against the Strategy Registry
+- Clear handling of incompatible or unknown strategy identifiers
+- Experiment manifest recording of the selected evaluation scope
+- Backward-compatible default behavior
+
+The default invocation MUST preserve the existing benchmark evaluation scope.
+
+Explicit strategy selection MUST affect only which strategies are evaluated.
+It MUST NOT alter walk-forward logic, strategy implementation, StrategyEvaluation
+semantics, or recommendation semantics.
+
+### Design Constraints
+
+G3 should reuse the existing Strategy Registry and Evaluation Policy mechanisms.
+
+It MUST NOT introduce:
+
+- strategy-specific CLI branches
+- separate strategy configuration files without a demonstrated need
+- duplicated strategy metadata
+- a second strategy-selection abstraction
+- changes to strategy implementations
+
+The CLI should remain intentionally small. A user should be able to request,
+for example, one strategy or a small explicit set of strategies without
+introducing a large collection of new parameters.
+
+### Provenance
+
+The selected evaluation scope should be recorded in the experiment manifest so
+that an experiment can be reproduced from its declared strategy set.
+
+This makes targeted evaluation a research-control mechanism rather than merely
+a debugging convenience.
 
 ---
 
@@ -1434,9 +1553,11 @@ Completed
 
 Current
 
-→ Recommendation policy
+→ Recommendation policy (G2)
 
 Next
+
+→ Controlled evaluation scope and strategy selection (G3)
 
 → Stable MPML–MRML interface
 
