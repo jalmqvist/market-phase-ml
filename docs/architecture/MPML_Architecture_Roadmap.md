@@ -1408,12 +1408,18 @@ Recommendation policy remains unchanged.
 
 ### Phase G2 — Recommendation Policy
 
+**Status: Complete (Phase G2)**
+
+> G2 is considered complete. Recommendation semantics now provide a
+> deterministic `sharpe_rank_v1` ranking policy with optional Top-N output,
+> while preserving StrategyEvaluation and walk-forward evaluation unchanged.
+
 ### Objective
 
 Introduce deterministic recommendation semantics on top of the canonical
 StrategyEvaluation evidence layer.
 
-G2 defines how a collection of StrategyEvaluation objects is interpreted and
+qG2 defines how a collection of StrategyEvaluation objects is interpreted and
 converted into an ordered collection of Recommendation objects.
 
 A recommendation policy is defined as a deterministic mapping:
@@ -1482,9 +1488,13 @@ evidence layer.
 Provide explicit user control over which registered strategies participate in an
 MPML evaluation.
 
-The Strategy Registry already defines strategy capabilities, while Evaluation
-Policies define the experimental scope. G3 exposes this capability through the
-MPML runtime without introducing a separate strategy-selection framework.
+G3 exposes a small, user-facing override of the existing evaluation scope. It
+does not introduce a new strategy-selection framework.
+
+The Strategy Registry remains the authority for strategy identity and
+capabilities. Existing Evaluation Policies continue to define the default
+experimental scope. An explicit CLI strategy selection allows the user to
+narrow that scope for targeted experiments.
 
 The objective is practical experiment control:
 
@@ -1498,20 +1508,78 @@ The objective is practical experiment control:
             ↓
     Recommendation
 
+### Strategy Selection
+
+A single repeatable CLI option should support both individual and multiple
+strategy selection:
+
+    --strategy STRATEGY_ID
+
+For example:
+
+    --strategy TF4
+
+or:
+
+    --strategy TF4 --strategy MR42
+
+The option selects the strategies to be evaluated; it does not alter their
+implementation or evaluation semantics.
+
+The default invocation, without explicit strategy selection, MUST preserve the
+existing benchmark evaluation scope exactly.
+
+
+
 ### Deliverables
 
-- CLI option for evaluating a specific strategy
-- CLI option for evaluating an explicit set of strategies
-- Validation against the Strategy Registry
-- Clear handling of incompatible or unknown strategy identifiers
-- Experiment manifest recording of the selected evaluation scope
+- Repeatable `--strategy STRATEGY_ID` CLI option
+- Support for evaluating one or multiple explicitly named strategies
+- Validation of requested strategy identifiers against the Strategy Registry
+- Clear handling of unknown strategy identifiers
+- Clear handling of strategies incompatible with the active Behavioral Surface
+- Experiment manifest recording of the resolved evaluation scope
 - Backward-compatible default behavior
 
-The default invocation MUST preserve the existing benchmark evaluation scope.
+### Evaluation Scope Semantics
 
-Explicit strategy selection MUST affect only which strategies are evaluated.
-It MUST NOT alter walk-forward logic, strategy implementation, StrategyEvaluation
-semantics, or recommendation semantics.
+G3 controls which strategy evidence is generated.
+
+It does not control how that evidence is ranked.
+
+The distinction is therefore:
+
+    G3
+    Which strategies are evaluated?
+            ↓
+    StrategyEvaluation
+            ↓
+    G2
+    How are the resulting evaluations ranked?
+            ↓
+    Recommendation
+
+Explicit strategy selection MUST affect only the set of strategies evaluated.
+
+It MUST NOT alter:
+
+- walk-forward logic
+- strategy implementation
+- StrategyEvaluation semantics
+- recommendation policy
+- recommendation ranking
+- Behavioral Surface definitions
+
+### Provenance
+
+The experiment manifest should record the resolved evaluation scope, including
+the effective strategy identifiers used for the run.
+
+This applies both to explicitly selected strategies and to the default evaluation
+scope, so that an experiment is self-describing and reproducible.
+
+The manifest should record the effective scope rather than relying solely on
+the original CLI invocation.
 
 ### Design Constraints
 
@@ -1519,23 +1587,32 @@ G3 should reuse the existing Strategy Registry and Evaluation Policy mechanisms.
 
 It MUST NOT introduce:
 
+- a separate strategy-selection abstraction
 - strategy-specific CLI branches
-- separate strategy configuration files without a demonstrated need
+- separate strategy configuration files
 - duplicated strategy metadata
-- a second strategy-selection abstraction
 - changes to strategy implementations
+- changes to the Recommendation model
+- additional recommendation policies
 
-The CLI should remain intentionally small. A user should be able to request,
-for example, one strategy or a small explicit set of strategies without
-introducing a large collection of new parameters.
+The CLI should remain intentionally small.
 
-### Provenance
+G3 is limited to explicit strategy-level evaluation scope. Additional evaluation
+controls or policy selection may be introduced in a future phase if a concrete
+research requirement emerges.
 
-The selected evaluation scope should be recorded in the experiment manifest so
-that an experiment can be reproduced from its declared strategy set.
+### Non-Goals
 
-This makes targeted evaluation a research-control mechanism rather than merely
-a debugging convenience.
+G3 does not introduce a general-purpose experiment configuration framework.
+
+It does not expose all Evaluation Policy options through the CLI.
+
+It does not redesign the Strategy Registry.
+
+It does not change the default MPML benchmark.
+
+Its purpose is simply to make targeted strategy evaluation possible while
+preserving the existing runtime and artifact contracts.
 
 ---
 
@@ -1551,13 +1628,13 @@ Completed
 
 ✓ Recommendation representation
 
+✓ Recommendation policy
+
 Current
 
-→ Recommendation policy (G2)
+→ Controlled evaluation scope and strategy selection (G3)
 
 Next
-
-→ Controlled evaluation scope and strategy selection (G3)
 
 → Stable MPML–MRML interface
 
