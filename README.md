@@ -417,6 +417,16 @@ Canonical artifacts produced by every experiment:
 - `experiment_manifest.json` — provenance and schema metadata
 - `run_manifest.json` — backward-compatible legacy manifest
 
+### Recommendations
+
+MPML converts `StrategyEvaluation` objects into deterministically ranked `Recommendation` objects using the default `sharpe_rank_v1` policy. Recommendations are ranked by expected Sharpe ratio (descending), with deterministic tie-breaking on expected return and then evaluation ID.
+
+By default all recommendations are returned. Use `--recommendation-top-n N` to limit the output to the top N:
+
+```bash
+python main.py --recommendation-top-n 5
+```
+
 Optional market-data backend override:
 
 ```bash
@@ -519,7 +529,7 @@ The current implementation provides:
 - reproducible experiment manifests
 - reference benchmark infrastructure
 
-Current architectural work focuses on Recommendation Policy (Phase G2) and the MPML→MRML interface.
+Current architectural work focuses on the MPML→MRML interface (Phase G3 and beyond).
 
 ---
 

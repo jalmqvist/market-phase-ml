@@ -4,6 +4,7 @@ import abc
 import hashlib
 import json
 import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -69,12 +70,24 @@ class RecommendationPolicy(abc.ABC):
         """
 
 
+def _finite_or_neginf(value: float | None) -> float:
+    """Return *value* if it is a finite float, otherwise ``-inf``.
+
+    ``None``, ``NaN``, ``+inf``, and ``-inf`` are all treated as
+    missing/worst-ranked so that non-finite inputs sort below any finite
+    value in a descending ordering.
+    """
+    if value is None or not math.isfinite(value):
+        return float("-inf")
+    return value
+
+
 class SharpeRankingPolicy(RecommendationPolicy):
     """Default G2 recommendation policy: rank by expected_sharpe descending.
 
     Tie-breaking (all deterministic):
-      1. expected_sharpe descending
-      2. expected_return descending
+      1. expected_sharpe descending  (None/NaN/non-finite → worst)
+      2. expected_return descending  (None/NaN/non-finite → worst)
       3. evaluation_id ascending (lexicographic)
 
     This policy is intentionally simple and transparent.  It operates only
@@ -90,8 +103,8 @@ class SharpeRankingPolicy(RecommendationPolicy):
         return sorted(
             evaluations,
             key=lambda e: (
-                -(e.expected_sharpe if e.expected_sharpe is not None else float("-inf")),
-                -(e.expected_return if e.expected_return is not None else float("-inf")),
+                -_finite_or_neginf(e.expected_sharpe),
+                -_finite_or_neginf(e.expected_return),
                 e.evaluation_id,
             ),
         )

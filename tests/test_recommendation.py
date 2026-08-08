@@ -445,6 +445,64 @@ class TestSharpeRankingPolicy(unittest.TestCase):
             {e.evaluation_id for e in evals},
         )
 
+    def test_nan_sharpe_ranked_below_finite(self):
+        evals = [
+            _make_eval("eval_finite", expected_sharpe=0.1),
+            _make_eval("eval_nan", expected_sharpe=float("nan")),
+        ]
+        ranked = self.policy.rank(evals)
+        ids = [e.evaluation_id for e in ranked]
+        self.assertEqual(ids, ["eval_finite", "eval_nan"])
+
+    def test_inf_sharpe_ranked_below_finite(self):
+        evals = [
+            _make_eval("eval_finite", expected_sharpe=0.5),
+            _make_eval("eval_posinf", expected_sharpe=float("inf")),
+            _make_eval("eval_neginf", expected_sharpe=float("-inf")),
+        ]
+        ranked = self.policy.rank(evals)
+        ids = [e.evaluation_id for e in ranked]
+        # finite Sharpe ranks first; +inf/-inf both map to -inf, so id tiebreaker applies
+        self.assertEqual(ids, ["eval_finite", "eval_neginf", "eval_posinf"])
+
+    def test_nan_return_handled_when_sharpe_ties(self):
+        evals = [
+            _make_eval("eval_a", expected_sharpe=1.0, expected_return=float("nan")),
+            _make_eval("eval_b", expected_sharpe=1.0, expected_return=0.5),
+        ]
+        ranked = self.policy.rank(evals)
+        # finite return should rank above NaN return
+        self.assertEqual(ranked[0].evaluation_id, "eval_b")
+
+    def test_nonfinite_return_handled_when_sharpe_ties(self):
+        evals = [
+            _make_eval("eval_a", expected_sharpe=1.0, expected_return=float("inf")),
+            _make_eval("eval_b", expected_sharpe=1.0, expected_return=0.5),
+        ]
+        ranked = self.policy.rank(evals)
+        # finite return should rank above non-finite return
+        self.assertEqual(ranked[0].evaluation_id, "eval_b")
+
+    def test_evaluation_id_tiebreaker_with_nonfinite(self):
+        # Both have NaN sharpe — evaluation_id is the final tiebreaker
+        evals = [
+            _make_eval("eval_zzz", expected_sharpe=float("nan")),
+            _make_eval("eval_aaa", expected_sharpe=float("nan")),
+        ]
+        ranked = self.policy.rank(evals)
+        self.assertEqual(ranked[0].evaluation_id, "eval_aaa")
+        self.assertEqual(ranked[1].evaluation_id, "eval_zzz")
+
+    def test_repeated_ranking_same_order(self):
+        evals = [
+            _make_eval("eval_a", expected_sharpe=float("nan")),
+            _make_eval("eval_b", expected_sharpe=1.0),
+            _make_eval("eval_c", expected_sharpe=float("inf")),
+        ]
+        order_1 = [e.evaluation_id for e in self.policy.rank(evals)]
+        order_2 = [e.evaluation_id for e in self.policy.rank(evals)]
+        self.assertEqual(order_1, order_2)
+
 
 class TestRecommendationsFromEvaluationsG2(unittest.TestCase):
     def test_default_policy_is_sharpe_rank(self):
