@@ -75,7 +75,63 @@ def _make_evaluation(strategy_id: str = "PhaseAware_TF4_MR42", *, sharpe: float 
     )
 
 
+def _full_strategy_specs(scope_tf: str, scope_mr: str) -> list[dict]:
+    """Build the full set of strategy specs matching the actual main.py structure.
+
+    Includes both individual (TF, MR) and composite (PhaseAware, Dynamic) specs.
+    This mirrors the real strategy_specs used in the walk-forward evaluation.
+    """
+    policy_ids = (scope_tf, scope_mr)
+    return [
+        {
+            "strategy_id": scope_tf,
+            "scope_strategy_ids": (scope_tf,),
+            "expected_return_col": f"{scope_tf} Return (%)",
+            "expected_sharpe_col": f"{scope_tf} Sharpe",
+            "expected_drawdown_col": f"{scope_tf} Max DD (%)",
+            "n_trades_col": f"{scope_tf} Trades",
+            "confidence_col": None,
+            "strategy_role": "standalone_tf",
+        },
+        {
+            "strategy_id": scope_mr,
+            "scope_strategy_ids": (scope_mr,),
+            "expected_return_col": f"{scope_mr} Return (%)",
+            "expected_sharpe_col": f"{scope_mr} Sharpe",
+            "expected_drawdown_col": f"{scope_mr} Max DD (%)",
+            "n_trades_col": f"{scope_mr} Trades",
+            "confidence_col": None,
+            "strategy_role": "standalone_mr",
+        },
+        {
+            "strategy_id": f"PhaseAware_{scope_tf}_{scope_mr}",
+            "scope_strategy_ids": policy_ids,
+            "expected_return_col": "Baseline Return (%)",
+            "expected_sharpe_col": "Baseline Sharpe",
+            "expected_drawdown_col": "Baseline Max DD (%)",
+            "n_trades_col": "Baseline Trades",
+            "confidence_col": None,
+            "strategy_role": "baseline",
+        },
+        {
+            "strategy_id": "StrategySelector_Dynamic_WF",
+            "scope_strategy_ids": policy_ids,
+            "expected_return_col": "Dynamic Return (%)",
+            "expected_sharpe_col": "Dynamic Sharpe",
+            "expected_drawdown_col": "Dynamic Max DD (%)",
+            "n_trades_col": "Dynamic Trades",
+            "confidence_col": "Confident Bars (%)",
+            "strategy_role": "dynamic_selector",
+        },
+    ]
+
+
 def _default_strategy_specs(scope_ids: tuple[str, ...]) -> list[dict]:
+    """Legacy helper: composite-only specs (both require all scope IDs).
+
+    Used by tests that exercise filter_strategy_specs with composite-only
+    specs, where partial scope should correctly produce 0 results.
+    """
     return [
         {
             "strategy_id": "PhaseAware_TF4_MR42",
@@ -370,17 +426,41 @@ class TestFilterStrategySpecs(unittest.TestCase):
         """When scope contains all policy strategy IDs, all specs are included."""
         tf, mr = self._policy_ids()
         scope = _make_scope((tf, mr))
-        specs = _default_strategy_specs((tf, mr))
+        specs = _full_strategy_specs(tf, mr)
         result = filter_strategy_specs(specs, scope)
-        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result), 4)
 
-    def test_partial_scope_excludes_specs(self):
-        """When scope is a strict subset of policy IDs, no spec is included."""
+    def test_tf_only_scope_includes_only_tf_spec(self):
+        """--strategy TF4: only the TF individual spec is included."""
+        tf, mr = self._policy_ids()
+        scope = _make_scope((tf,))
+        specs = _full_strategy_specs(tf, mr)
+        result = filter_strategy_specs(specs, scope)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["strategy_id"], tf)
+
+    def test_mr_only_scope_includes_only_mr_spec(self):
+        """--strategy MR42: only the MR individual spec is included."""
+        tf, mr = self._policy_ids()
+        scope = _make_scope((mr,))
+        specs = _full_strategy_specs(tf, mr)
+        result = filter_strategy_specs(specs, scope)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["strategy_id"], mr)
+
+    def test_partial_scope_excludes_composite_specs(self):
+        """Composite specs (PhaseAware, Dynamic) require ALL scope IDs; partial scope excludes them.
+
+        This test verifies the filter_strategy_specs 'ALL scope_strategy_ids must be present'
+        semantics remain correct for composite-only spec lists. With the full spec list
+        (including individual specs), partial scopes now produce non-empty results.
+        """
         tf, _mr = self._policy_ids()
         scope = _make_scope((tf,))
-        specs = _default_strategy_specs((tf, "MR42"))
-        result = filter_strategy_specs(specs, scope)
-        # PhaseAware_TF4_MR42 requires both TF4 and MR42; scope only has TF4.
+        # Use composite-only specs: both require (tf, mr)
+        composite_only_specs = _default_strategy_specs((tf, "MR42"))
+        result = filter_strategy_specs(composite_only_specs, scope)
+        # Composite specs require both; partial scope excludes them
         self.assertEqual(len(result), 0)
 
     def test_spec_without_scope_ids_is_always_included(self):
@@ -401,10 +481,53 @@ class TestFilterStrategySpecs(unittest.TestCase):
         """filter_strategy_specs must not mutate spec content."""
         tf, mr = self._policy_ids()
         scope = _make_scope((tf, mr))
-        specs = _default_strategy_specs((tf, mr))
+        specs = _full_strategy_specs(tf, mr)
         result = filter_strategy_specs(specs, scope)
-        self.assertEqual(result[0]["strategy_id"], "PhaseAware_TF4_MR42")
-        self.assertEqual(result[1]["strategy_id"], "StrategySelector_Dynamic_WF")
+        strategy_ids = [s["strategy_id"] for s in result]
+        self.assertIn(tf, strategy_ids)
+        self.assertIn(mr, strategy_ids)
+        self.assertIn(f"PhaseAware_{tf}_{mr}", strategy_ids)
+        self.assertIn("StrategySelector_Dynamic_WF", strategy_ids)
+
+    def test_dynamic_selector_excluded_when_only_tf_selected(self):
+        """StrategySelector_Dynamic_WF is excluded when scope contains only TF."""
+        tf, mr = self._policy_ids()
+        scope = _make_scope((tf,))
+        specs = _full_strategy_specs(tf, mr)
+        result = filter_strategy_specs(specs, scope)
+        result_ids = [s["strategy_id"] for s in result]
+        self.assertNotIn("StrategySelector_Dynamic_WF", result_ids)
+
+    def test_dynamic_selector_excluded_when_only_mr_selected(self):
+        """StrategySelector_Dynamic_WF is excluded when scope contains only MR."""
+        tf, mr = self._policy_ids()
+        scope = _make_scope((mr,))
+        specs = _full_strategy_specs(tf, mr)
+        result = filter_strategy_specs(specs, scope)
+        result_ids = [s["strategy_id"] for s in result]
+        self.assertNotIn("StrategySelector_Dynamic_WF", result_ids)
+
+    def test_phaseaware_excluded_when_only_tf_selected(self):
+        """PhaseAware composite is excluded when scope contains only TF."""
+        tf, mr = self._policy_ids()
+        scope = _make_scope((tf,))
+        specs = _full_strategy_specs(tf, mr)
+        result = filter_strategy_specs(specs, scope)
+        result_ids = [s["strategy_id"] for s in result]
+        self.assertNotIn(f"PhaseAware_{tf}_{mr}", result_ids)
+
+    def test_default_scope_includes_all_specs(self):
+        """Default scope (TF4 + MR42) includes all 4 specs including composites."""
+        tf, mr = self._policy_ids()
+        scope = resolve_evaluation_scope(
+            None,
+            registry=_REGISTRY,
+            policy_registry=_POLICY_REGISTRY,
+            surface_id=_SURFACE_ID,
+        )
+        specs = _full_strategy_specs(tf, mr)
+        result = filter_strategy_specs(specs, scope)
+        self.assertEqual(len(result), 4)
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +542,32 @@ class TestRecommendationAfterTargetedEvaluation(unittest.TestCase):
         recs = recommendations_from_evaluations(evals)
         self.assertEqual(len(recs), 1)
         self.assertEqual(recs[0].rank, 1)
+
+    def test_recommendations_from_single_tf4_evaluation(self):
+        """--strategy TF4 produces a TF4 evaluation; recommendations still work."""
+        evals = [_make_evaluation("TF4", sharpe=0.7)]
+        recs = recommendations_from_evaluations(evals)
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0].rank, 1)
+
+    def test_recommendations_from_single_mr42_evaluation(self):
+        """--strategy MR42 produces a MR42 evaluation; recommendations still work."""
+        evals = [_make_evaluation("MR42", sharpe=0.4)]
+        recs = recommendations_from_evaluations(evals)
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0].rank, 1)
+
+    def test_recommendations_from_two_targeted_evaluations(self):
+        """--strategy TF4 --strategy MR42 produces both; recommendations cover both."""
+        evals = [
+            _make_evaluation("TF4", sharpe=0.7),
+            _make_evaluation("MR42", sharpe=0.4),
+        ]
+        recs = recommendations_from_evaluations(evals)
+        self.assertEqual(len(recs), 2)
+        rec_ids = {r.evaluation_id for r in recs}
+        self.assertIn("eval_TF4", rec_ids)
+        self.assertIn("eval_MR42", rec_ids)
 
     def test_empty_evaluations_produces_no_recommendations(self):
         recs = recommendations_from_evaluations([])
@@ -447,6 +596,15 @@ class TestG2RankingUnchanged(unittest.TestCase):
         # Rank 1 must be the highest Sharpe
         rank1_eval_id = recs[0].evaluation_id
         self.assertEqual(rank1_eval_id, "eval_high_sharpe")
+
+    def test_ranking_tf4_vs_mr42(self):
+        """When TF4 and MR42 are both evaluated, G2 ranking picks the better Sharpe."""
+        evals = [
+            _make_evaluation("TF4", sharpe=0.8),
+            _make_evaluation("MR42", sharpe=0.3),
+        ]
+        recs = recommendations_from_evaluations(evals)
+        self.assertEqual(recs[0].evaluation_id, "eval_TF4")
 
     def test_recommendation_policy_is_sharpe_rank_v1(self):
         from src.recommendation import SharpeRankingPolicy, DEFAULT_POLICY
@@ -510,7 +668,7 @@ class TestDeterministicScope(unittest.TestCase):
         """filter_strategy_specs produces the same result on repeated calls."""
         tf, mr = resolve_phaseaware_strategy_pair()
         scope = _make_scope((tf, mr))
-        specs = _default_strategy_specs((tf, mr))
+        specs = _full_strategy_specs(tf, mr)
         result_a = filter_strategy_specs(specs, scope)
         result_b = filter_strategy_specs(specs, scope)
         self.assertEqual(
@@ -557,3 +715,4 @@ class TestModuleImportSmoke(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
