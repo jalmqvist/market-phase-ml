@@ -49,8 +49,15 @@ from src.behavioral_artifact_resolver import resolve_behavioral_artifact_runtime
 from src.experiment_surface_runtime import build_runtime_experiment_surface
 from src.strategy_registry import (
     DEFAULT_PHASEAWARE_POLICY_ID,
+    get_default_policy_registry,
+    get_default_strategy_registry,
     phaseaware_strategy_name,
     resolve_phaseaware_strategy_pair,
+)
+from src.evaluation_scope import (
+    EvaluationScope,
+    filter_strategy_specs,
+    resolve_evaluation_scope,
 )
 from src.evaluation import (
     EVALUATION_SCHEMA_VERSION,
@@ -1467,6 +1474,7 @@ def main(
     experiment_seed: int | None = None,
     behavioral_surface: str | None = None,
     recommendation_top_n: int | None = None,
+    strategy: list[str] | None = None,
 ):
     resolved_seed = resolve_experiment_seed(
         cli_seed=experiment_seed,
@@ -1527,6 +1535,22 @@ def main(
     _resolved_behavioral_state_id = artifact_runtime.state_id
     preloaded_daily_dl = artifact_runtime.d1_predictions
     artifact_regime = dl_surface.get("dl_regime")
+
+    # ── G3: Resolve evaluation scope ────────────────────────────────────────
+    # G3 determines which strategies are evaluated.
+    # G2 determines how the resulting StrategyEvaluation objects are ranked.
+    # Precedence: --strategy CLI args > default EvaluationPolicy scope.
+    _effective_scope = resolve_evaluation_scope(
+        requested_strategy_ids=strategy,
+        registry=get_default_strategy_registry(),
+        policy_registry=get_default_policy_registry(),
+        surface_id=_resolved_behavioral_surface_id,
+    )
+    print(
+        f"[G3] Evaluation scope ({_effective_scope.source}): "
+        f"{list(_effective_scope.strategy_ids)}"
+    )
+    # ────────────────────────────────────────────────────────────────────────
 
     dl_mode_tag = "__dl_enabled" if dl_runtime_enabled else "__baseline"
     dl_surface_str = _dl_surface_string(dl_surface)
@@ -1673,6 +1697,7 @@ def main(
         "strategy_evaluation_count": 0,
         "recommendation_schema_version": RECOMMENDATION_SCHEMA_VERSION,
         "recommendation_count": 0,
+        "evaluation_scope": _effective_scope.to_manifest_block(),
         "behavioral_surface": build_behavioral_surface_manifest_block(
             surface_id=_resolved_behavioral_surface_id,
             state_id=_resolved_behavioral_state_id,
@@ -3104,9 +3129,12 @@ def main(
             elif EXPORT_SELECTOR_STATE_TIMELINE:
                 print("  ⚠  selector_state_timeline: no bars collected (no folds completed).")
 
+        _scope_tf, _scope_mr = resolve_phaseaware_strategy_pair()
+        _policy_scope_ids = (_scope_tf, _scope_mr)
         strategy_specs = [
             {
                 "strategy_id": phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID),
+                "scope_strategy_ids": _policy_scope_ids,
                 "expected_return_col": "Baseline Return (%)",
                 "expected_sharpe_col": "Baseline Sharpe",
                 "expected_drawdown_col": "Baseline Max DD (%)",
@@ -3116,6 +3144,7 @@ def main(
             },
             {
                 "strategy_id": "StrategySelector_Dynamic_WF",
+                "scope_strategy_ids": _policy_scope_ids,
                 "expected_return_col": "Dynamic Return (%)",
                 "expected_sharpe_col": "Dynamic Sharpe",
                 "expected_drawdown_col": "Dynamic Max DD (%)",
@@ -3124,6 +3153,15 @@ def main(
                 "strategy_role": "dynamic_selector",
             },
         ]
+        strategy_specs = filter_strategy_specs(strategy_specs, _effective_scope)
+        if not strategy_specs:
+            raise ValueError(
+                f"Configuration error: the selected evaluation scope "
+                f"{sorted(_effective_scope.strategy_ids)!r} does not match "
+                f"any available evaluation context. "
+                f"The active evaluation requires strategies "
+                f"{sorted({_scope_tf, _scope_mr})!r}."
+            )
         strategy_evaluations = build_strategy_evaluations(
             wf_df=wf_df,
             surface_id=_resolved_behavioral_surface_id,
@@ -3731,6 +3769,20 @@ if __name__ == '__main__':
             "N must be a positive integer."
         ),
     )
+    parser.add_argument(
+        "--strategy",
+        action="append",
+        dest="strategy",
+        default=None,
+        metavar="STRATEGY_ID",
+        help=(
+            "Evaluate only this strategy ID. Repeatable: --strategy TF4 --strategy MR42. "
+            "When omitted, the default evaluation scope from the active EvaluationPolicy "
+            "is used (backward-compatible). "
+            "IDs are validated against the Strategy Registry. "
+            f"Available: {get_default_strategy_registry().available()}"
+        ),
+    )
     args = parser.parse_args()
     main(
         output_dir=args.output_dir,
@@ -3739,4 +3791,5 @@ if __name__ == '__main__':
         experiment_seed=args.experiment_seed,
         behavioral_surface=args.behavioral_surface,
         recommendation_top_n=args.recommendation_top_n,
+        strategy=args.strategy,
     )
