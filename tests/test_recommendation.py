@@ -14,8 +14,12 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from src.recommendation import (  # noqa: E402
+    DEFAULT_POLICY,
+    DEFAULT_RECOMMENDATION_POLICY,
     RECOMMENDATION_SCHEMA_VERSION,
     Recommendation,
+    RecommendationPolicy,
+    SharpeRankingPolicy,
     build_recommendation_id,
     recommendations_from_evaluations,
     recommendations_to_frame,
@@ -41,6 +45,17 @@ def _make_evaluation(evaluation_id: str = "eval_abc123") -> StrategyEvaluation:
         n_trades=120,
         metadata={"experiment_id": "exp_1"},
     )
+
+
+class _AltPolicy(RecommendationPolicy):
+    """Alternative policy used in tests to produce a distinct policy_name."""
+
+    @property
+    def policy_name(self) -> str:
+        return "other_v1"
+
+    def rank(self, evaluations: list[StrategyEvaluation]) -> list[StrategyEvaluation]:
+        return sorted(evaluations, key=lambda e: e.evaluation_id)
 
 
 class TestRecommendationSchemaVersion(unittest.TestCase):
@@ -246,8 +261,8 @@ class TestRecommendationsFromEvaluations(unittest.TestCase):
 
     def test_policy_is_set(self):
         evals = [_make_evaluation()]
-        recs = recommendations_from_evaluations(evals, recommendation_policy="test_policy")
-        self.assertEqual(recs[0].recommendation_policy, "test_policy")
+        recs = recommendations_from_evaluations(evals, policy=_AltPolicy())
+        self.assertEqual(recs[0].recommendation_policy, "other_v1")
 
 
 class TestRecommendationsToFrame(unittest.TestCase):
@@ -309,6 +324,308 @@ class TestRecommendationsParquetRoundtrip(unittest.TestCase):
             self.assertTrue(path.exists())
             loaded = pd.read_parquet(path)
             self.assertEqual(len(loaded), 0)
+
+
+# ---------------------------------------------------------------------------
+# Phase G2 tests
+# ---------------------------------------------------------------------------
+
+
+def _make_eval(
+    evaluation_id: str,
+    expected_sharpe: float = 0.5,
+    expected_return: float = 1.0,
+) -> StrategyEvaluation:
+    return StrategyEvaluation(
+        evaluation_id=evaluation_id,
+        surface_id="trend_vol",
+        surface_version="1.0.0",
+        state_id="LVTF",
+        strategy_id="PhaseAware",
+        expected_return=expected_return,
+        expected_sharpe=expected_sharpe,
+        expected_drawdown=-3.0,
+        win_rate=None,
+        confidence=None,
+        stability=None,
+        n_folds=12,
+        n_trades=120,
+        metadata={},
+    )
+
+
+class TestDefaultPolicyConstant(unittest.TestCase):
+    def test_default_recommendation_policy_name(self):
+        self.assertEqual(DEFAULT_RECOMMENDATION_POLICY, "sharpe_rank_v1")
+
+    def test_default_policy_is_sharpe_ranking(self):
+        self.assertIsInstance(DEFAULT_POLICY, SharpeRankingPolicy)
+
+    def test_default_policy_name_matches_constant(self):
+        self.assertEqual(DEFAULT_POLICY.policy_name, DEFAULT_RECOMMENDATION_POLICY)
+
+
+class TestSharpeRankingPolicy(unittest.TestCase):
+    def setUp(self):
+        self.policy = SharpeRankingPolicy()
+
+    def test_policy_name(self):
+        self.assertEqual(self.policy.policy_name, "sharpe_rank_v1")
+
+    def test_is_recommendation_policy(self):
+        self.assertIsInstance(self.policy, RecommendationPolicy)
+
+    def test_ranks_by_expected_sharpe_descending(self):
+        evals = [
+            _make_eval("eval_a", expected_sharpe=0.3),
+            _make_eval("eval_b", expected_sharpe=1.5),
+            _make_eval("eval_c", expected_sharpe=0.7),
+        ]
+        ranked = self.policy.rank(evals)
+        sharpes = [e.expected_sharpe for e in ranked]
+        self.assertEqual(sharpes, sorted(sharpes, reverse=True))
+
+    def test_tie_break_by_expected_return_descending(self):
+        # Same sharpe, different returns
+        evals = [
+            _make_eval("eval_a", expected_sharpe=1.0, expected_return=0.5),
+            _make_eval("eval_b", expected_sharpe=1.0, expected_return=2.0),
+            _make_eval("eval_c", expected_sharpe=1.0, expected_return=1.0),
+        ]
+        ranked = self.policy.rank(evals)
+        ids = [e.evaluation_id for e in ranked]
+        self.assertEqual(ids, ["eval_b", "eval_c", "eval_a"])
+
+    def test_tie_break_by_evaluation_id_ascending(self):
+        # Same sharpe and return, different ids
+        evals = [
+            _make_eval("eval_zzz", expected_sharpe=1.0, expected_return=1.0),
+            _make_eval("eval_aaa", expected_sharpe=1.0, expected_return=1.0),
+            _make_eval("eval_mmm", expected_sharpe=1.0, expected_return=1.0),
+        ]
+        ranked = self.policy.rank(evals)
+        ids = [e.evaluation_id for e in ranked]
+        self.assertEqual(ids, ["eval_aaa", "eval_mmm", "eval_zzz"])
+
+    def test_deterministic_same_input(self):
+        evals = [
+            _make_eval("eval_a", expected_sharpe=1.2, expected_return=1.0),
+            _make_eval("eval_b", expected_sharpe=0.8, expected_return=2.0),
+            _make_eval("eval_c", expected_sharpe=1.2, expected_return=0.5),
+        ]
+        result_a = [e.evaluation_id for e in self.policy.rank(evals)]
+        result_b = [e.evaluation_id for e in self.policy.rank(evals)]
+        self.assertEqual(result_a, result_b)
+
+    def test_deterministic_different_input_order(self):
+        evals_fwd = [
+            _make_eval("eval_a", expected_sharpe=1.2),
+            _make_eval("eval_b", expected_sharpe=0.8),
+        ]
+        evals_rev = list(reversed(evals_fwd))
+        ranked_fwd = [e.evaluation_id for e in self.policy.rank(evals_fwd)]
+        ranked_rev = [e.evaluation_id for e in self.policy.rank(evals_rev)]
+        self.assertEqual(ranked_fwd, ranked_rev)
+
+    def test_empty_input(self):
+        self.assertEqual(self.policy.rank([]), [])
+
+    def test_single_evaluation(self):
+        evals = [_make_eval("eval_x", expected_sharpe=0.9)]
+        ranked = self.policy.rank(evals)
+        self.assertEqual(len(ranked), 1)
+        self.assertEqual(ranked[0].evaluation_id, "eval_x")
+
+    def test_preserves_all_evaluations(self):
+        evals = [_make_eval(f"eval_{i}", expected_sharpe=float(i)) for i in range(5)]
+        ranked = self.policy.rank(evals)
+        self.assertEqual(len(ranked), len(evals))
+        self.assertEqual(
+            {e.evaluation_id for e in ranked},
+            {e.evaluation_id for e in evals},
+        )
+
+    def test_nan_sharpe_ranked_below_finite(self):
+        evals = [
+            _make_eval("eval_finite", expected_sharpe=0.1),
+            _make_eval("eval_nan", expected_sharpe=float("nan")),
+        ]
+        ranked = self.policy.rank(evals)
+        ids = [e.evaluation_id for e in ranked]
+        self.assertEqual(ids, ["eval_finite", "eval_nan"])
+
+    def test_inf_sharpe_ranked_below_finite(self):
+        evals = [
+            _make_eval("eval_finite", expected_sharpe=0.5),
+            _make_eval("eval_posinf", expected_sharpe=float("inf")),
+            _make_eval("eval_neginf", expected_sharpe=float("-inf")),
+        ]
+        ranked = self.policy.rank(evals)
+        ids = [e.evaluation_id for e in ranked]
+        # finite Sharpe ranks first; +inf/-inf both map to -inf, so id tiebreaker applies
+        self.assertEqual(ids, ["eval_finite", "eval_neginf", "eval_posinf"])
+
+    def test_nan_return_handled_when_sharpe_ties(self):
+        evals = [
+            _make_eval("eval_a", expected_sharpe=1.0, expected_return=float("nan")),
+            _make_eval("eval_b", expected_sharpe=1.0, expected_return=0.5),
+        ]
+        ranked = self.policy.rank(evals)
+        # finite return should rank above NaN return
+        self.assertEqual(ranked[0].evaluation_id, "eval_b")
+
+    def test_nonfinite_return_handled_when_sharpe_ties(self):
+        evals = [
+            _make_eval("eval_a", expected_sharpe=1.0, expected_return=float("inf")),
+            _make_eval("eval_b", expected_sharpe=1.0, expected_return=0.5),
+        ]
+        ranked = self.policy.rank(evals)
+        # finite return should rank above non-finite return
+        self.assertEqual(ranked[0].evaluation_id, "eval_b")
+
+    def test_evaluation_id_tiebreaker_with_nonfinite(self):
+        # Both have NaN sharpe — evaluation_id is the final tiebreaker
+        evals = [
+            _make_eval("eval_zzz", expected_sharpe=float("nan")),
+            _make_eval("eval_aaa", expected_sharpe=float("nan")),
+        ]
+        ranked = self.policy.rank(evals)
+        self.assertEqual(ranked[0].evaluation_id, "eval_aaa")
+        self.assertEqual(ranked[1].evaluation_id, "eval_zzz")
+
+    def test_repeated_ranking_same_order(self):
+        evals = [
+            _make_eval("eval_a", expected_sharpe=float("nan")),
+            _make_eval("eval_b", expected_sharpe=1.0),
+            _make_eval("eval_c", expected_sharpe=float("inf")),
+        ]
+        order_1 = [e.evaluation_id for e in self.policy.rank(evals)]
+        order_2 = [e.evaluation_id for e in self.policy.rank(evals)]
+        self.assertEqual(order_1, order_2)
+
+
+class TestRecommendationsFromEvaluationsG2(unittest.TestCase):
+    def test_default_policy_is_sharpe_rank(self):
+        evals = [
+            _make_eval("eval_a", expected_sharpe=0.5),
+            _make_eval("eval_b", expected_sharpe=1.5),
+        ]
+        recs = recommendations_from_evaluations(evals)
+        # Rank 1 must be the higher-sharpe evaluation
+        rank1 = next(r for r in recs if r.rank == 1)
+        self.assertEqual(rank1.evaluation_id, "eval_b")
+
+    def test_uses_default_policy_name(self):
+        evals = [_make_eval("eval_x")]
+        recs = recommendations_from_evaluations(evals)
+        self.assertEqual(recs[0].recommendation_policy, DEFAULT_RECOMMENDATION_POLICY)
+
+    def test_recommendation_does_not_duplicate_evaluation_evidence(self):
+        evals = [_make_eval("eval_a", expected_sharpe=1.0, expected_return=2.0)]
+        recs = recommendations_from_evaluations(evals)
+        rec_record = recs[0].to_record()
+        for forbidden in (
+            "expected_return", "expected_sharpe", "expected_drawdown",
+            "confidence", "stability", "win_rate", "n_folds", "n_trades",
+        ):
+            self.assertNotIn(forbidden, rec_record)
+
+    def test_top_n_limits_results(self):
+        evals = [_make_eval(f"eval_{i}", expected_sharpe=float(i)) for i in range(5)]
+        recs = recommendations_from_evaluations(evals, top_n=3)
+        self.assertEqual(len(recs), 3)
+
+    def test_top_n_returns_highest_ranked(self):
+        evals = [
+            _make_eval("eval_low", expected_sharpe=0.1),
+            _make_eval("eval_mid", expected_sharpe=0.5),
+            _make_eval("eval_high", expected_sharpe=1.5),
+        ]
+        recs = recommendations_from_evaluations(evals, top_n=2)
+        ids = {r.evaluation_id for r in recs}
+        self.assertIn("eval_high", ids)
+        self.assertIn("eval_mid", ids)
+        self.assertNotIn("eval_low", ids)
+
+    def test_top_n_larger_than_evaluations_returns_all(self):
+        evals = [_make_eval("eval_a"), _make_eval("eval_b")]
+        recs = recommendations_from_evaluations(evals, top_n=100)
+        self.assertEqual(len(recs), 2)
+
+    def test_top_n_exactly_equal_to_count(self):
+        evals = [_make_eval("eval_a"), _make_eval("eval_b"), _make_eval("eval_c")]
+        recs = recommendations_from_evaluations(evals, top_n=3)
+        self.assertEqual(len(recs), 3)
+
+    def test_top_n_ordering_remains_deterministic(self):
+        evals = [_make_eval(f"eval_{i}", expected_sharpe=float(i)) for i in range(5)]
+        recs_a = recommendations_from_evaluations(evals, top_n=3)
+        recs_b = recommendations_from_evaluations(evals, top_n=3)
+        self.assertEqual(
+            [r.recommendation_id for r in recs_a],
+            [r.recommendation_id for r in recs_b],
+        )
+
+    def test_top_n_invalid_raises(self):
+        evals = [_make_eval("eval_a")]
+        with self.assertRaises(ValueError):
+            recommendations_from_evaluations(evals, top_n=0)
+        with self.assertRaises(ValueError):
+            recommendations_from_evaluations(evals, top_n=-1)
+
+    def test_empty_evaluations_top_n(self):
+        recs = recommendations_from_evaluations([], top_n=5)
+        self.assertEqual(recs, [])
+
+    def test_ranks_are_consecutive_from_one(self):
+        evals = [_make_eval(f"eval_{i}") for i in range(4)]
+        recs = recommendations_from_evaluations(evals)
+        ranks = sorted(r.rank for r in recs)
+        self.assertEqual(ranks, [1, 2, 3, 4])
+
+    def test_recommendation_id_deterministic(self):
+        evals = [_make_eval("eval_x", expected_sharpe=1.0)]
+        recs1 = recommendations_from_evaluations(evals)
+        recs2 = recommendations_from_evaluations(evals)
+        self.assertEqual(recs1[0].recommendation_id, recs2[0].recommendation_id)
+
+    def test_recommendation_references_correct_evaluation_id(self):
+        evals = [_make_eval("eval_specific")]
+        recs = recommendations_from_evaluations(evals)
+        self.assertEqual(recs[0].evaluation_id, "eval_specific")
+
+    def test_different_policy_objects_produce_distinct_policy_names(self):
+        evals = [_make_eval("eval_a")]
+        recs_default = recommendations_from_evaluations(evals)
+        recs_other = recommendations_from_evaluations(evals, policy=_AltPolicy())
+        self.assertNotEqual(
+            recs_default[0].recommendation_policy,
+            recs_other[0].recommendation_policy,
+        )
+
+    def test_different_policies_distinct_recommendation_ids(self):
+        evals = [_make_eval("eval_a")]
+        recs_default = recommendations_from_evaluations(evals)
+        recs_other = recommendations_from_evaluations(evals, policy=_AltPolicy())
+        self.assertNotEqual(
+            recs_default[0].recommendation_id,
+            recs_other[0].recommendation_id,
+        )
+
+    def test_g1_parquet_roundtrip_still_valid(self):
+        """G1 serialization contract must remain valid."""
+        evals = [_make_eval("eval_001"), _make_eval("eval_002", expected_sharpe=1.0)]
+        recs = recommendations_from_evaluations(evals)
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "recommendations.parquet"
+            write_recommendations_parquet(recommendations=recs, output_path=path)
+            loaded = pd.read_parquet(path)
+            self.assertEqual(len(loaded), 2)
+            cols = set(loaded.columns)
+            for col in ("recommendation_id", "evaluation_id", "rank", "recommendation_policy", "metadata"):
+                self.assertIn(col, cols)
+            restored = Recommendation.from_record(loaded.iloc[0])
+            self.assertEqual(restored.recommendation_id, recs[0].recommendation_id)
 
 
 if __name__ == "__main__":

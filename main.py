@@ -1466,6 +1466,7 @@ def main(
     experiment_variant: str | None = None,
     experiment_seed: int | None = None,
     behavioral_surface: str | None = None,
+    recommendation_top_n: int | None = None,
 ):
     resolved_seed = resolve_experiment_seed(
         cli_seed=experiment_seed,
@@ -3141,7 +3142,10 @@ def main(
         print(f"Generated {len(strategy_evaluations)} StrategyEvaluation objects.")
         print(f"Saved: {strategy_evaluations_path}")
 
-        recommendations = recommendations_from_evaluations(strategy_evaluations)
+        recommendations = recommendations_from_evaluations(
+            strategy_evaluations,
+            top_n=recommendation_top_n,
+        )
         recommendations_path = _run_output_dir() / "recommendations.parquet"
         write_recommendations_parquet(
             recommendations=recommendations,
@@ -3716,6 +3720,17 @@ if __name__ == '__main__':
             "Trend/Vol (trend_vol) is the default and preserves existing run behaviour."
         ),
     )
+    parser.add_argument(
+        "--recommendation-top-n",
+        type=int,
+        default=None,
+        dest="recommendation_top_n",
+        help=(
+            "Return only the top N recommendations ordered by the default recommendation policy "
+            "(sharpe_rank_v1). If omitted, all recommendations are returned. "
+            "N must be a positive integer."
+        ),
+    )
     args = parser.parse_args()
     main(
         output_dir=args.output_dir,
@@ -3723,4 +3738,5 @@ if __name__ == '__main__':
         experiment_variant=args.experiment_variant,
         experiment_seed=args.experiment_seed,
         behavioral_surface=args.behavioral_surface,
+        recommendation_top_n=args.recommendation_top_n,
     )
