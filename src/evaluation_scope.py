@@ -112,12 +112,17 @@ def resolve_evaluation_scope(
             source="default",
         )
 
+    # Deduplicate while preserving order before validation so that error
+    # messages do not contain repeated IDs.
+    seen_pre: set[str] = set()
+    deduplicated: list[str] = []
+    for strategy_id in requested_strategy_ids:
+        if strategy_id not in seen_pre:
+            seen_pre.add(strategy_id)
+            deduplicated.append(strategy_id)
+
     # Explicit scope: validate each requested ID against the registry.
-    unknown = [
-        sid
-        for sid in requested_strategy_ids
-        if sid not in registry.available()
-    ]
+    unknown = [sid for sid in deduplicated if sid not in registry.available()]
     if unknown:
         raise ValueError(
             f"Configuration error: unknown strategy ID(s) {unknown}. "
@@ -129,9 +134,7 @@ def resolve_evaluation_scope(
         defn.strategy_id
         for defn in registry.supporting_surface(surface_id)
     }
-    incompatible = [
-        sid for sid in requested_strategy_ids if sid not in compatible_ids
-    ]
+    incompatible = [sid for sid in deduplicated if sid not in compatible_ids]
     if incompatible:
         raise ValueError(
             f"Configuration error: strategy ID(s) {incompatible} are not "
@@ -139,16 +142,8 @@ def resolve_evaluation_scope(
             f"Compatible strategies for this surface: {sorted(compatible_ids)}"
         )
 
-    # Deduplicate while preserving order; repeated --strategy is deterministic.
-    seen: set[str] = set()
-    effective: list[str] = []
-    for strategy_id in requested_strategy_ids:
-        if strategy_id not in seen:
-            seen.add(strategy_id)
-            effective.append(strategy_id)
-
     return EvaluationScope(
-        strategy_ids=tuple(effective),
+        strategy_ids=tuple(deduplicated),
         source="explicit",
     )
 
