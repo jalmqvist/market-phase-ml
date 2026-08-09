@@ -700,8 +700,10 @@ class TestG4SchemaVersion(unittest.TestCase):
             recommendation_policy="sharpe_rank_v1",
             metadata={},
         )
-        with self.assertRaises(RecommendationValidationError):
+        with self.assertRaises(RecommendationValidationError) as ctx:
             validate_recommendation_set([rec])
+        self.assertIn("schema_version", str(ctx.exception))
+        self.assertIn("missing", str(ctx.exception))
 
 
 class TestG4MissingRequiredFields(unittest.TestCase):

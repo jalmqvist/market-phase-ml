@@ -323,6 +323,11 @@ def validate_recommendation_set(
 
         # --- schema version ---
         schema_version = rec.metadata.get("schema_version")
+        if schema_version is None:
+            raise RecommendationValidationError(
+                f"{position} (id={rec.recommendation_id!r}): "
+                f"schema_version is missing from metadata."
+            )
         if schema_version not in SUPPORTED_RECOMMENDATION_SCHEMA_VERSIONS:
             raise RecommendationValidationError(
                 f"{position} (id={rec.recommendation_id!r}): "
