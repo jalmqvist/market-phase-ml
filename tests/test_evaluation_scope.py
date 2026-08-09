@@ -516,8 +516,16 @@ class TestFilterStrategySpecs(unittest.TestCase):
         result_ids = [s["strategy_id"] for s in result]
         self.assertNotIn(f"PhaseAware_{tf}_{mr}", result_ids)
 
-    def test_default_scope_includes_all_specs(self):
-        """Default scope (TF4 + MR42) includes all 4 specs including composites."""
+    def test_default_scope_filter_semantics_pass_all_four_specs(self):
+        """filter_strategy_specs with default scope and full spec list passes all 4 entries.
+
+        This tests the filter semantics only — that filter_strategy_specs correctly
+        includes every spec when the scope covers all required IDs.
+
+        NOTE: the actual default benchmark run does NOT use the full spec list.
+        For default runs main.py uses only the 2 composite specs (PhaseAware +
+        StrategySelector_Dynamic_WF).  See test_default_benchmark_spec_set_is_composite_only.
+        """
         tf, mr = self._policy_ids()
         scope = resolve_evaluation_scope(
             None,
@@ -525,6 +533,32 @@ class TestFilterStrategySpecs(unittest.TestCase):
             policy_registry=_POLICY_REGISTRY,
             surface_id=_SURFACE_ID,
         )
+        specs = _full_strategy_specs(tf, mr)
+        result = filter_strategy_specs(specs, scope)
+        self.assertEqual(len(result), 4)
+
+    def test_default_benchmark_spec_set_is_composite_only(self):
+        """Default benchmark evaluation set contains exactly 2 composite specs.
+
+        This is the pre-G3 contract: a default run (no --strategy flag) evaluates
+        only PhaseAware_TF4_MR42 and StrategySelector_Dynamic_WF.
+        Standalone TF/MR specs are NOT included in the default benchmark.
+        """
+        tf, mr = self._policy_ids()
+        default_specs = _default_strategy_specs((tf, mr))
+        expected_ids = {f"PhaseAware_{tf}_{mr}", "StrategySelector_Dynamic_WF"}
+        actual_ids = {s["strategy_id"] for s in default_specs}
+        self.assertEqual(len(default_specs), 2)
+        self.assertEqual(actual_ids, expected_ids)
+
+    def test_explicit_tf_mr_scope_selects_all_four_specs(self):
+        """Explicit --strategy TF4 --strategy MR42 selects all 4 specs.
+
+        When both registry strategies are explicitly requested, standalone TF/MR
+        evals and composite evals are all included.
+        """
+        tf, mr = self._policy_ids()
+        scope = _make_scope((tf, mr), source="explicit")
         specs = _full_strategy_specs(tf, mr)
         result = filter_strategy_specs(specs, scope)
         self.assertEqual(len(result), 4)

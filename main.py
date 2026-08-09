@@ -2853,6 +2853,9 @@ def main(
 
                 # Individual strategy runs — expose TF and MR as independently
                 # evaluatable units for G3 scope-targeted evaluation.
+                # TODO (G4): make this execution scope-aware so that default
+                # runs skip these backtests when standalone evaluation is not
+                # required, eliminating unnecessary computation.
                 _strategy_registry = get_default_strategy_registry()
                 _tf_inst = _strategy_registry.get(baseline_tf).instantiate()
                 _tf_signals, _tf_sl, _tf_tp = _tf_inst.generate_signals(df_test)
@@ -3153,30 +3156,9 @@ def main(
 
         _scope_tf, _scope_mr = resolve_phaseaware_strategy_pair()
         _policy_scope_ids = (_scope_tf, _scope_mr)
-        strategy_specs = [
-            # Individual strategy specs — each requires only its own registry ID.
-            # These make TF and MR independently evaluatable via --strategy TF4 / --strategy MR42.
-            {
-                "strategy_id": _scope_tf,
-                "scope_strategy_ids": (_scope_tf,),
-                "expected_return_col": f"{_scope_tf} Return (%)",
-                "expected_sharpe_col": f"{_scope_tf} Sharpe",
-                "expected_drawdown_col": f"{_scope_tf} Max DD (%)",
-                "n_trades_col": f"{_scope_tf} Trades",
-                "confidence_col": None,
-                "strategy_role": "standalone_tf",
-            },
-            {
-                "strategy_id": _scope_mr,
-                "scope_strategy_ids": (_scope_mr,),
-                "expected_return_col": f"{_scope_mr} Return (%)",
-                "expected_sharpe_col": f"{_scope_mr} Sharpe",
-                "expected_drawdown_col": f"{_scope_mr} Max DD (%)",
-                "n_trades_col": f"{_scope_mr} Trades",
-                "confidence_col": None,
-                "strategy_role": "standalone_mr",
-            },
-            # Composite specs — require both TF and MR to be in scope.
+        # Default benchmark spec set: the pre-G3 evaluation outputs (composite evaluations only).
+        # This is the canonical reference and must remain unchanged for default runs.
+        _default_benchmark_specs = [
             {
                 "strategy_id": phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID),
                 "scope_strategy_ids": _policy_scope_ids,
@@ -3198,7 +3180,40 @@ def main(
                 "strategy_role": "dynamic_selector",
             },
         ]
-        strategy_specs = filter_strategy_specs(strategy_specs, _effective_scope)
+        # Full spec set: adds standalone TF/MR evaluations for explicit --strategy selection.
+        # Only used for explicit runs; filter_strategy_specs selects compatible entries.
+        _all_strategy_specs = [
+            # Individual strategy specs — each requires only its own registry ID.
+            {
+                "strategy_id": _scope_tf,
+                "scope_strategy_ids": (_scope_tf,),
+                "expected_return_col": f"{_scope_tf} Return (%)",
+                "expected_sharpe_col": f"{_scope_tf} Sharpe",
+                "expected_drawdown_col": f"{_scope_tf} Max DD (%)",
+                "n_trades_col": f"{_scope_tf} Trades",
+                "confidence_col": None,
+                "strategy_role": "standalone_tf",
+            },
+            {
+                "strategy_id": _scope_mr,
+                "scope_strategy_ids": (_scope_mr,),
+                "expected_return_col": f"{_scope_mr} Return (%)",
+                "expected_sharpe_col": f"{_scope_mr} Sharpe",
+                "expected_drawdown_col": f"{_scope_mr} Max DD (%)",
+                "n_trades_col": f"{_scope_mr} Trades",
+                "confidence_col": None,
+                "strategy_role": "standalone_mr",
+            },
+            # Composite specs — require both TF and MR to be in scope.
+            *_default_benchmark_specs,
+        ]
+        if _effective_scope.source == "default":
+            # Default run: preserve the pre-G3 benchmark exactly — only composites.
+            strategy_specs = _default_benchmark_specs
+        else:
+            # Explicit run: filter all specs by the requested scope so that
+            # only specs whose scope_strategy_ids are fully satisfied are included.
+            strategy_specs = filter_strategy_specs(_all_strategy_specs, _effective_scope)
         if not strategy_specs:
             raise ValueError(
                 f"Configuration error: the selected evaluation scope "
