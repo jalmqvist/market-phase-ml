@@ -49,8 +49,16 @@ from src.behavioral_artifact_resolver import resolve_behavioral_artifact_runtime
 from src.experiment_surface_runtime import build_runtime_experiment_surface
 from src.strategy_registry import (
     DEFAULT_PHASEAWARE_POLICY_ID,
+    get_default_policy_registry,
+    get_default_strategy_registry,
     phaseaware_strategy_name,
     resolve_phaseaware_strategy_pair,
+)
+from src.evaluation_scope import (
+    EvaluationScope,
+    compute_standalone_execution_flags,
+    filter_strategy_specs,
+    resolve_evaluation_scope,
 )
 from src.evaluation import (
     EVALUATION_SCHEMA_VERSION,
@@ -1467,6 +1475,7 @@ def main(
     experiment_seed: int | None = None,
     behavioral_surface: str | None = None,
     recommendation_top_n: int | None = None,
+    strategy: list[str] | None = None,
 ):
     resolved_seed = resolve_experiment_seed(
         cli_seed=experiment_seed,
@@ -1527,6 +1536,22 @@ def main(
     _resolved_behavioral_state_id = artifact_runtime.state_id
     preloaded_daily_dl = artifact_runtime.d1_predictions
     artifact_regime = dl_surface.get("dl_regime")
+
+    # ── G3: Resolve evaluation scope ────────────────────────────────────────
+    # G3 determines which strategies are evaluated.
+    # G2 determines how the resulting StrategyEvaluation objects are ranked.
+    # Precedence: --strategy CLI args > default EvaluationPolicy scope.
+    _effective_scope = resolve_evaluation_scope(
+        requested_strategy_ids=strategy,
+        registry=get_default_strategy_registry(),
+        policy_registry=get_default_policy_registry(),
+        surface_id=_resolved_behavioral_surface_id,
+    )
+    print(
+        f"[G3] Evaluation scope ({_effective_scope.source}): "
+        f"{list(_effective_scope.strategy_ids)}"
+    )
+    # ────────────────────────────────────────────────────────────────────────
 
     dl_mode_tag = "__dl_enabled" if dl_runtime_enabled else "__baseline"
     dl_surface_str = _dl_surface_string(dl_surface)
@@ -1673,6 +1698,7 @@ def main(
         "strategy_evaluation_count": 0,
         "recommendation_schema_version": RECOMMENDATION_SCHEMA_VERSION,
         "recommendation_count": 0,
+        "evaluation_scope": _effective_scope.to_manifest_block(),
         "behavioral_surface": build_behavioral_surface_manifest_block(
             surface_id=_resolved_behavioral_surface_id,
             state_id=_resolved_behavioral_state_id,
@@ -2826,6 +2852,25 @@ def main(
                     pa_tp,
                 )
 
+                # G3: run standalone backtests only for the strategies that are
+                # explicitly in scope.  Default runs skip both to preserve the
+                # pre-G3 baseline walk-forward output.
+                tf_res: dict = {}
+                mr_res: dict = {}
+                _run_tf, _run_mr = compute_standalone_execution_flags(
+                    _effective_scope, baseline_tf, baseline_mr
+                )
+                if _run_tf or _run_mr:
+                    _strategy_registry = get_default_strategy_registry()
+                if _run_tf:
+                    _tf_inst = _strategy_registry.get(baseline_tf).instantiate()
+                    _tf_signals, _tf_sl, _tf_tp = _tf_inst.generate_signals(df_test)
+                    tf_res = backtester.run(df_test, _tf_signals, baseline_tf, _tf_sl, _tf_tp)
+                if _run_mr:
+                    _mr_inst = _strategy_registry.get(baseline_mr).instantiate()
+                    _mr_signals, _mr_sl, _mr_tp = _mr_inst.generate_signals(df_test)
+                    mr_res = backtester.run(df_test, _mr_signals, baseline_mr, _mr_sl, _mr_tp)
+
                 # --- Optional: save equity curves + spike masks for plotting (small whitelist) ---
                 if DEBUG_SAVE_EQUITY_SERIES and (pair_name in DEBUG_SELECTED_PAIRS):
                     # count folds saved for this pair
@@ -3013,6 +3058,22 @@ def main(
                     "dl_overlap_state": _dl_overlap_state,
                     "dl_overlap_window": _dl_overlap_window,
                 })
+                # G3: append standalone TF/MR columns only for the strategies
+                # that were actually executed in this scope.
+                if _run_tf:
+                    walkforward_rows[-1].update({
+                        f"{baseline_tf} Return (%)": tf_res.get("total_return", np.nan),
+                        f"{baseline_tf} Sharpe": tf_res.get("sharpe_ratio", np.nan),
+                        f"{baseline_tf} Max DD (%)": tf_res.get("max_drawdown", np.nan),
+                        f"{baseline_tf} Trades": tf_res.get("n_trades", np.nan),
+                    })
+                if _run_mr:
+                    walkforward_rows[-1].update({
+                        f"{baseline_mr} Return (%)": mr_res.get("total_return", np.nan),
+                        f"{baseline_mr} Sharpe": mr_res.get("sharpe_ratio", np.nan),
+                        f"{baseline_mr} Max DD (%)": mr_res.get("max_drawdown", np.nan),
+                        f"{baseline_mr} Trades": mr_res.get("n_trades", np.nan),
+                    })
                 print(
                     f"    fold {fold_id}: Sharpe base={base_res['sharpe_ratio']:+.3f} "
                     f"dyn={dyn_res['sharpe_ratio']:+.3f} (Δ {dyn_res['sharpe_ratio'] - base_res['sharpe_ratio']:+.3f})"
@@ -3104,9 +3165,14 @@ def main(
             elif EXPORT_SELECTOR_STATE_TIMELINE:
                 print("  ⚠  selector_state_timeline: no bars collected (no folds completed).")
 
-        strategy_specs = [
+        _scope_tf, _scope_mr = resolve_phaseaware_strategy_pair()
+        _policy_scope_ids = (_scope_tf, _scope_mr)
+        # Default benchmark spec set: the pre-G3 evaluation outputs (composite evaluations only).
+        # This is the canonical reference and must remain unchanged for default runs.
+        _default_benchmark_specs = [
             {
                 "strategy_id": phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID),
+                "scope_strategy_ids": _policy_scope_ids,
                 "expected_return_col": "Baseline Return (%)",
                 "expected_sharpe_col": "Baseline Sharpe",
                 "expected_drawdown_col": "Baseline Max DD (%)",
@@ -3116,6 +3182,7 @@ def main(
             },
             {
                 "strategy_id": "StrategySelector_Dynamic_WF",
+                "scope_strategy_ids": _policy_scope_ids,
                 "expected_return_col": "Dynamic Return (%)",
                 "expected_sharpe_col": "Dynamic Sharpe",
                 "expected_drawdown_col": "Dynamic Max DD (%)",
@@ -3124,6 +3191,48 @@ def main(
                 "strategy_role": "dynamic_selector",
             },
         ]
+        # Full spec set: adds standalone TF/MR evaluations for explicit --strategy selection.
+        # Only used for explicit runs; filter_strategy_specs selects compatible entries.
+        _all_strategy_specs = [
+            # Individual strategy specs — each requires only its own registry ID.
+            {
+                "strategy_id": _scope_tf,
+                "scope_strategy_ids": (_scope_tf,),
+                "expected_return_col": f"{_scope_tf} Return (%)",
+                "expected_sharpe_col": f"{_scope_tf} Sharpe",
+                "expected_drawdown_col": f"{_scope_tf} Max DD (%)",
+                "n_trades_col": f"{_scope_tf} Trades",
+                "confidence_col": None,
+                "strategy_role": "standalone_tf",
+            },
+            {
+                "strategy_id": _scope_mr,
+                "scope_strategy_ids": (_scope_mr,),
+                "expected_return_col": f"{_scope_mr} Return (%)",
+                "expected_sharpe_col": f"{_scope_mr} Sharpe",
+                "expected_drawdown_col": f"{_scope_mr} Max DD (%)",
+                "n_trades_col": f"{_scope_mr} Trades",
+                "confidence_col": None,
+                "strategy_role": "standalone_mr",
+            },
+            # Composite specs — require both TF and MR to be in scope.
+            *_default_benchmark_specs,
+        ]
+        if _effective_scope.source == "default":
+            # Default run: preserve the pre-G3 benchmark exactly — only composites.
+            strategy_specs = _default_benchmark_specs
+        else:
+            # Explicit run: filter all specs by the requested scope so that
+            # only specs whose scope_strategy_ids are fully satisfied are included.
+            strategy_specs = filter_strategy_specs(_all_strategy_specs, _effective_scope)
+        if not strategy_specs:
+            raise ValueError(
+                f"Configuration error: the selected evaluation scope "
+                f"{sorted(_effective_scope.strategy_ids)!r} does not match "
+                f"any available evaluation context. "
+                f"The active evaluation requires strategies "
+                f"{sorted({_scope_tf, _scope_mr})!r}."
+            )
         strategy_evaluations = build_strategy_evaluations(
             wf_df=wf_df,
             surface_id=_resolved_behavioral_surface_id,
@@ -3731,6 +3840,20 @@ if __name__ == '__main__':
             "N must be a positive integer."
         ),
     )
+    parser.add_argument(
+        "--strategy",
+        action="append",
+        dest="strategy",
+        default=None,
+        metavar="STRATEGY_ID",
+        help=(
+            "Evaluate only this strategy ID. Repeatable: --strategy TF4 --strategy MR42. "
+            "When omitted, the default evaluation scope from the active EvaluationPolicy "
+            "is used (backward-compatible). "
+            "IDs are validated against the Strategy Registry. "
+            f"Available: {get_default_strategy_registry().available()}"
+        ),
+    )
     args = parser.parse_args()
     main(
         output_dir=args.output_dir,
@@ -3739,4 +3862,5 @@ if __name__ == '__main__':
         experiment_seed=args.experiment_seed,
         behavioral_surface=args.behavioral_surface,
         recommendation_top_n=args.recommendation_top_n,
+        strategy=args.strategy,
     )
