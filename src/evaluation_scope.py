@@ -178,3 +178,33 @@ def filter_strategy_specs(
         if not spec.get("scope_strategy_ids")
         or frozenset(spec["scope_strategy_ids"]).issubset(scope_ids)
     ]
+
+
+def compute_standalone_execution_flags(
+    scope: EvaluationScope,
+    baseline_tf: str,
+    baseline_mr: str,
+) -> tuple[bool, bool]:
+    """Return (run_tf, run_mr) execution flags for standalone WF backtests.
+
+    Default runs skip both backtests entirely.  Explicit runs execute only
+    the strategies that are present in the resolved scope.
+
+    Parameters
+    ----------
+    scope:
+        Resolved evaluation scope.
+    baseline_tf:
+        Registry ID of the trend-following baseline strategy (e.g. "TF4").
+    baseline_mr:
+        Registry ID of the mean-reversion baseline strategy (e.g. "MR42").
+
+    Returns
+    -------
+    tuple[bool, bool]
+        ``(run_tf, run_mr)`` — True when the corresponding standalone
+        backtest should be executed for this fold.
+    """
+    if scope.source == "default":
+        return False, False
+    return (baseline_tf in scope.strategy_ids), (baseline_mr in scope.strategy_ids)

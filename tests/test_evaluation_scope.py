@@ -27,6 +27,7 @@ if str(_ROOT) not in sys.path:
 
 from src.evaluation_scope import (  # noqa: E402
     EvaluationScope,
+    compute_standalone_execution_flags,
     filter_strategy_specs,
     resolve_evaluation_scope,
 )
@@ -748,6 +749,52 @@ class TestModuleImportSmoke(unittest.TestCase):
     def test_default_policy_registry_accessible(self):
         policy_registry = get_default_policy_registry()
         self.assertIn(DEFAULT_PHASEAWARE_POLICY_ID, policy_registry.available())
+
+
+# ---------------------------------------------------------------------------
+# Test 13 — Scope-aware execution decisions for standalone WF backtests
+# ---------------------------------------------------------------------------
+
+class TestScopeAwareExecutionDecision(unittest.TestCase):
+    """Test 13: Standalone WF backtest execution follows the resolved scope.
+
+    Four cases:
+      default          -> no standalone backtests (run_tf=False, run_mr=False)
+      --strategy TF4   -> TF only       (run_tf=True,  run_mr=False)
+      --strategy MR42  -> MR only       (run_tf=False, run_mr=True)
+      --strategy TF4 --strategy MR42 -> both (run_tf=True, run_mr=True)
+    """
+
+    def setUp(self):
+        self.tf, self.mr = resolve_phaseaware_strategy_pair()
+
+    def test_default_scope_skips_both_standalone_backtests(self):
+        """Default scope: neither TF nor MR standalone backtest should run."""
+        scope = _make_scope((self.tf, self.mr), source="default")
+        run_tf, run_mr = compute_standalone_execution_flags(scope, self.tf, self.mr)
+        self.assertFalse(run_tf)
+        self.assertFalse(run_mr)
+
+    def test_tf_only_scope_runs_tf_not_mr(self):
+        """--strategy TF4: only TF standalone backtest executes; MR does not."""
+        scope = _make_scope((self.tf,), source="explicit")
+        run_tf, run_mr = compute_standalone_execution_flags(scope, self.tf, self.mr)
+        self.assertTrue(run_tf)
+        self.assertFalse(run_mr)
+
+    def test_mr_only_scope_runs_mr_not_tf(self):
+        """--strategy MR42: only MR standalone backtest executes; TF does not."""
+        scope = _make_scope((self.mr,), source="explicit")
+        run_tf, run_mr = compute_standalone_execution_flags(scope, self.tf, self.mr)
+        self.assertFalse(run_tf)
+        self.assertTrue(run_mr)
+
+    def test_explicit_tf_mr_scope_runs_both_standalone_backtests(self):
+        """--strategy TF4 --strategy MR42: both standalone backtests execute."""
+        scope = _make_scope((self.tf, self.mr), source="explicit")
+        run_tf, run_mr = compute_standalone_execution_flags(scope, self.tf, self.mr)
+        self.assertTrue(run_tf)
+        self.assertTrue(run_mr)
 
 
 if __name__ == "__main__":

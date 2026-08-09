@@ -56,6 +56,7 @@ from src.strategy_registry import (
 )
 from src.evaluation_scope import (
     EvaluationScope,
+    compute_standalone_execution_flags,
     filter_strategy_specs,
     resolve_evaluation_scope,
 )
@@ -2851,18 +2852,21 @@ def main(
                     pa_tp,
                 )
 
-                # Individual strategy runs — only executed when an explicit G3
-                # scope selects at least one standalone strategy.  Default runs
-                # skip these backtests entirely to preserve the pre-G3 baseline
-                # walk-forward output.
+                # G3: run standalone backtests only for the strategies that are
+                # explicitly in scope.  Default runs skip both to preserve the
+                # pre-G3 baseline walk-forward output.
                 tf_res: dict = {}
                 mr_res: dict = {}
-                if _effective_scope.source != "default":
+                _run_tf, _run_mr = compute_standalone_execution_flags(
+                    _effective_scope, baseline_tf, baseline_mr
+                )
+                if _run_tf or _run_mr:
                     _strategy_registry = get_default_strategy_registry()
+                if _run_tf:
                     _tf_inst = _strategy_registry.get(baseline_tf).instantiate()
                     _tf_signals, _tf_sl, _tf_tp = _tf_inst.generate_signals(df_test)
                     tf_res = backtester.run(df_test, _tf_signals, baseline_tf, _tf_sl, _tf_tp)
-
+                if _run_mr:
                     _mr_inst = _strategy_registry.get(baseline_mr).instantiate()
                     _mr_signals, _mr_sl, _mr_tp = _mr_inst.generate_signals(df_test)
                     mr_res = backtester.run(df_test, _mr_signals, baseline_mr, _mr_sl, _mr_tp)
@@ -3054,13 +3058,17 @@ def main(
                     "dl_overlap_state": _dl_overlap_state,
                     "dl_overlap_window": _dl_overlap_window,
                 })
-                # G3: append standalone TF/MR columns only for explicit scope runs.
-                if _effective_scope.source != "default":
+                # G3: append standalone TF/MR columns only for the strategies
+                # that were actually executed in this scope.
+                if _run_tf:
                     walkforward_rows[-1].update({
                         f"{baseline_tf} Return (%)": tf_res.get("total_return", np.nan),
                         f"{baseline_tf} Sharpe": tf_res.get("sharpe_ratio", np.nan),
                         f"{baseline_tf} Max DD (%)": tf_res.get("max_drawdown", np.nan),
                         f"{baseline_tf} Trades": tf_res.get("n_trades", np.nan),
+                    })
+                if _run_mr:
+                    walkforward_rows[-1].update({
                         f"{baseline_mr} Return (%)": mr_res.get("total_return", np.nan),
                         f"{baseline_mr} Sharpe": mr_res.get("sharpe_ratio", np.nan),
                         f"{baseline_mr} Max DD (%)": mr_res.get("max_drawdown", np.nan),
