@@ -779,20 +779,17 @@ systems.
 
 # 15. Output Artifacts
 
-Future MPML outputs should include
+The canonical MPML research outputs are:
 
-```
-strategy_registry.parquet
+    strategy_evaluations.parquet
+    recommendations.parquet
+    experiment_manifest.json
 
-strategy_evaluations.parquet
+Strategy registry metadata remains an internal MPML capability description
+rather than a required run artifact.
 
-recommendations.parquet
-
-experiment_manifest.json
-```
-
-CSV summaries remain useful for inspection but should no longer be considered
-the primary interface.
+CSV summaries remain useful for inspection but are not considered the primary
+MPML→MRML interface.
 
 ---
 
@@ -1616,31 +1613,97 @@ preserving the existing runtime and artifact contracts.
 
 ---
 
-## Current architectural priorities
+### Phase G4 — Stable MPML–MRML Recommendation Interface
 
-Completed
+**Objective**
 
-✓ Behavioral Surface infrastructure
+Establish `Recommendation` as the stable, validated repository boundary
+between MPML and MRML.
 
-✓ Strategy metadata
+G4 defines the guarantees that a downstream MRML consumer may rely upon when
+reading MPML recommendation artifacts, without requiring knowledge of MPML
+strategy implementations, walk-forward internals or recommendation-generation
+logic.
 
-✓ StrategyEvaluation evidence layer
+The objective is contract stability rather than additional recommendation
+intelligence.
 
-✓ Recommendation representation
+### Deliverables
 
-✓ Recommendation policy
+- Canonical Recommendation serialization contract
+- Explicit Recommendation schema/version contract
+- Deterministic recommendation identity and ordering guarantees
+- Referential integrity between Recommendation and StrategyEvaluation
+- Recommendation provenance sufficient to identify the originating experiment
+  and evaluation evidence
+- Serialization/deserialization round-trip validation
+- Contract-level validation tests
+- Stable MPML→MRML artifact documentation
 
-Current
+### Recommendation Contract
 
-→ Controlled evaluation scope and strategy selection (G3)
+The Recommendation artifact remains intentionally lightweight:
 
-Next
+    Recommendation
+        ├── recommendation_id
+        ├── evaluation_id
+        ├── rank
+        ├── recommendation_policy
+        └── metadata
 
-→ Stable MPML–MRML interface
+Recommendation MUST NOT duplicate StrategyEvaluation evidence.
 
-Future
+In particular, expected return, expected Sharpe, drawdown, confidence,
+stability and fold/trade statistics remain properties of StrategyEvaluation.
 
-→ MRML runtime integration
+The `evaluation_id` provides the explicit reference from a Recommendation to
+its supporting evidence.
+
+### MRML Boundary
+
+MRML may consume Recommendation artifacts without knowledge of:
+
+- MPML strategy implementations
+- Behavioral Surface construction
+- walk-forward implementation
+- evaluation internals
+- recommendation-generation implementation
+
+MPML MUST NOT expose repository-specific implementation objects across this
+boundary.
+
+MRML is responsible for deciding how, or whether, a Recommendation should be
+used in portfolio and execution decisions.
+
+### Contract Guarantees
+
+G4 should establish that, for a supported schema version:
+
+- Recommendation serialization is deterministic and lossless
+- Recommendation identity is deterministic
+- Recommendation ordering is deterministic for identical evidence and policy
+- each Recommendation references a valid StrategyEvaluation
+- schema versions are explicit
+- provenance permits the recommendation to be traced to its originating
+  experiment/evaluation
+- unsupported or malformed artifacts fail validation clearly
+
+### Non-Goals
+
+G4 does not introduce:
+
+- new recommendation policies
+- new ranking criteria
+- portfolio logic
+- risk management
+- execution logic
+- live data handling
+- MRML implementation
+- new strategy-selection mechanisms
+- new evaluation evidence models
+
+G4 is complete when the Recommendation artifact can be treated as a stable
+external contract rather than an MPML-internal output.
 
 
 ---
