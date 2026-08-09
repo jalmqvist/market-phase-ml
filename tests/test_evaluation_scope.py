@@ -562,6 +562,9 @@ class TestFilterStrategySpecs(unittest.TestCase):
         specs = _full_strategy_specs(tf, mr)
         result = filter_strategy_specs(specs, scope)
         self.assertEqual(len(result), 4)
+        result_ids = {s["strategy_id"] for s in result}
+        expected_ids = {tf, mr, f"PhaseAware_{tf}_{mr}", "StrategySelector_Dynamic_WF"}
+        self.assertEqual(result_ids, expected_ids)
 
 
 # ---------------------------------------------------------------------------
