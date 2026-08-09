@@ -1012,5 +1012,105 @@ class TestG4Provenance(unittest.TestCase):
         self.assertEqual(recs[0].recommendation_policy, "sharpe_rank_v1")
 
 
+# ---------------------------------------------------------------------------
+# G4 production path integration tests
+# ---------------------------------------------------------------------------
+
+class TestG4ProductionPathIntegration(unittest.TestCase):
+    """Integration tests for the validate → write production path.
+
+    These tests mirror what main.py does: generate Recommendations from
+    StrategyEvaluations, validate against the known evaluation ID set, then
+    write to parquet.  Valid inputs must succeed and produce an unchanged
+    artifact; invalid inputs (unknown evaluation_id) must fail before writing.
+    """
+
+    def _make_evaluations(self, count: int = 3) -> list[StrategyEvaluation]:
+        return [
+            _make_eval(f"eval_prod_{i:03d}", expected_sharpe=float(count - i))
+            for i in range(count)
+        ]
+
+    def test_valid_set_validates_and_writes(self):
+        """Normal valid Recommendation set is validated before serialization."""
+        evals = self._make_evaluations(3)
+        recs = recommendations_from_evaluations(evals)
+        known_ids = frozenset(e.evaluation_id for e in evals)
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "recommendations.parquet"
+            # Validate (mirrors main.py)
+            validate_recommendation_set(recs, known_evaluation_ids=known_ids)
+            write_recommendations_parquet(recommendations=recs, output_path=path)
+
+            self.assertTrue(path.exists())
+            loaded = pd.read_parquet(path)
+            self.assertEqual(len(loaded), 3)
+            for col in ("recommendation_id", "evaluation_id", "rank", "recommendation_policy", "metadata"):
+                self.assertIn(col, loaded.columns)
+
+    def test_unknown_evaluation_id_blocked_before_write(self):
+        """A Recommendation with an unknown evaluation_id cannot produce the artifact."""
+        evals = self._make_evaluations(2)
+        recs = recommendations_from_evaluations(evals)
+        # Supply an empty known set — referential integrity must fail before write
+        known_ids: frozenset[str] = frozenset()
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "recommendations.parquet"
+            with self.assertRaises(RecommendationValidationError):
+                validate_recommendation_set(recs, known_evaluation_ids=known_ids)
+                write_recommendations_parquet(recommendations=recs, output_path=path)
+            # The parquet file must NOT have been written
+            self.assertFalse(path.exists())
+
+    def test_parquet_output_unchanged_for_valid_input(self):
+        """Validation must not alter the serialized artifact content for valid inputs."""
+        evals = self._make_evaluations(2)
+        recs = recommendations_from_evaluations(evals)
+        known_ids = frozenset(e.evaluation_id for e in evals)
+
+        with TemporaryDirectory() as tmp_dir:
+            # Write without validation (baseline)
+            path_baseline = Path(tmp_dir) / "baseline.parquet"
+            write_recommendations_parquet(recommendations=recs, output_path=path_baseline)
+            df_baseline = pd.read_parquet(path_baseline).sort_values("rank").reset_index(drop=True)
+
+            # Write with validation (production path)
+            path_validated = Path(tmp_dir) / "validated.parquet"
+            validate_recommendation_set(recs, known_evaluation_ids=known_ids)
+            write_recommendations_parquet(recommendations=recs, output_path=path_validated)
+            df_validated = pd.read_parquet(path_validated).sort_values("rank").reset_index(drop=True)
+
+            pd.testing.assert_frame_equal(df_baseline, df_validated)
+
+    def test_recommendation_ids_ranks_ordering_unchanged(self):
+        """IDs, ranks, and ordering remain byte/value compatible with the pre-G4 path."""
+        evals = self._make_evaluations(4)
+        recs_before = recommendations_from_evaluations(evals)
+
+        known_ids = frozenset(e.evaluation_id for e in evals)
+        validate_recommendation_set(recs_before, known_evaluation_ids=known_ids)
+        recs_after = recommendations_from_evaluations(evals)
+
+        self.assertEqual(
+            [(r.recommendation_id, r.rank, r.evaluation_id) for r in sorted(recs_before, key=lambda r: r.rank)],
+            [(r.recommendation_id, r.rank, r.evaluation_id) for r in sorted(recs_after, key=lambda r: r.rank)],
+        )
+
+    def test_top_n_path_validates_and_writes(self):
+        """Top-N production path (used in main.py --recommendation-top-n) also validates."""
+        evals = self._make_evaluations(5)
+        recs = recommendations_from_evaluations(evals, top_n=3)
+        known_ids = frozenset(e.evaluation_id for e in evals)
+
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "recommendations.parquet"
+            validate_recommendation_set(recs, known_evaluation_ids=known_ids)
+            write_recommendations_parquet(recommendations=recs, output_path=path)
+            loaded = pd.read_parquet(path)
+            self.assertEqual(len(loaded), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

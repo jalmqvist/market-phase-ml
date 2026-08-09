@@ -470,7 +470,7 @@ experiment / experiment_manifest.json
 ### Guarantees MRML may rely on
 
 - For identical `StrategyEvaluation[]`, recommendation policy, and schema version: recommendation IDs, ordering, and ranks are **deterministic** across runs.
-- Every `Recommendation.evaluation_id` references an available `StrategyEvaluation.evaluation_id` in the same experiment.
+- Every `Recommendation.evaluation_id` references an available `StrategyEvaluation.evaluation_id` in the current experiment's evaluation set (verified at artifact-write time).
 - Recommendation IDs are **unique** within a recommendation set.
 - Ranks are **unique** and **positive** (≥ 1) within a recommendation set.
 - The schema version (`metadata["schema_version"]`) is explicit and validated.

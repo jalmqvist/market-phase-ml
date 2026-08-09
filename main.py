@@ -68,7 +68,9 @@ from src.evaluation import (
 )
 from src.recommendation import (
     RECOMMENDATION_SCHEMA_VERSION,
+    RecommendationValidationError,
     recommendations_from_evaluations,
+    validate_recommendation_set,
     write_recommendations_parquet,
 )
 from mpml.behavioral import registry as behavioral_registry
@@ -3255,6 +3257,8 @@ def main(
             strategy_evaluations,
             top_n=recommendation_top_n,
         )
+        known_evaluation_ids = frozenset(e.evaluation_id for e in strategy_evaluations)
+        validate_recommendation_set(recommendations, known_evaluation_ids=known_evaluation_ids)
         recommendations_path = _run_output_dir() / "recommendations.parquet"
         write_recommendations_parquet(
             recommendations=recommendations,
