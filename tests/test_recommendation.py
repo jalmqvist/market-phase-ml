@@ -1060,8 +1060,7 @@ class TestG4ProductionPathIntegration(unittest.TestCase):
             path = Path(tmp_dir) / "recommendations.parquet"
             with self.assertRaises(RecommendationValidationError):
                 validate_recommendation_set(recs, known_evaluation_ids=known_ids)
-                write_recommendations_parquet(recommendations=recs, output_path=path)
-            # The parquet file must NOT have been written
+            # validate raised — write must not have been called; file must not exist
             self.assertFalse(path.exists())
 
     def test_parquet_output_unchanged_for_valid_input(self):
@@ -1110,6 +1109,9 @@ class TestG4ProductionPathIntegration(unittest.TestCase):
             write_recommendations_parquet(recommendations=recs, output_path=path)
             loaded = pd.read_parquet(path)
             self.assertEqual(len(loaded), 3)
+            # All referenced evaluation_ids in the artifact must be within the known set
+            for eval_id in loaded["evaluation_id"]:
+                self.assertIn(eval_id, known_ids)
 
 
 if __name__ == "__main__":
