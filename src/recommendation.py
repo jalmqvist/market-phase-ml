@@ -232,3 +232,145 @@ def write_recommendations_parquet(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df = recommendations_to_frame(recommendations)
     df.to_parquet(output_path, index=False)
+
+
+# ---------------------------------------------------------------------------
+# G4 — Recommendation set validation
+# ---------------------------------------------------------------------------
+
+#: Schema versions that this runtime supports.
+SUPPORTED_RECOMMENDATION_SCHEMA_VERSIONS: frozenset[str] = frozenset(
+    {RECOMMENDATION_SCHEMA_VERSION}
+)
+
+#: Required serialization fields and their expected Python types.
+_REQUIRED_RECORD_FIELDS: dict[str, type] = {
+    "recommendation_id": str,
+    "evaluation_id": str,
+    "rank": int,
+    "recommendation_policy": str,
+    "metadata": str,
+}
+
+
+class RecommendationValidationError(ValueError):
+    """Raised when a Recommendation set fails contract validation."""
+
+
+def validate_recommendation_set(
+    recommendations: list[Recommendation] | tuple[Recommendation, ...],
+    *,
+    known_evaluation_ids: set[str] | frozenset[str] | None = None,
+) -> None:
+    """Validate a collection of :class:`Recommendation` objects.
+
+    This is the G4 contract-validation entry point.  It checks:
+
+    - Recommendation schema version is supported (via ``metadata["schema_version"]``).
+    - ``recommendation_id`` is present and non-empty.
+    - ``evaluation_id`` is present and non-empty.
+    - ``recommendation_policy`` is present and non-empty.
+    - ``rank`` is a positive integer (≥ 1).
+    - ``recommendation_id`` values are unique within the set.
+    - ``rank`` values are unique within the set.
+    - Every ``evaluation_id`` resolves to a known :class:`StrategyEvaluation`
+      when *known_evaluation_ids* is provided.
+    - Serialization fields produced by :meth:`Recommendation.to_record` are
+      complete and correctly typed.
+
+    Parameters
+    ----------
+    recommendations:
+        The recommendation set to validate.
+    known_evaluation_ids:
+        Set of :attr:`StrategyEvaluation.evaluation_id` values available in
+        the current experiment.  When provided, referential integrity is
+        verified — every ``Recommendation.evaluation_id`` must appear in this
+        set.  Pass ``None`` to skip referential integrity checks.
+
+    Raises
+    ------
+    RecommendationValidationError
+        When any contract constraint is violated.  The error message
+        identifies the specific violation.
+    """
+    seen_ids: set[str] = set()
+    seen_ranks: set[int] = set()
+
+    for i, rec in enumerate(recommendations):
+        position = f"recommendation[{i}]"
+
+        # --- required fields present and non-empty ---
+        if not rec.recommendation_id:
+            raise RecommendationValidationError(
+                f"{position}: recommendation_id is missing or empty."
+            )
+        if not rec.evaluation_id:
+            raise RecommendationValidationError(
+                f"{position}: evaluation_id is missing or empty."
+            )
+        if not rec.recommendation_policy:
+            raise RecommendationValidationError(
+                f"{position}: recommendation_policy is missing or empty."
+            )
+
+        # --- rank is a valid positive integer ---
+        if not isinstance(rec.rank, int) or isinstance(rec.rank, bool) or rec.rank < 1:
+            raise RecommendationValidationError(
+                f"{position} (id={rec.recommendation_id!r}): "
+                f"rank must be a positive integer (≥ 1), got {rec.rank!r}."
+            )
+
+        # --- schema version ---
+        schema_version = rec.metadata.get("schema_version")
+        if schema_version is None:
+            raise RecommendationValidationError(
+                f"{position} (id={rec.recommendation_id!r}): "
+                f"schema_version is missing from metadata."
+            )
+        if schema_version not in SUPPORTED_RECOMMENDATION_SCHEMA_VERSIONS:
+            raise RecommendationValidationError(
+                f"{position} (id={rec.recommendation_id!r}): "
+                f"unsupported schema_version {schema_version!r}. "
+                f"Supported versions: {sorted(SUPPORTED_RECOMMENDATION_SCHEMA_VERSIONS)}."
+            )
+
+        # --- duplicate recommendation IDs ---
+        if rec.recommendation_id in seen_ids:
+            raise RecommendationValidationError(
+                f"Duplicate recommendation_id {rec.recommendation_id!r} "
+                f"detected at {position}."
+            )
+        seen_ids.add(rec.recommendation_id)
+
+        # --- duplicate ranks ---
+        if rec.rank in seen_ranks:
+            raise RecommendationValidationError(
+                f"Duplicate rank {rec.rank!r} detected at {position} "
+                f"(recommendation_id={rec.recommendation_id!r})."
+            )
+        seen_ranks.add(rec.rank)
+
+        # --- referential integrity ---
+        if known_evaluation_ids is not None and rec.evaluation_id not in known_evaluation_ids:
+            raise RecommendationValidationError(
+                f"{position} (id={rec.recommendation_id!r}): "
+                f"evaluation_id {rec.evaluation_id!r} does not reference a "
+                f"known StrategyEvaluation."
+            )
+
+        # --- serialization fields complete and correctly typed ---
+        record = rec.to_record()
+        for field, expected_type in _REQUIRED_RECORD_FIELDS.items():
+            if field not in record:
+                raise RecommendationValidationError(
+                    f"{position} (id={rec.recommendation_id!r}): "
+                    f"serialization record is missing field {field!r}."
+                )
+            value = record[field]
+            if not isinstance(value, expected_type):
+                raise RecommendationValidationError(
+                    f"{position} (id={rec.recommendation_id!r}): "
+                    f"serialization field {field!r} has type "
+                    f"{type(value).__name__!r}, expected {expected_type.__name__!r}."
+                )
