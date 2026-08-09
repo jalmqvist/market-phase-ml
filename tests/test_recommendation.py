@@ -17,12 +17,15 @@ from src.recommendation import (  # noqa: E402
     DEFAULT_POLICY,
     DEFAULT_RECOMMENDATION_POLICY,
     RECOMMENDATION_SCHEMA_VERSION,
+    SUPPORTED_RECOMMENDATION_SCHEMA_VERSIONS,
     Recommendation,
     RecommendationPolicy,
+    RecommendationValidationError,
     SharpeRankingPolicy,
     build_recommendation_id,
     recommendations_from_evaluations,
     recommendations_to_frame,
+    validate_recommendation_set,
     write_recommendations_parquet,
 )
 from src.evaluation import StrategyEvaluation
@@ -626,6 +629,385 @@ class TestRecommendationsFromEvaluationsG2(unittest.TestCase):
                 self.assertIn(col, cols)
             restored = Recommendation.from_record(loaded.iloc[0])
             self.assertEqual(restored.recommendation_id, recs[0].recommendation_id)
+
+
+# ---------------------------------------------------------------------------
+# Phase G4 — Stable MPML–MRML Recommendation Interface
+# ---------------------------------------------------------------------------
+
+
+def _make_valid_recs(count: int = 2) -> list[Recommendation]:
+    """Return a small valid recommendation set for G4 testing."""
+    evals = [_make_eval(f"eval_{i:03d}", expected_sharpe=float(count - i)) for i in range(count)]
+    return recommendations_from_evaluations(evals)
+
+
+class TestG4SupportedSchemaVersions(unittest.TestCase):
+    def test_supported_versions_contains_current(self):
+        self.assertIn(RECOMMENDATION_SCHEMA_VERSION, SUPPORTED_RECOMMENDATION_SCHEMA_VERSIONS)
+
+    def test_supported_versions_is_frozenset(self):
+        self.assertIsInstance(SUPPORTED_RECOMMENDATION_SCHEMA_VERSIONS, frozenset)
+
+
+class TestG4ValidateRecommendationSetValid(unittest.TestCase):
+    """Happy-path validation — a well-formed recommendation set passes."""
+
+    def test_valid_set_passes(self):
+        recs = _make_valid_recs(3)
+        known_ids = {r.evaluation_id for r in recs}
+        # Should not raise
+        validate_recommendation_set(recs, known_evaluation_ids=known_ids)
+
+    def test_valid_set_passes_without_referential_check(self):
+        recs = _make_valid_recs(2)
+        validate_recommendation_set(recs)
+
+    def test_empty_set_passes(self):
+        validate_recommendation_set([])
+
+    def test_single_recommendation_passes(self):
+        recs = _make_valid_recs(1)
+        validate_recommendation_set(recs, known_evaluation_ids={recs[0].evaluation_id})
+
+
+class TestG4SchemaVersion(unittest.TestCase):
+    """Schema version checks."""
+
+    def test_supported_schema_version_passes(self):
+        recs = _make_valid_recs(1)
+        # Default recs use RECOMMENDATION_SCHEMA_VERSION — should pass
+        validate_recommendation_set(recs)
+
+    def test_unsupported_schema_version_fails(self):
+        rec = Recommendation(
+            recommendation_id="rec_abc",
+            evaluation_id="eval_abc",
+            rank=1,
+            recommendation_policy="sharpe_rank_v1",
+            metadata={"schema_version": "99.0.0"},
+        )
+        with self.assertRaises(RecommendationValidationError) as ctx:
+            validate_recommendation_set([rec])
+        self.assertIn("schema_version", str(ctx.exception))
+        self.assertIn("99.0.0", str(ctx.exception))
+
+    def test_missing_schema_version_in_metadata_fails(self):
+        rec = Recommendation(
+            recommendation_id="rec_abc",
+            evaluation_id="eval_abc",
+            rank=1,
+            recommendation_policy="sharpe_rank_v1",
+            metadata={},
+        )
+        with self.assertRaises(RecommendationValidationError):
+            validate_recommendation_set([rec])
+
+
+class TestG4MissingRequiredFields(unittest.TestCase):
+    """Malformed records with missing required fields must fail clearly."""
+
+    def _base_meta(self) -> dict:
+        return {"schema_version": RECOMMENDATION_SCHEMA_VERSION}
+
+    def test_empty_recommendation_id_fails(self):
+        rec = Recommendation(
+            recommendation_id="",
+            evaluation_id="eval_abc",
+            rank=1,
+            recommendation_policy="sharpe_rank_v1",
+            metadata=self._base_meta(),
+        )
+        with self.assertRaises(RecommendationValidationError) as ctx:
+            validate_recommendation_set([rec])
+        self.assertIn("recommendation_id", str(ctx.exception))
+
+    def test_empty_evaluation_id_fails(self):
+        rec = Recommendation(
+            recommendation_id="rec_abc",
+            evaluation_id="",
+            rank=1,
+            recommendation_policy="sharpe_rank_v1",
+            metadata=self._base_meta(),
+        )
+        with self.assertRaises(RecommendationValidationError) as ctx:
+            validate_recommendation_set([rec])
+        self.assertIn("evaluation_id", str(ctx.exception))
+
+    def test_empty_recommendation_policy_fails(self):
+        rec = Recommendation(
+            recommendation_id="rec_abc",
+            evaluation_id="eval_abc",
+            rank=1,
+            recommendation_policy="",
+            metadata=self._base_meta(),
+        )
+        with self.assertRaises(RecommendationValidationError) as ctx:
+            validate_recommendation_set([rec])
+        self.assertIn("recommendation_policy", str(ctx.exception))
+
+
+class TestG4InvalidRank(unittest.TestCase):
+    """Invalid rank values must be rejected."""
+
+    def _base_meta(self) -> dict:
+        return {"schema_version": RECOMMENDATION_SCHEMA_VERSION}
+
+    def _make_rec(self, rank: int) -> Recommendation:
+        return Recommendation(
+            recommendation_id="rec_abc",
+            evaluation_id="eval_abc",
+            rank=rank,
+            recommendation_policy="sharpe_rank_v1",
+            metadata=self._base_meta(),
+        )
+
+    def test_zero_rank_fails(self):
+        with self.assertRaises(RecommendationValidationError) as ctx:
+            validate_recommendation_set([self._make_rec(0)])
+        self.assertIn("rank", str(ctx.exception))
+
+    def test_negative_rank_fails(self):
+        with self.assertRaises(RecommendationValidationError) as ctx:
+            validate_recommendation_set([self._make_rec(-1)])
+        self.assertIn("rank", str(ctx.exception))
+
+    def test_rank_one_passes(self):
+        # Should not raise
+        validate_recommendation_set([self._make_rec(1)])
+
+    def test_large_rank_passes(self):
+        validate_recommendation_set([self._make_rec(999)])
+
+
+class TestG4DuplicateRecommendationIds(unittest.TestCase):
+    """Duplicate recommendation IDs within a set must be rejected."""
+
+    def test_duplicate_ids_rejected(self):
+        meta = {"schema_version": RECOMMENDATION_SCHEMA_VERSION}
+        rec1 = Recommendation(
+            recommendation_id="rec_same",
+            evaluation_id="eval_a",
+            rank=1,
+            recommendation_policy="sharpe_rank_v1",
+            metadata=meta,
+        )
+        rec2 = Recommendation(
+            recommendation_id="rec_same",
+            evaluation_id="eval_b",
+            rank=2,
+            recommendation_policy="sharpe_rank_v1",
+            metadata=meta,
+        )
+        with self.assertRaises(RecommendationValidationError) as ctx:
+            validate_recommendation_set([rec1, rec2])
+        self.assertIn("rec_same", str(ctx.exception))
+
+    def test_unique_ids_pass(self):
+        recs = _make_valid_recs(3)
+        validate_recommendation_set(recs)
+
+
+class TestG4DuplicateRanks(unittest.TestCase):
+    """Duplicate ranks within a set must be rejected."""
+
+    def test_duplicate_ranks_rejected(self):
+        meta = {"schema_version": RECOMMENDATION_SCHEMA_VERSION}
+        rec1 = Recommendation(
+            recommendation_id="rec_aaa",
+            evaluation_id="eval_a",
+            rank=1,
+            recommendation_policy="sharpe_rank_v1",
+            metadata=meta,
+        )
+        rec2 = Recommendation(
+            recommendation_id="rec_bbb",
+            evaluation_id="eval_b",
+            rank=1,  # duplicate rank
+            recommendation_policy="sharpe_rank_v1",
+            metadata=meta,
+        )
+        with self.assertRaises(RecommendationValidationError) as ctx:
+            validate_recommendation_set([rec1, rec2])
+        self.assertIn("rank", str(ctx.exception))
+
+    def test_unique_ranks_pass(self):
+        recs = _make_valid_recs(4)
+        validate_recommendation_set(recs)
+
+
+class TestG4ReferentialIntegrity(unittest.TestCase):
+    """Referential integrity between Recommendation.evaluation_id and StrategyEvaluation."""
+
+    def test_valid_references_pass(self):
+        recs = _make_valid_recs(3)
+        known = {r.evaluation_id for r in recs}
+        validate_recommendation_set(recs, known_evaluation_ids=known)
+
+    def test_missing_evaluation_reference_fails(self):
+        recs = _make_valid_recs(2)
+        # Pass an empty known set — all references will be missing
+        with self.assertRaises(RecommendationValidationError) as ctx:
+            validate_recommendation_set(recs, known_evaluation_ids=set())
+        self.assertIn("evaluation_id", str(ctx.exception))
+
+    def test_partial_missing_reference_fails(self):
+        recs = _make_valid_recs(3)
+        # Only include the first evaluation_id — others will be missing
+        known = {recs[0].evaluation_id}
+        with self.assertRaises(RecommendationValidationError):
+            validate_recommendation_set(recs, known_evaluation_ids=known)
+
+    def test_referential_integrity_skipped_when_none(self):
+        recs = _make_valid_recs(2)
+        # No exception even though we pass no known IDs
+        validate_recommendation_set(recs, known_evaluation_ids=None)
+
+
+class TestG4DeterministicIdentity(unittest.TestCase):
+    """Repeated construction with identical inputs produces the same recommendation_id."""
+
+    def test_identical_inputs_same_id(self):
+        evals = [_make_eval("eval_det", expected_sharpe=1.5)]
+        recs_a = recommendations_from_evaluations(evals)
+        recs_b = recommendations_from_evaluations(evals)
+        self.assertEqual(recs_a[0].recommendation_id, recs_b[0].recommendation_id)
+
+    def test_identical_inputs_same_ordering(self):
+        evals = [
+            _make_eval("eval_x", expected_sharpe=2.0),
+            _make_eval("eval_y", expected_sharpe=1.0),
+        ]
+        recs_a = recommendations_from_evaluations(evals)
+        recs_b = recommendations_from_evaluations(evals)
+        ids_a = [r.recommendation_id for r in sorted(recs_a, key=lambda r: r.rank)]
+        ids_b = [r.recommendation_id for r in sorted(recs_b, key=lambda r: r.rank)]
+        self.assertEqual(ids_a, ids_b)
+
+    def test_identical_inputs_same_ranks(self):
+        evals = [_make_eval(f"eval_{i}", expected_sharpe=float(i)) for i in range(5)]
+        recs_a = recommendations_from_evaluations(evals)
+        recs_b = recommendations_from_evaluations(evals)
+        ranks_a = sorted((r.evaluation_id, r.rank) for r in recs_a)
+        ranks_b = sorted((r.evaluation_id, r.rank) for r in recs_b)
+        self.assertEqual(ranks_a, ranks_b)
+
+
+class TestG4ParquetRoundtrip(unittest.TestCase):
+    """Full Parquet round-trip: Recommendation -> record -> parquet -> record -> Recommendation."""
+
+    def test_full_roundtrip_lossless(self):
+        recs = _make_valid_recs(3)
+        with TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "recommendations.parquet"
+            write_recommendations_parquet(recommendations=recs, output_path=path)
+            loaded = pd.read_parquet(path)
+            restored = [Recommendation.from_record(row) for _, row in loaded.iterrows()]
+            restored_sorted = sorted(restored, key=lambda r: r.rank)
+            original_sorted = sorted(recs, key=lambda r: r.rank)
+            for orig, rest in zip(original_sorted, restored_sorted):
+                self.assertEqual(rest.recommendation_id, orig.recommendation_id)
+                self.assertEqual(rest.evaluation_id, orig.evaluation_id)
+                self.assertEqual(rest.rank, orig.rank)
+                self.assertEqual(rest.recommendation_policy, orig.recommendation_policy)
+                self.assertEqual(rest.metadata, orig.metadata)
+
+    def test_repeated_serialization_equivalent(self):
+        """Repeated serialization of the same set produces equivalent content."""
+        recs = _make_valid_recs(2)
+        with TemporaryDirectory() as tmp_dir:
+            path_a = Path(tmp_dir) / "recs_a.parquet"
+            path_b = Path(tmp_dir) / "recs_b.parquet"
+            write_recommendations_parquet(recommendations=recs, output_path=path_a)
+            write_recommendations_parquet(recommendations=recs, output_path=path_b)
+            df_a = pd.read_parquet(path_a).sort_values("rank").reset_index(drop=True)
+            df_b = pd.read_parquet(path_b).sort_values("rank").reset_index(drop=True)
+            pd.testing.assert_frame_equal(df_a, df_b)
+
+
+class TestG4EvidenceSeparation(unittest.TestCase):
+    """Recommendation must not contain duplicated StrategyEvaluation evidence fields."""
+
+    _EVIDENCE_FIELDS = (
+        "expected_return",
+        "expected_sharpe",
+        "expected_drawdown",
+        "confidence",
+        "stability",
+        "win_rate",
+        "n_folds",
+        "n_trades",
+        "surface_id",
+        "surface_version",
+        "state_id",
+        "strategy_id",
+    )
+
+    def test_no_evidence_fields_in_dataclass(self):
+        rec = _make_valid_recs(1)[0]
+        rec_fields = {f.name for f in rec.__dataclass_fields__.values()}
+        for field in self._EVIDENCE_FIELDS:
+            self.assertNotIn(
+                field,
+                rec_fields,
+                msg=f"Recommendation must not contain StrategyEvaluation evidence field {field!r}.",
+            )
+
+    def test_no_evidence_fields_in_record(self):
+        rec = _make_valid_recs(1)[0]
+        record = rec.to_record()
+        for field in self._EVIDENCE_FIELDS:
+            self.assertNotIn(
+                field,
+                record,
+                msg=f"Serialized Recommendation must not contain evidence field {field!r}.",
+            )
+
+
+class TestG4Provenance(unittest.TestCase):
+    """A Recommendation can be traced through evaluation_id to the supporting StrategyEvaluation."""
+
+    def test_recommendation_references_evaluation_id(self):
+        evals = [_make_eval("eval_prov_001", expected_sharpe=1.0)]
+        recs = recommendations_from_evaluations(evals)
+        self.assertEqual(recs[0].evaluation_id, "eval_prov_001")
+
+    def test_evaluation_id_resolves_to_strategy_evaluation(self):
+        evals = [_make_eval("eval_prov_002", expected_sharpe=1.0)]
+        recs = recommendations_from_evaluations(evals)
+        # Build a lookup map as MRML would
+        eval_map = {e.evaluation_id: e for e in evals}
+        resolved = eval_map[recs[0].evaluation_id]
+        self.assertIsInstance(resolved, StrategyEvaluation)
+
+    def test_evaluation_carries_experiment_id_in_metadata(self):
+        """StrategyEvaluation metadata propagates experiment_id for provenance chain."""
+        eval_with_exp = StrategyEvaluation(
+            evaluation_id="eval_prov_003",
+            surface_id="trend_vol",
+            surface_version="1.0.0",
+            state_id="LVTF",
+            strategy_id="PhaseAware",
+            expected_return=1.0,
+            expected_sharpe=0.8,
+            expected_drawdown=-2.0,
+            win_rate=None,
+            confidence=None,
+            stability=None,
+            n_folds=10,
+            n_trades=100,
+            metadata={"experiment_id": "exp_test_001", "source": "walkforward"},
+        )
+        recs = recommendations_from_evaluations([eval_with_exp])
+        eval_map = {"eval_prov_003": eval_with_exp}
+        resolved = eval_map[recs[0].evaluation_id]
+        self.assertEqual(resolved.metadata["experiment_id"], "exp_test_001")
+
+    def test_default_ranking_policy_is_sharpe_rank_v1(self):
+        """Confirm default policy remains sharpe_rank_v1 (G4 regression)."""
+        evals = [_make_eval("eval_r", expected_sharpe=1.0)]
+        recs = recommendations_from_evaluations(evals)
+        self.assertEqual(recs[0].recommendation_policy, "sharpe_rank_v1")
 
 
 if __name__ == "__main__":

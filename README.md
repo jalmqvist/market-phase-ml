@@ -427,6 +427,60 @@ By default all recommendations are returned. Use `--recommendation-top-n N` to l
 python main.py --recommendation-top-n 5
 ```
 
+---
+
+## MPML → MRML Recommendation Contract (Phase G4)
+
+`recommendations.parquet` is the **stable public interface** from MPML to MRML.
+
+### Artifact roles
+
+| Artifact | Role |
+|---|---|
+| `strategy_evaluations.parquet` | Canonical evaluation evidence |
+| `recommendations.parquet` | Public MPML → MRML recommendation interface |
+| `experiment_manifest.json` | Experiment / run provenance |
+
+### Recommendation fields
+
+A `Recommendation` contains exactly:
+
+| Field | Type | Description |
+|---|---|---|
+| `recommendation_id` | `str` | Deterministic SHA-256–derived ID (prefix `rec_`) |
+| `evaluation_id` | `str` | Foreign key into `strategy_evaluations.parquet` |
+| `rank` | `int` | Positive integer; rank 1 is most preferred |
+| `recommendation_policy` | `str` | Policy that produced this ranking (e.g. `sharpe_rank_v1`) |
+| `metadata` | `dict` | Supplementary metadata including `schema_version` |
+
+`Recommendation` does **not** duplicate `StrategyEvaluation` evidence fields (`expected_return`, `expected_sharpe`, `expected_drawdown`, `confidence`, `stability`, `n_folds`, `n_trades`). Those remain exclusively in `strategy_evaluations.parquet`.
+
+### Provenance chain
+
+```
+Recommendation
+    | evaluation_id
+    v
+StrategyEvaluation
+    | experiment_id  (in metadata)
+    v
+experiment / experiment_manifest.json
+```
+
+### Guarantees MRML may rely on
+
+- For identical `StrategyEvaluation[]`, recommendation policy, and schema version: recommendation IDs, ordering, and ranks are **deterministic** across runs.
+- Every `Recommendation.evaluation_id` references an available `StrategyEvaluation.evaluation_id` in the same experiment.
+- Recommendation IDs are **unique** within a recommendation set.
+- Ranks are **unique** and **positive** (≥ 1) within a recommendation set.
+- The schema version (`metadata["schema_version"]`) is explicit and validated.
+- The cross-repository contract is the serialized parquet artifact. MRML does not need to import any MPML Python objects.
+
+### What MRML may not assume
+
+- Recommendation does not mean "execute this strategy". MRML decides how or whether to act on a recommendation.
+- Strategy implementations, Behavioral Surface construction, walk-forward internals, and recommendation-generation implementation details are MPML-internal and not part of the external contract.
+
 Optional market-data backend override:
 
 ```bash
