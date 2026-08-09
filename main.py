@@ -2851,19 +2851,21 @@ def main(
                     pa_tp,
                 )
 
-                # Individual strategy runs — expose TF and MR as independently
-                # evaluatable units for G3 scope-targeted evaluation.
-                # TODO (G4): make this execution scope-aware so that default
-                # runs skip these backtests when standalone evaluation is not
-                # required, eliminating unnecessary computation.
-                _strategy_registry = get_default_strategy_registry()
-                _tf_inst = _strategy_registry.get(baseline_tf).instantiate()
-                _tf_signals, _tf_sl, _tf_tp = _tf_inst.generate_signals(df_test)
-                tf_res = backtester.run(df_test, _tf_signals, baseline_tf, _tf_sl, _tf_tp)
+                # Individual strategy runs — only executed when an explicit G3
+                # scope selects at least one standalone strategy.  Default runs
+                # skip these backtests entirely to preserve the pre-G3 baseline
+                # walk-forward output.
+                tf_res: dict = {}
+                mr_res: dict = {}
+                if _effective_scope.source != "default":
+                    _strategy_registry = get_default_strategy_registry()
+                    _tf_inst = _strategy_registry.get(baseline_tf).instantiate()
+                    _tf_signals, _tf_sl, _tf_tp = _tf_inst.generate_signals(df_test)
+                    tf_res = backtester.run(df_test, _tf_signals, baseline_tf, _tf_sl, _tf_tp)
 
-                _mr_inst = _strategy_registry.get(baseline_mr).instantiate()
-                _mr_signals, _mr_sl, _mr_tp = _mr_inst.generate_signals(df_test)
-                mr_res = backtester.run(df_test, _mr_signals, baseline_mr, _mr_sl, _mr_tp)
+                    _mr_inst = _strategy_registry.get(baseline_mr).instantiate()
+                    _mr_signals, _mr_sl, _mr_tp = _mr_inst.generate_signals(df_test)
+                    mr_res = backtester.run(df_test, _mr_signals, baseline_mr, _mr_sl, _mr_tp)
 
                 # --- Optional: save equity curves + spike masks for plotting (small whitelist) ---
                 if DEBUG_SAVE_EQUITY_SERIES and (pair_name in DEBUG_SELECTED_PAIRS):
@@ -3031,17 +3033,6 @@ def main(
                     "Dynamic Trades": dyn_res.get("n_trades", np.nan),
                     "Trades Δ": dyn_res.get("n_trades", np.nan) - base_res.get("n_trades", np.nan),
 
-                    # Individual strategy results (G3: independent evaluation evidence)
-                    f"{baseline_tf} Return (%)": tf_res.get("total_return", np.nan),
-                    f"{baseline_tf} Sharpe": tf_res.get("sharpe_ratio", np.nan),
-                    f"{baseline_tf} Max DD (%)": tf_res.get("max_drawdown", np.nan),
-                    f"{baseline_tf} Trades": tf_res.get("n_trades", np.nan),
-
-                    f"{baseline_mr} Return (%)": mr_res.get("total_return", np.nan),
-                    f"{baseline_mr} Sharpe": mr_res.get("sharpe_ratio", np.nan),
-                    f"{baseline_mr} Max DD (%)": mr_res.get("max_drawdown", np.nan),
-                    f"{baseline_mr} Trades": mr_res.get("n_trades", np.nan),
-
                     # diagnostics
                     "vol_thr": vol_thr,
                     "Spike Bars (%)": vol_diag.get("spike_pct", np.nan),
@@ -3063,6 +3054,18 @@ def main(
                     "dl_overlap_state": _dl_overlap_state,
                     "dl_overlap_window": _dl_overlap_window,
                 })
+                # G3: append standalone TF/MR columns only for explicit scope runs.
+                if _effective_scope.source != "default":
+                    walkforward_rows[-1].update({
+                        f"{baseline_tf} Return (%)": tf_res.get("total_return", np.nan),
+                        f"{baseline_tf} Sharpe": tf_res.get("sharpe_ratio", np.nan),
+                        f"{baseline_tf} Max DD (%)": tf_res.get("max_drawdown", np.nan),
+                        f"{baseline_tf} Trades": tf_res.get("n_trades", np.nan),
+                        f"{baseline_mr} Return (%)": mr_res.get("total_return", np.nan),
+                        f"{baseline_mr} Sharpe": mr_res.get("sharpe_ratio", np.nan),
+                        f"{baseline_mr} Max DD (%)": mr_res.get("max_drawdown", np.nan),
+                        f"{baseline_mr} Trades": mr_res.get("n_trades", np.nan),
+                    })
                 print(
                     f"    fold {fold_id}: Sharpe base={base_res['sharpe_ratio']:+.3f} "
                     f"dyn={dyn_res['sharpe_ratio']:+.3f} (Δ {dyn_res['sharpe_ratio'] - base_res['sharpe_ratio']:+.3f})"
