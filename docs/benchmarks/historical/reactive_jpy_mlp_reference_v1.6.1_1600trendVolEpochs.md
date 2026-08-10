@@ -1,7 +1,7 @@
 
 # MPML REFERENCE BENCHMARK
 
-**Architecture**: lstm  
+**Architecture**: mlp  
 **Experiments**: 12  
 **Baseline**: No-DL PhaseAware (aggregate)  
 **Target pairs**: EURJPY, GBPJPY, USDJPY (Reactive-JPY family)  
@@ -14,18 +14,18 @@
 ## 1. Uplift Matrix — ΔRet, ΔSh, and ΔDD per State and Pair
 | Architecture | Behavioral Surface | Feature Set | State | ΔRet EURJPY | ΔRet GBPJPY | ΔRet USDJPY | ΔSh EURJPY | ΔSh GBPJPY | ΔSh USDJPY | ΔDD EURJPY | ΔDD GBPJPY | ΔDD USDJPY | Mean ΔSh |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| lstm | Consensus Lifecycle Surface | price_trend | JPY_CONSENSUS_YOUNG  |   0.64  |   0.08  |   0.53  |  0.237+  |  0.081+  |  0.144+  |  -0.35  |  -0.33  |  -0.13  |  0.154 |
-| lstm | Consensus Lifecycle Surface | price_trend | JPY_CONSENSUS_MATURING  |   0.62  |   0.03  |   0.70  |  0.254+  |  0.053+  |  0.187+  |  -0.34  |  -0.33  |  -0.02  |  0.165 |
-| lstm | Consensus Lifecycle Surface | price_trend | JPY_CONSENSUS_MATURE  |   0.73  |   0.06  |   0.65  |  0.273+  |  0.058+  |  0.176+  |  -0.26  |  -0.29  |   0.05  |  0.169 |
-| lstm | Consensus Lifecycle Surface | price_trend | JPY_NON_EXTREME  |   0.66  |   0.01  |   0.58  |  0.267+  |  0.052+  |  0.147+  |  -0.30  |  -0.39  |  -0.08  |  0.155 |
-| lstm | Trend / Volatility Surface | price_trend | LVTF  |   0.62  |   0.02  |   0.54  |  0.249+  |  0.055+  |  0.129+  |  -0.33  |  -0.39  |  -0.11  |  0.145 |
-| lstm | Trend / Volatility Surface | price_trend | HVTF  |   0.47  |   0.01  |   0.39  |  0.189+  |  0.065+  |  0.119+  |  -0.37  |  -0.33  |  -0.31  |  0.124 |
-| lstm | Trend / Volatility Surface | price_trend | LVR  |   0.81  |   0.05  |   0.65  |  0.306+  |  0.076+  |  0.182+  |  -0.21  |  -0.35  |  -0.02  |  0.188 |
-| lstm | Trend / Volatility Surface | price_trend | HVR  |   0.81  |   0.02  |   0.52  |  0.301+  |  0.055+  |  0.141+  |  -0.20  |  -0.37  |  -0.12  |  0.166 |
-| lstm | Trend / Volatility Surface | trend_vol_only | LVTF  |   0.70  |  -0.20  |   0.50  |  0.286+  |  0.011+  |  0.117+  |  -0.37  |  -0.52  |  -0.05  |  0.138 |
-| lstm | Trend / Volatility Surface | trend_vol_only | HVTF  |   0.74  |  -0.01  |   0.48  |  0.278+  |  0.063+  |  0.103+  |  -0.18  |  -0.37  |  -0.23  |  0.148 |
-| lstm | Trend / Volatility Surface | trend_vol_only | LVR  |   0.78  |  -0.06  |   0.54  |  0.306+  |  0.032+  |  0.143+  |  -0.24  |  -0.39  |   0.00  |  0.160 |
-| lstm | Trend / Volatility Surface | trend_vol_only | HVR  |   0.66  |   0.00  |   0.71  |  0.263+  |  0.070+  |  0.199+  |  -0.28  |  -0.38  |  -0.13  |  0.177 |
+| mlp | Consensus Lifecycle Surface | price_trend | JPY_CONSENSUS_YOUNG  |   0.67  |   0.12  |   0.54  |  0.271+  |  0.088+  |  0.140+  |  -0.27  |  -0.30  |  -0.16  |  0.167 |
+| mlp | Consensus Lifecycle Surface | price_trend | JPY_CONSENSUS_MATURING  |   0.70  |  -0.09  |   0.48  |  0.281+  |  0.034+  |  0.122+  |  -0.29  |  -0.47  |  -0.08  |  0.146 |
+| mlp | Consensus Lifecycle Surface | price_trend | JPY_CONSENSUS_MATURE  |   0.79  |  -0.00  |   0.74  |  0.290+  |  0.060+  |  0.203+  |  -0.20  |  -0.37  |   0.07  |  0.185 |
+| mlp | Consensus Lifecycle Surface | price_trend | JPY_NON_EXTREME  |   0.81  |   0.16  |   0.40  |  0.296+  |  0.078+  |  0.084+  |  -0.24  |  -0.35  |  -0.25  |  0.153 |
+| mlp | Trend / Volatility Surface | price_trend | LVTF  |   0.77  |  -0.11  |   0.69  |  0.313+  |  0.022+  |  0.171+  |  -0.30  |  -0.46  |  -0.04  |  0.169 |
+| mlp | Trend / Volatility Surface | price_trend | HVTF  |   0.94  |  -0.02  |   0.42  |  0.351+  |  0.055+  |  0.062+  |  -0.17  |  -0.36  |  -0.21  |  0.156 |
+| mlp | Trend / Volatility Surface | price_trend | LVR  |   0.67  |  -0.05  |   0.69  |  0.263+  |  0.043+  |  0.190+  |  -0.36  |  -0.38  |  -0.03  |  0.165 |
+| mlp | Trend / Volatility Surface | price_trend | HVR  |   0.76  |   0.11  |   0.55  |  0.289+  |  0.080+  |  0.160+  |  -0.23  |  -0.31  |  -0.15  |  0.176 |
+| mlp | Trend / Volatility Surface | trend_vol_only | LVTF  |   0.74  |  -0.06  |   0.39  |  0.314+  |  0.048+  |  0.101+  |  -0.32  |  -0.40  |  -0.24  |  0.154 |
+| mlp | Trend / Volatility Surface | trend_vol_only | HVTF  |   0.71  |   0.04  |   0.35  |  0.272+  |  0.067+  |  0.056+  |  -0.24  |  -0.36  |  -0.28  |  0.132 |
+| mlp | Trend / Volatility Surface | trend_vol_only | LVR  |   0.69  |  -0.03  |   0.69  |  0.275+  |  0.046+  |  0.183+  |  -0.27  |  -0.38  |   0.08  |  0.168 |
+| mlp | Trend / Volatility Surface | trend_vol_only | HVR  |   0.70  |   0.02  |   0.61  |  0.259+  |  0.065+  |  0.179+  |  -0.19  |  -0.36  |  -0.10  |  0.167 |
 
 
 ## 2. Internal MPML Improvement — Dynamic Selector
@@ -40,15 +40,15 @@
 | EURAUD | 114.97 |  0.257 |   5.14 |
 | EURCHF |  27.50 |  0.112 |  -4.61 |
 | EURGBP |  29.17 |  0.059 |  -2.31 |
-| EURJPY * |   8.23 |  0.054 |  -7.03 |
+| EURJPY * |   7.38 |  0.050 |  -6.24 |
 | EURUSD | -31.27 | -0.182 | -22.54 |
 | GBPAUD |  -6.22 |  0.022 |  -8.01 |
-| GBPJPY * |  18.46 |  0.177 |   5.49 |
+| GBPJPY * |   3.92 |  0.085 |  -3.21 |
 | GBPUSD |  -5.55 | -0.018 |  -8.93 |
 | NZDUSD |  21.27 |  0.049 | -12.80 |
 | USDCAD |  36.21 |  0.217 |   0.84 |
 | USDCHF |  12.92 |  0.103 |   5.82 |
-| USDJPY * |  -0.25 | -0.015 | -12.12 |
+| USDJPY * |  26.61 |  0.098 |  -0.16 |
 
 
 ### Consensus Lifecycle Surface — JPY_CONSENSUS_MATURING — price_trend
@@ -59,15 +59,15 @@
 | EURAUD | 114.97 |  0.257 |   5.14 |
 | EURCHF |  27.50 |  0.112 |  -4.61 |
 | EURGBP |  29.17 |  0.059 |  -2.31 |
-| EURJPY * |   4.11 |  0.032 | -10.90 |
+| EURJPY * |   9.34 |  0.060 |  -6.61 |
 | EURUSD | -31.27 | -0.182 | -22.54 |
 | GBPAUD |  -6.22 |  0.022 |  -8.01 |
-| GBPJPY * |   9.37 |  0.119 |  -1.10 |
+| GBPJPY * |   2.17 |  0.068 |  -5.18 |
 | GBPUSD |  -5.55 | -0.018 |  -8.93 |
 | NZDUSD |  21.27 |  0.049 | -12.80 |
 | USDCAD |  36.21 |  0.217 |   0.84 |
 | USDCHF |  12.92 |  0.103 |   5.82 |
-| USDJPY * |   7.64 |  0.020 |  -7.47 |
+| USDJPY * |   3.45 |  0.002 |  -8.89 |
 
 
 ### Consensus Lifecycle Surface — JPY_CONSENSUS_MATURE — price_trend
@@ -78,15 +78,15 @@
 | EURAUD | 114.97 |  0.257 |   5.14 |
 | EURCHF |  27.50 |  0.112 |  -4.61 |
 | EURGBP |  29.17 |  0.059 |  -2.31 |
-| EURJPY * |  16.62 |  0.095 |  -7.43 |
+| EURJPY * |  25.58 |  0.135 |  -4.67 |
 | EURUSD | -31.27 | -0.182 | -22.54 |
 | GBPAUD |  -6.22 |  0.022 |  -8.01 |
-| GBPJPY * |   7.51 |  0.109 |  -0.47 |
+| GBPJPY * |   5.66 |  0.096 |  -2.53 |
 | GBPUSD |  -5.55 | -0.018 |  -8.93 |
 | NZDUSD |  21.27 |  0.049 | -12.80 |
 | USDCAD |  36.21 |  0.217 |   0.84 |
 | USDCHF |  12.92 |  0.103 |   5.82 |
-| USDJPY * |  55.32 |  0.203 |   1.82 |
+| USDJPY * |  30.84 |  0.112 |  -1.75 |
 
 
 ### Consensus Lifecycle Surface — JPY_NON_EXTREME — price_trend
@@ -97,15 +97,15 @@
 | EURAUD | 114.97 |  0.257 |   5.14 |
 | EURCHF |  27.50 |  0.112 |  -4.61 |
 | EURGBP |  29.17 |  0.059 |  -2.31 |
-| EURJPY * |  15.14 |  0.088 |  -8.66 |
+| EURJPY * |  15.75 |  0.091 |  -6.37 |
 | EURUSD | -31.27 | -0.182 | -22.54 |
 | GBPAUD |  -6.22 |  0.022 |  -8.01 |
-| GBPJPY * |   1.61 |  0.065 |  -3.74 |
+| GBPJPY * |   6.35 |  0.098 |  -0.08 |
 | GBPUSD |  -5.55 | -0.018 |  -8.93 |
 | NZDUSD |  21.27 |  0.049 | -12.80 |
 | USDCAD |  36.21 |  0.217 |   0.84 |
 | USDCHF |  12.92 |  0.103 |   5.82 |
-| USDJPY * |  25.21 |  0.096 |   2.68 |
+| USDJPY * |  29.35 |  0.113 |   0.73 |
 
 
 ### Trend / Volatility Surface — LVTF — price_trend
@@ -116,15 +116,15 @@
 | EURAUD | 114.97 |  0.257 |   5.14 |
 | EURCHF |  27.50 |  0.112 |  -4.61 |
 | EURGBP |  29.17 |  0.059 |  -2.31 |
-| EURJPY * |  19.99 |  0.110 |  -5.00 |
+| EURJPY * |  19.78 |  0.110 |  -3.33 |
 | EURUSD | -31.27 | -0.182 | -22.54 |
 | GBPAUD |  -6.22 |  0.022 |  -8.01 |
-| GBPJPY * |   3.83 |  0.080 |  -3.00 |
+| GBPJPY * |   2.25 |  0.072 |  -3.70 |
 | GBPUSD |  -5.55 | -0.018 |  -8.93 |
 | NZDUSD |  21.27 |  0.049 | -12.80 |
 | USDCAD |  36.21 |  0.217 |   0.84 |
 | USDCHF |  12.92 |  0.103 |   5.82 |
-| USDJPY * |  24.61 |  0.091 |   0.20 |
+| USDJPY * |  35.32 |  0.131 |  -0.46 |
 
 
 ### Trend / Volatility Surface — LVTF — trend_vol_only
@@ -135,15 +135,15 @@
 | EURAUD | 114.97 |  0.257 |   5.14 |
 | EURCHF |  27.50 |  0.112 |  -4.61 |
 | EURGBP |  29.17 |  0.059 |  -2.31 |
-| EURJPY * |  30.30 |  0.155 |  -3.57 |
+| EURJPY * |  10.14 |  0.064 |  -6.09 |
 | EURUSD | -31.27 | -0.182 | -22.54 |
 | GBPAUD |  -6.22 |  0.022 |  -8.01 |
-| GBPJPY * |   5.06 |  0.088 |  -3.25 |
+| GBPJPY * |   5.65 |  0.096 |  -1.35 |
 | GBPUSD |  -5.55 | -0.018 |  -8.93 |
 | NZDUSD |  21.27 |  0.049 | -12.80 |
 | USDCAD |  36.21 |  0.217 |   0.84 |
 | USDCHF |  12.92 |  0.103 |   5.82 |
-| USDJPY * |  35.19 |  0.135 |   1.78 |
+| USDJPY * |  14.29 |  0.050 |  -1.79 |
 
 
 ### Trend / Volatility Surface — HVTF — price_trend
@@ -154,15 +154,15 @@
 | EURAUD | 114.97 |  0.257 |   5.14 |
 | EURCHF |  27.50 |  0.112 |  -4.61 |
 | EURGBP |  29.17 |  0.059 |  -2.31 |
-| EURJPY * |  26.01 |  0.136 |  -7.19 |
+| EURJPY * |  19.58 |  0.108 |  -5.00 |
 | EURUSD | -31.27 | -0.182 | -22.54 |
 | GBPAUD |  -6.22 |  0.022 |  -8.01 |
-| GBPJPY * |   9.65 |  0.122 |   0.39 |
+| GBPJPY * |   8.76 |  0.118 |  -1.08 |
 | GBPUSD |  -5.55 | -0.018 |  -8.93 |
 | NZDUSD |  21.27 |  0.049 | -12.80 |
 | USDCAD |  36.21 |  0.217 |   0.84 |
 | USDCHF |  12.92 |  0.103 |   5.82 |
-| USDJPY * |  62.35 |  0.223 |   4.21 |
+| USDJPY * |  34.55 |  0.126 |   0.49 |
 
 
 ### Trend / Volatility Surface — HVTF — trend_vol_only
@@ -173,15 +173,15 @@
 | EURAUD | 114.97 |  0.257 |   5.14 |
 | EURCHF |  27.50 |  0.112 |  -4.61 |
 | EURGBP |  29.17 |  0.059 |  -2.31 |
-| EURJPY * |  32.50 |  0.164 |  -3.32 |
+| EURJPY * |  21.37 |  0.117 |  -7.76 |
 | EURUSD | -31.27 | -0.182 | -22.54 |
 | GBPAUD |  -6.22 |  0.022 |  -8.01 |
-| GBPJPY * |   4.16 |  0.083 |  -2.44 |
+| GBPJPY * |   6.21 |  0.100 |  -0.61 |
 | GBPUSD |  -5.55 | -0.018 |  -8.93 |
 | NZDUSD |  21.27 |  0.049 | -12.80 |
 | USDCAD |  36.21 |  0.217 |   0.84 |
 | USDCHF |  12.92 |  0.103 |   5.82 |
-| USDJPY * |  30.28 |  0.110 |   2.37 |
+| USDJPY * |  23.92 |  0.085 |  -1.92 |
 
 
 ### Trend / Volatility Surface — LVR — price_trend
@@ -192,15 +192,15 @@
 | EURAUD | 114.97 |  0.257 |   5.14 |
 | EURCHF |  27.50 |  0.112 |  -4.61 |
 | EURGBP |  29.17 |  0.059 |  -2.31 |
-| EURJPY * |   8.39 |  0.055 |  -9.11 |
+| EURJPY * |   5.48 |  0.040 |  -8.63 |
 | EURUSD | -31.27 | -0.182 | -22.54 |
 | GBPAUD |  -6.22 |  0.022 |  -8.01 |
-| GBPJPY * |  16.57 |  0.165 |   5.04 |
+| GBPJPY * |   2.75 |  0.074 |  -1.64 |
 | GBPUSD |  -5.55 | -0.018 |  -8.93 |
 | NZDUSD |  21.27 |  0.049 | -12.80 |
 | USDCAD |  36.21 |  0.217 |   0.84 |
 | USDCHF |  12.92 |  0.103 |   5.82 |
-| USDJPY * |  18.64 |  0.065 |  -2.24 |
+| USDJPY * |  31.97 |  0.122 |   2.56 |
 
 
 ### Trend / Volatility Surface — LVR — trend_vol_only
@@ -211,15 +211,15 @@
 | EURAUD | 114.97 |  0.257 |   5.14 |
 | EURCHF |  27.50 |  0.112 |  -4.61 |
 | EURGBP |  29.17 |  0.059 |  -2.31 |
-| EURJPY * |  20.91 |  0.114 |  -5.61 |
+| EURJPY * |  16.01 |  0.092 |  -4.96 |
 | EURUSD | -31.27 | -0.182 | -22.54 |
 | GBPAUD |  -6.22 |  0.022 |  -8.01 |
-| GBPJPY * |   4.40 |  0.081 |  -2.39 |
+| GBPJPY * |   7.77 |  0.110 |   0.48 |
 | GBPUSD |  -5.55 | -0.018 |  -8.93 |
 | NZDUSD |  21.27 |  0.049 | -12.80 |
 | USDCAD |  36.21 |  0.217 |   0.84 |
 | USDCHF |  12.92 |  0.103 |   5.82 |
-| USDJPY * |  10.90 |  0.034 |  -1.33 |
+| USDJPY * |  35.91 |  0.135 |   0.61 |
 
 
 ### Trend / Volatility Surface — HVR — price_trend
@@ -230,15 +230,15 @@
 | EURAUD | 114.97 |  0.257 |   5.14 |
 | EURCHF |  27.50 |  0.112 |  -4.61 |
 | EURGBP |  29.17 |  0.059 |  -2.31 |
-| EURJPY * |  19.21 |  0.107 |  -4.94 |
+| EURJPY * |   9.11 |  0.059 |  -5.85 |
 | EURUSD | -31.27 | -0.182 | -22.54 |
 | GBPAUD |  -6.22 |  0.022 |  -8.01 |
-| GBPJPY * |   4.15 |  0.084 |  -3.10 |
+| GBPJPY * |   6.10 |  0.100 |  -4.85 |
 | GBPUSD |  -5.55 | -0.018 |  -8.93 |
 | NZDUSD |  21.27 |  0.049 | -12.80 |
 | USDCAD |  36.21 |  0.217 |   0.84 |
 | USDCHF |  12.92 |  0.103 |   5.82 |
-| USDJPY * |  22.00 |  0.078 |  -0.43 |
+| USDJPY * |   8.03 |  0.022 |  -7.43 |
 
 
 ### Trend / Volatility Surface — HVR — trend_vol_only
@@ -249,15 +249,15 @@
 | EURAUD | 114.97 |  0.257 |   5.14 |
 | EURCHF |  27.50 |  0.112 |  -4.61 |
 | EURGBP |  29.17 |  0.059 |  -2.31 |
-| EURJPY * |  10.58 |  0.066 |  -6.99 |
+| EURJPY * |  16.84 |  0.096 |  -7.31 |
 | EURUSD | -31.27 | -0.182 | -22.54 |
 | GBPAUD |  -6.22 |  0.022 |  -8.01 |
-| GBPJPY * |  17.08 |  0.169 |   4.81 |
+| GBPJPY * |  10.64 |  0.130 |  -0.80 |
 | GBPUSD |  -5.55 | -0.018 |  -8.93 |
 | NZDUSD |  21.27 |  0.049 | -12.80 |
 | USDCAD |  36.21 |  0.217 |   0.84 |
 | USDCHF |  12.92 |  0.103 |   5.82 |
-| USDJPY * |  59.60 |  0.214 |   2.96 |
+| USDJPY * |  14.35 |  0.047 |  -3.27 |
 
 
 **(* = Reactive-JPY target pair)**
@@ -284,18 +284,18 @@
 ### Separation Summary (mean ΔSh: target vs controls)
 | State | Feature Set | Target ΔSh | Control ΔSh | Separation |
 |---|---|---|---|---|
-| JPY_CONSENSUS_YOUNG | price_trend |  0.154 | -0.031 |  0.185 |
-| JPY_CONSENSUS_MATURING | price_trend |  0.165 | -0.031 |  0.196 |
-| JPY_CONSENSUS_MATURE | price_trend |  0.169 | -0.031 |  0.200 |
-| JPY_NON_EXTREME | price_trend |  0.155 | -0.031 |  0.186 |
-| LVTF | price_trend |  0.145 | -0.031 |  0.176 |
-| HVTF | price_trend |  0.124 | -0.031 |  0.155 |
-| LVR | price_trend |  0.188 | -0.031 |  0.219 |
-| HVR | price_trend |  0.166 | -0.031 |  0.197 |
-| LVTF | trend_vol_only |  0.138 | -0.031 |  0.169 |
-| HVTF | trend_vol_only |  0.148 | -0.031 |  0.179 |
-| LVR | trend_vol_only |  0.160 | -0.031 |  0.191 |
-| HVR | trend_vol_only |  0.177 | -0.031 |  0.208 |
+| JPY_CONSENSUS_YOUNG | price_trend |  0.167 | -0.031 |  0.198 |
+| JPY_CONSENSUS_MATURING | price_trend |  0.146 | -0.031 |  0.177 |
+| JPY_CONSENSUS_MATURE | price_trend |  0.185 | -0.031 |  0.216 |
+| JPY_NON_EXTREME | price_trend |  0.153 | -0.031 |  0.184 |
+| LVTF | price_trend |  0.169 | -0.031 |  0.200 |
+| HVTF | price_trend |  0.156 | -0.031 |  0.187 |
+| LVR | price_trend |  0.165 | -0.031 |  0.196 |
+| HVR | price_trend |  0.176 | -0.031 |  0.207 |
+| LVTF | trend_vol_only |  0.154 | -0.031 |  0.186 |
+| HVTF | trend_vol_only |  0.132 | -0.031 |  0.163 |
+| LVR | trend_vol_only |  0.168 | -0.031 |  0.199 |
+| HVR | trend_vol_only |  0.167 | -0.031 |  0.198 |
 
 
 ## 4. Behavioral Family Comparison — Reactive-JPY
@@ -305,26 +305,26 @@
 
 | Surface / Feature Set | EURJPY | GBPJPY | USDJPY | Mean |
 |---|---|---|---|---|
-| Consensus Lifecycle  [price_trend]  |  0.258  |  0.061  |  0.163  |  0.161 |
-| Trend / Volatility  [price_trend]  |  0.262  |  0.063  |  0.143  |  0.156 |
-| Trend / Volatility  [trend_vol_only]  |  0.283  |  0.044  |  0.141  |  0.156 |
+| Consensus Lifecycle  [price_trend]  |  0.284  |  0.065  |  0.137  |  0.162 |
+| Trend / Volatility  [price_trend]  |  0.304  |  0.050  |  0.146  |  0.166 |
+| Trend / Volatility  [trend_vol_only]  |  0.280  |  0.057  |  0.130  |  0.155 |
 
 
 ### Per-experiment breakdown
 | Surface | State | Feature Set | EURJPY | GBPJPY | USDJPY | Mean |
 |---|---|---|---|---|---|---|
-| cLife | JPY_CONSENSUS_YOUNG | price_trend  |  0.237  |  0.081  |  0.144  |  0.154 |
-| cLife | JPY_CONSENSUS_MATURING | price_trend  |  0.254  |  0.053  |  0.187  |  0.165 |
-| cLife | JPY_CONSENSUS_MATURE | price_trend  |  0.273  |  0.058  |  0.176  |  0.169 |
-| cLife | JPY_NON_EXTREME | price_trend  |  0.267  |  0.052  |  0.147  |  0.155 |
-| tVol | LVTF | price_trend  |  0.249  |  0.055  |  0.129  |  0.145 |
-| tVol | HVTF | price_trend  |  0.189  |  0.065  |  0.119  |  0.124 |
-| tVol | LVR | price_trend  |  0.306  |  0.076  |  0.182  |  0.188 |
-| tVol | HVR | price_trend  |  0.301  |  0.055  |  0.141  |  0.166 |
-| tVol | LVTF | trend_vol_only  |  0.286  |  0.011  |  0.117  |  0.138 |
-| tVol | HVTF | trend_vol_only  |  0.278  |  0.063  |  0.103  |  0.148 |
-| tVol | LVR | trend_vol_only  |  0.306  |  0.032  |  0.143  |  0.160 |
-| tVol | HVR | trend_vol_only  |  0.263  |  0.070  |  0.199  |  0.177 |
+| cLife | JPY_CONSENSUS_YOUNG | price_trend  |  0.271  |  0.088  |  0.140  |  0.167 |
+| cLife | JPY_CONSENSUS_MATURING | price_trend  |  0.281  |  0.034  |  0.122  |  0.146 |
+| cLife | JPY_CONSENSUS_MATURE | price_trend  |  0.290  |  0.060  |  0.203  |  0.185 |
+| cLife | JPY_NON_EXTREME | price_trend  |  0.296  |  0.078  |  0.084  |  0.153 |
+| tVol | LVTF | price_trend  |  0.313  |  0.022  |  0.171  |  0.169 |
+| tVol | HVTF | price_trend  |  0.351  |  0.055  |  0.062  |  0.156 |
+| tVol | LVR | price_trend  |  0.263  |  0.043  |  0.190  |  0.165 |
+| tVol | HVR | price_trend  |  0.289  |  0.080  |  0.160  |  0.176 |
+| tVol | LVTF | trend_vol_only  |  0.314  |  0.048  |  0.101  |  0.154 |
+| tVol | HVTF | trend_vol_only  |  0.272  |  0.067  |  0.056  |  0.132 |
+| tVol | LVR | trend_vol_only  |  0.275  |  0.046  |  0.183  |  0.168 |
+| tVol | HVR | trend_vol_only  |  0.259  |  0.065  |  0.179  |  0.167 |
 
 
 ---
