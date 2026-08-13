@@ -93,7 +93,29 @@ def _extract_dl_feature_cols(X: pd.DataFrame) -> list[str]:
     return _stable_feature_columns([c for c in DL_D1_FEATURE_COLS if c in X.columns])
 
 
+# ---------------------------------------------------------------------------
+# Diagnostics verbosity control
+# ---------------------------------------------------------------------------
+
+#: When False, suppress repetitive internal diagnostics ([AWARENESS],
+#: [TRAINING DIAGNOSTICS], [DL FEATURE USAGE]).  Set to True by passing
+#: ``--debug`` on the command line.  All other logic is unaffected.
+_DIAGNOSTICS_VERBOSE: bool = True
+
+
+def set_diagnostics_verbose(verbose: bool) -> None:
+    """Set the module-level diagnostics verbosity flag.
+
+    Call once at process startup (e.g. from main()) to suppress or enable
+    the detailed per-fold internal diagnostic prints.
+    """
+    global _DIAGNOSTICS_VERBOSE
+    _DIAGNOSTICS_VERBOSE = bool(verbose)
+
+
 def _print_dl_feature_usage(pair_name: str, dl_feature_cols: list[str]) -> None:
+    if not _DIAGNOSTICS_VERBOSE:
+        return
     print(
         "[DL FEATURE USAGE]",
         pair_name,
@@ -238,6 +260,8 @@ def emit_awareness_diagnostics(
         return
     if diagnostics_seen is not None:
         diagnostics_seen.add(signature)
+    if not _DIAGNOSTICS_VERBOSE:
+        return
     print("[AWARENESS]")
     print(f"mode={'aware' if missing_indicators_enabled else 'blind'}")
     print(f"missing_indicator_columns={count_missing_indicator_columns(X)}")
@@ -350,7 +374,7 @@ def build_training_matrix(
         "missing_indicator_columns": count_missing_indicator_columns(X_final),
     }
 
-    if diagnostics_label is not None:
+    if diagnostics_label is not None and _DIAGNOSTICS_VERBOSE:
         print(
             f"  [TRAINING DIAGNOSTICS] {diagnostics_label}: "
             f"rows_before_mask={rows_before_mask} "
