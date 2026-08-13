@@ -437,6 +437,7 @@ class TestDebugFlagReversibility(unittest.TestCase):
     def setUpClass(cls):
         import importlib
         cls._main = importlib.import_module("main")
+        cls._models = importlib.import_module("src.models")
 
     def _read_flags(self):
         m = self._main
@@ -450,14 +451,13 @@ class TestDebugFlagReversibility(unittest.TestCase):
 
     def _apply_debug_flags(self, debug: bool):
         """Mirror the production flag-assignment logic from main()."""
-        import src.models as _models
         m = self._main
         m.DL_DEBUG_VERBOSE = bool(debug)
         m.DEBUG_BASELINE_KEYS = bool(debug)
         m.DEBUG_FEATURE_COLUMNS = bool(debug)
         m.DEBUG_SIGNAL_TYPES = bool(debug)
         m.DEBUG_VOL_GUARD = bool(debug)
-        _models.set_diagnostics_verbose(debug)
+        self._models.set_diagnostics_verbose(debug)
 
     def tearDown(self):
         # Restore quiet defaults after each test.
@@ -478,12 +478,11 @@ class TestDebugFlagReversibility(unittest.TestCase):
             self.assertFalse(value, f"{name} must be False when debug=False after debug=True")
 
     def test_debug_false_after_true_suppresses_diagnostics(self):
-        import src.models as _models
         self._apply_debug_flags(True)
         self._apply_debug_flags(False)
         captured = io.StringIO()
         with patch("sys.stdout", captured):
-            _models._print_dl_feature_usage("EURUSD", ["dl_close_ma_20"])
+            self._models._print_dl_feature_usage("EURUSD", ["dl_close_ma_20"])
         self.assertEqual(
             captured.getvalue(), "",
             "Diagnostics must be suppressed after debug=False restores quiet state",
@@ -491,16 +490,15 @@ class TestDebugFlagReversibility(unittest.TestCase):
 
     def test_debug_true_is_reversible_by_debug_false(self):
         """Simulate main(debug=True) followed by main(debug=False) in same process."""
-        import src.models as _models
         # First call: debug=True
         self._apply_debug_flags(True)
         self.assertTrue(self._main.DL_DEBUG_VERBOSE)
-        self.assertTrue(_models._DIAGNOSTICS_VERBOSE)
+        self.assertTrue(self._models._DIAGNOSTICS_VERBOSE)
 
         # Second call: debug=False — must reset everything
         self._apply_debug_flags(False)
         self.assertFalse(self._main.DL_DEBUG_VERBOSE)
-        self.assertFalse(_models._DIAGNOSTICS_VERBOSE)
+        self.assertFalse(self._models._DIAGNOSTICS_VERBOSE)
 
 
 if __name__ == "__main__":
