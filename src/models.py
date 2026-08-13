@@ -258,10 +258,10 @@ def emit_awareness_diagnostics(
     signature = (bool(missing_indicators_enabled), tuple(map(str, X.columns)))
     if diagnostics_seen is not None and signature in diagnostics_seen:
         return
-    if diagnostics_seen is not None:
-        diagnostics_seen.add(signature)
     if not _DIAGNOSTICS_VERBOSE:
         return
+    if diagnostics_seen is not None:
+        diagnostics_seen.add(signature)
     print("[AWARENESS]")
     print(f"mode={'aware' if missing_indicators_enabled else 'blind'}")
     print(f"missing_indicator_columns={count_missing_indicator_columns(X)}")

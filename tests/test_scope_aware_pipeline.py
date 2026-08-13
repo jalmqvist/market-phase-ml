@@ -310,7 +310,26 @@ class TestDiagnosticsVerbosity(unittest.TestCase):
         self.assertIn("[AWARENESS]", captured.getvalue())
 
     def test_diagnostics_verbose_default_is_true(self):
-        self.assertTrue(self._models._DIAGNOSTICS_VERBOSE)
+        # Verify the module-level default is True by reloading the module in a
+        # pristine state (before any set_diagnostics_verbose call).
+        import importlib
+        import src.models as _m
+        # Save and reset to verify the original constant in the module source.
+        # The simplest approach: temporarily remove the module from sys.modules
+        # so we can reload it and inspect the untouched default.
+        import sys
+        module_name = _m.__name__
+        saved_module = sys.modules.pop(module_name, None)
+        try:
+            fresh = importlib.import_module(module_name)
+            self.assertTrue(fresh._DIAGNOSTICS_VERBOSE,
+                            "Module-level _DIAGNOSTICS_VERBOSE default must be True")
+        finally:
+            # Restore the original module so other tests are not affected.
+            if saved_module is not None:
+                sys.modules[module_name] = saved_module
+            elif module_name in sys.modules:
+                del sys.modules[module_name]
 
 
 if __name__ == "__main__":
