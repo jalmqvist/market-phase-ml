@@ -208,3 +208,24 @@ def compute_standalone_execution_flags(
     if scope.source == "default":
         return False, False
     return (baseline_tf in scope.strategy_ids), (baseline_mr in scope.strategy_ids)
+
+
+def should_run_full_universe_backtests(scope: EvaluationScope) -> bool:
+    """Return True when the full-universe legacy backtests should be executed.
+
+    Default runs must retain the existing full-universe benchmark behaviour
+    (required by the dynamic strategy selector and historical comparisons).
+    Explicit runs request a specific strategy subset and should not execute
+    the entire strategy universe as a side-effect.
+
+    Parameters
+    ----------
+    scope:
+        Resolved evaluation scope.
+
+    Returns
+    -------
+    bool
+        ``True`` for default/unscoped runs; ``False`` for explicit runs.
+    """
+    return scope.source == "default"

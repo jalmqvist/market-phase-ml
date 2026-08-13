@@ -32,6 +32,7 @@ from src.models import (
     PhaseMLExperiment, PhaseMLPredictor,
     StrategyPerformanceTracker, StrategySelector,
     smooth_phase_labels, safe_existing_columns,
+    set_diagnostics_verbose,
 )
 from src.strategies import Backtester as BT, PhaseAwareStrategy, StrategySelector_Dynamic
 from src.repro import (
@@ -59,6 +60,7 @@ from src.evaluation_scope import (
     compute_standalone_execution_flags,
     filter_strategy_specs,
     resolve_evaluation_scope,
+    should_run_full_universe_backtests,
 )
 from src.evaluation import (
     EVALUATION_SCHEMA_VERSION,
@@ -1469,6 +1471,35 @@ def _assert_backtest_index_matches(pair_name: str, df_ref, results: dict, tag: s
             raise RuntimeError("Equity curve index mismatch at creation time")
 
 
+
+def _full_universe_sections_enabled(scope: EvaluationScope) -> bool:
+    """Return True iff sections 3c/4/4b should run the legacy full-universe pipeline.
+
+    Thin orchestration wrapper around ``should_run_full_universe_backtests``
+    so that integration tests can target the production decision path in
+    ``main()`` directly, rather than only testing the scope helper.
+    """
+    return should_run_full_universe_backtests(scope)
+
+
+
+def _configure_debug(debug: bool) -> None:
+    """Apply or clear all debug flags to reflect the current *debug* argument.
+
+    Extracted as a named helper so that both ``main()`` and tests can call the
+    exact same production assignment logic — ensuring tests exercise the real
+    wiring rather than duplicating it.
+    """
+    global DL_DEBUG_VERBOSE, DEBUG_BASELINE_KEYS, DEBUG_FEATURE_COLUMNS
+    global DEBUG_SIGNAL_TYPES, DEBUG_VOL_GUARD
+    DL_DEBUG_VERBOSE = bool(debug)
+    DEBUG_BASELINE_KEYS = bool(debug)
+    DEBUG_FEATURE_COLUMNS = bool(debug)
+    DEBUG_SIGNAL_TYPES = bool(debug)
+    DEBUG_VOL_GUARD = bool(debug)
+    set_diagnostics_verbose(debug)
+
+
 def main(
     *,
     output_dir: Path | None = None,
@@ -1478,7 +1509,12 @@ def main(
     behavioral_surface: str | None = None,
     recommendation_top_n: int | None = None,
     strategy: list[str] | None = None,
+    debug: bool = False,
 ):
+    # ── Debug flag: reflect current invocation on every call so state is
+    #    reversible — a subsequent main(debug=False) restores quiet mode.
+    _configure_debug(debug)
+    # ────────────────────────────────────────────────────────────────────────
     resolved_seed = resolve_experiment_seed(
         cli_seed=experiment_seed,
         default_seed=DEFAULT_EXPERIMENT_SEED,
@@ -1553,6 +1589,11 @@ def main(
         f"[G3] Evaluation scope ({_effective_scope.source}): "
         f"{list(_effective_scope.strategy_ids)}"
     )
+    # ── Whether to run the full-universe legacy pipeline ─────────────────────
+    # Default runs retain the full-universe benchmark behavior.
+    # Explicit runs skip the legacy full-universe backtests and selector
+    # training so that only the requested strategy subset is evaluated.
+    _run_full_universe = _full_universe_sections_enabled(_effective_scope)
     # ────────────────────────────────────────────────────────────────────────
 
     dl_mode_tag = "__dl_enabled" if dl_runtime_enabled else "__baseline"
@@ -2110,181 +2151,193 @@ def main(
     # ─────────────────────────────────────────
     print('\n[3c/5] Running backtests with ML-predicted phases...')
 
-    ml_bt_param_hash = _hash_params(
-        **predictor_params,
-        initial_capital=INITIAL_CAPITAL,
-        use_atr_sizing=False,
-        evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
-        spread_pips=SPREAD_PIPS,
-        slippage_pips=SLIPPAGE_PIPS,
-        commission_per_trade=COMMISSION_PER_TRADE,
-    )
+    ml_backtest_results: dict = {}
 
-    ml_bt_data_hash = pred_data_hash
-
-    ml_backtest_results = load_cache(
-        'ml_backtest_results', ml_bt_data_hash, ml_bt_param_hash
-    )
-
-    if ml_backtest_results is None:
-        print('  No cache found — running ML backtests...')
-        ml_backtest_results = {}
-
-        for pair_name, pred_data in ml_predicted_data.items():
-            print(f'\n  --- {pair_name} ---')
-            df_ml = pred_data['df']
-
-            try:
-                # Temporarily swap phase column for backtesting
-                df_ml_swap = df_ml.copy()
-                df_ml_swap['phase'] = df_ml_swap['predicted_phase']
-
-                # Run backtest with ML-predicted phases using run_backtests
-                # Only run the best PhaseAware combo
-                pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
-
-                result = run_backtests(
-                    df=df_ml_swap,
-                    initial_capital=INITIAL_CAPITAL,
-                    use_atr_sizing=False,
-                    evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
-                    spread_pips=SPREAD_PIPS,
-                    slippage_pips=SLIPPAGE_PIPS,
-                    commission_per_trade=COMMISSION_PER_TRADE,
-                    pip_value=pip_value,
-                )
-
-                baseline_key = phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID)
-                if baseline_key in result:
-                    ml_backtest_results[pair_name] = result[baseline_key]
-                    print(f'  ✓ {pair_name}: ML backtest complete')
-                else:
-                    print(f'  ✗ {pair_name}: {baseline_key} not in results')
-
-            except Exception as e:
-                traceback.print_exc()
-                print(f'  ✗ {pair_name}: ML backtest failed — {e}')
-
-        save_cache(
-            'ml_backtest_results', ml_backtest_results,
-            ml_bt_data_hash, ml_bt_param_hash
-        )
+    if not _run_full_universe:
+        print('  Skipped: full-universe ML backtest is not required for explicit scope '
+              f'{list(_effective_scope.strategy_ids)}')
     else:
-        print('  Loaded ML backtest results from cache.')
+        ml_bt_param_hash = _hash_params(
+            **predictor_params,
+            initial_capital=INITIAL_CAPITAL,
+            use_atr_sizing=False,
+            evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+            spread_pips=SPREAD_PIPS,
+            slippage_pips=SLIPPAGE_PIPS,
+            commission_per_trade=COMMISSION_PER_TRADE,
+        )
 
-    # ── Print and save ML backtest results ────────────────────────────────
-    ml_strategy_name = f"{phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID)}_ML"
-    print(f'\n  ML Backtest Results Summary ({ml_strategy_name}):')
-    print(f'  {"Pair":<12} {"Return %":>10} {"Sharpe":>8} '
-          f'{"MaxDD %":>10} {"WinRate %":>10} {"Trades":>8}')
-    print(f'  {"-" * 62}')
+        ml_bt_data_hash = pred_data_hash
 
-    ml_rows = []
-    for pair_name, result in ml_backtest_results.items():
-        print(f'  {pair_name:<12} '
-              f'{result["total_return"]:>10.2f} '
-              f'{result["sharpe_ratio"]:>8.4f} '
-              f'{result["max_drawdown"]:>10.2f} '
-              f'{result["win_rate"]:>10.2f} '
-              f'{result["n_trades"]:>8}')
-        ml_rows.append({
-            'Pair': pair_name,
-            'Strategy': ml_strategy_name,
-            'Total Return (%)': result['total_return'],
-            'Sharpe Ratio': result['sharpe_ratio'],
-            'Max Drawdown (%)': result['max_drawdown'],
-            'Win Rate (%)': result['win_rate'],
-            'Profit Factor': result['profit_factor'],
-            'Total Trades': result['n_trades'],
-        })
+        ml_backtest_results = load_cache(
+            'ml_backtest_results', ml_bt_data_hash, ml_bt_param_hash
+        )
 
-    ml_df = pd.DataFrame(ml_rows)
-    ml_backtest_path = _with_mode_tag('results/results_ml_backtest.csv', dl_mode_tag)
-    ml_df.to_csv(ml_backtest_path, index=False)
-    print(f'\n  ✓ Saved to {ml_backtest_path}')
+        if ml_backtest_results is None:
+            print('  No cache found — running ML backtests...')
+            ml_backtest_results = {}
+
+            for pair_name, pred_data in ml_predicted_data.items():
+                print(f'\n  --- {pair_name} ---')
+                df_ml = pred_data['df']
+
+                try:
+                    # Temporarily swap phase column for backtesting
+                    df_ml_swap = df_ml.copy()
+                    df_ml_swap['phase'] = df_ml_swap['predicted_phase']
+
+                    # Run backtest with ML-predicted phases using run_backtests
+                    # Only run the best PhaseAware combo
+                    pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
+
+                    result = run_backtests(
+                        df=df_ml_swap,
+                        initial_capital=INITIAL_CAPITAL,
+                        use_atr_sizing=False,
+                        evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                        spread_pips=SPREAD_PIPS,
+                        slippage_pips=SLIPPAGE_PIPS,
+                        commission_per_trade=COMMISSION_PER_TRADE,
+                        pip_value=pip_value,
+                    )
+
+                    baseline_key = phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID)
+                    if baseline_key in result:
+                        ml_backtest_results[pair_name] = result[baseline_key]
+                        print(f'  ✓ {pair_name}: ML backtest complete')
+                    else:
+                        print(f'  ✗ {pair_name}: {baseline_key} not in results')
+
+                except Exception as e:
+                    traceback.print_exc()
+                    print(f'  ✗ {pair_name}: ML backtest failed — {e}')
+
+            save_cache(
+                'ml_backtest_results', ml_backtest_results,
+                ml_bt_data_hash, ml_bt_param_hash
+            )
+        else:
+            print('  Loaded ML backtest results from cache.')
+
+        # ── Print and save ML backtest results ────────────────────────────────
+        ml_strategy_name = f"{phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID)}_ML"
+        print(f'\n  ML Backtest Results Summary ({ml_strategy_name}):')
+        print(f'  {"Pair":<12} {"Return %":>10} {"Sharpe":>8} '
+              f'{"MaxDD %":>10} {"WinRate %":>10} {"Trades":>8}')
+        print(f'  {"-" * 62}')
+
+        ml_rows = []
+        for pair_name, result in ml_backtest_results.items():
+            print(f'  {pair_name:<12} '
+                  f'{result["total_return"]:>10.2f} '
+                  f'{result["sharpe_ratio"]:>8.4f} '
+                  f'{result["max_drawdown"]:>10.2f} '
+                  f'{result["win_rate"]:>10.2f} '
+                  f'{result["n_trades"]:>8}')
+            ml_rows.append({
+                'Pair': pair_name,
+                'Strategy': ml_strategy_name,
+                'Total Return (%)': result['total_return'],
+                'Sharpe Ratio': result['sharpe_ratio'],
+                'Max Drawdown (%)': result['max_drawdown'],
+                'Win Rate (%)': result['win_rate'],
+                'Profit Factor': result['profit_factor'],
+                'Total Trades': result['n_trades'],
+            })
+
+        ml_df = pd.DataFrame(ml_rows)
+        ml_backtest_path = _with_mode_tag('results/results_ml_backtest.csv', dl_mode_tag)
+        ml_df.to_csv(ml_backtest_path, index=False)
+        print(f'\n  ✓ Saved to {ml_backtest_path}')
     # ─────────────────────────────────────────
     # 4. RUN BACKTESTS
     # ─────────────────────────────────────────
     print('\n[4/5] Running strategy backtests...')
 
-    backtest_params = dict(
-        initial_capital=INITIAL_CAPITAL,
-        use_atr_sizing=False,
-        spread_pips=SPREAD_PIPS,
-        slippage_pips=SLIPPAGE_PIPS,
-        commission_per_trade=COMMISSION_PER_TRADE,
-        missing_indicators_enabled=missing_indicators_enabled,
-    )
-    bt_param_hash = _hash_params(**backtest_params)
+    all_pair_results: dict = {}
 
-    bt_data_hash  = _hash_dict_of_dataframes(processed_data)
+    if not _run_full_universe:
+        print('  Skipped: full-universe backtests are not required for explicit scope '
+              f'{list(_effective_scope.strategy_ids)}')
+    else:
+        backtest_params = dict(
+            initial_capital=INITIAL_CAPITAL,
+            use_atr_sizing=False,
+            spread_pips=SPREAD_PIPS,
+            slippage_pips=SLIPPAGE_PIPS,
+            commission_per_trade=COMMISSION_PER_TRADE,
+            missing_indicators_enabled=missing_indicators_enabled,
+        )
+        bt_param_hash = _hash_params(**backtest_params)
 
-    all_pair_results = load_cache(
-        'backtest_results', bt_data_hash, bt_param_hash
-    )
+        bt_data_hash  = _hash_dict_of_dataframes(processed_data)
 
-    if all_pair_results is None:
-        print('  No cache found — running backtests...')
-        all_pair_results = {}
-
-        for pair_name in sorted(processed_data.keys()):
-            df = processed_data[pair_name]
-            pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
-            print(f'\n  --- {pair_name} (pip={pip_value}) ---')
-
-            results_hardcoded = {}
-            results_atr       = {}
-
-            try:
-                results_hardcoded = run_backtests(
-                    df=df,
-                    initial_capital=INITIAL_CAPITAL,
-                    use_atr_sizing=False,
-                    evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
-                    spread_pips=SPREAD_PIPS,
-                    slippage_pips=SLIPPAGE_PIPS,
-                    commission_per_trade=COMMISSION_PER_TRADE,
-                    pip_value=pip_value,
-                )
-                _assert_backtest_index_matches(pair_name, df, results_hardcoded, "hardcoded")
-            except Exception as e:
-                traceback.print_exc()
-                print(f'  ✗ {pair_name}: hardcoded backtest failed — {e}')
-
-            try:
-                results_atr = run_backtests(
-                    df=df,
-                    initial_capital=INITIAL_CAPITAL,
-                    use_atr_sizing=True,
-                    evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
-                    spread_pips=SPREAD_PIPS,
-                    slippage_pips=SLIPPAGE_PIPS,
-                    commission_per_trade=COMMISSION_PER_TRADE,
-                    pip_value=pip_value,
-                )
-                _assert_backtest_index_matches(pair_name, df, results_atr, "atr")
-            except Exception as e:
-                traceback.print_exc()
-                print(f'  ✗ {pair_name}: ATR backtest failed — {e}')
-
-            if results_hardcoded or results_atr:
-                all_pair_results[pair_name] = {
-                    **{f'{k}_hardcoded': v
-                       for k, v in results_hardcoded.items()},
-                    **{f'{k}_atr': v
-                       for k, v in results_atr.items()},
-                }
-                print(f'  ✓ {pair_name}: results stored ({len(results_hardcoded)} hardcoded + {len(results_atr)} atr)')
-            else:
-                print(f'  ✗ {pair_name}: NO RESULTS STORED — both backtests returned empty')
-
-        save_cache(
-            'backtest_results', all_pair_results,
-            bt_data_hash, bt_param_hash
+        all_pair_results = load_cache(
+            'backtest_results', bt_data_hash, bt_param_hash
         )
 
-    else:
-        print('  Loaded backtest results from cache.')
+        if all_pair_results is None:
+            print('  No cache found — running backtests...')
+            all_pair_results = {}
+
+            for pair_name in sorted(processed_data.keys()):
+                df = processed_data[pair_name]
+                pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
+                print(f'\n  --- {pair_name} (pip={pip_value}) ---')
+
+                results_hardcoded = {}
+                results_atr       = {}
+
+                try:
+                    results_hardcoded = run_backtests(
+                        df=df,
+                        initial_capital=INITIAL_CAPITAL,
+                        use_atr_sizing=False,
+                        evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                        spread_pips=SPREAD_PIPS,
+                        slippage_pips=SLIPPAGE_PIPS,
+                        commission_per_trade=COMMISSION_PER_TRADE,
+                        pip_value=pip_value,
+                    )
+                    _assert_backtest_index_matches(pair_name, df, results_hardcoded, "hardcoded")
+                except Exception as e:
+                    traceback.print_exc()
+                    print(f'  ✗ {pair_name}: hardcoded backtest failed — {e}')
+
+                try:
+                    results_atr = run_backtests(
+                        df=df,
+                        initial_capital=INITIAL_CAPITAL,
+                        use_atr_sizing=True,
+                        evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                        spread_pips=SPREAD_PIPS,
+                        slippage_pips=SLIPPAGE_PIPS,
+                        commission_per_trade=COMMISSION_PER_TRADE,
+                        pip_value=pip_value,
+                    )
+                    _assert_backtest_index_matches(pair_name, df, results_atr, "atr")
+                except Exception as e:
+                    traceback.print_exc()
+                    print(f'  ✗ {pair_name}: ATR backtest failed — {e}')
+
+                if results_hardcoded or results_atr:
+                    all_pair_results[pair_name] = {
+                        **{f'{k}_hardcoded': v
+                           for k, v in results_hardcoded.items()},
+                        **{f'{k}_atr': v
+                           for k, v in results_atr.items()},
+                    }
+                    print(f'  ✓ {pair_name}: results stored ({len(results_hardcoded)} hardcoded + {len(results_atr)} atr)')
+                else:
+                    print(f'  ✗ {pair_name}: NO RESULTS STORED — both backtests returned empty')
+
+            save_cache(
+                'backtest_results', all_pair_results,
+                bt_data_hash, bt_param_hash
+            )
+
+        else:
+            print('  Loaded backtest results from cache.')
 
 
     # ─────────────────────────────────────────
@@ -2315,64 +2368,70 @@ def main(
     print('\n[4b/5] Training strategy selector ML...')
     print('  (Predicting strategy TYPE: TrendFollowing vs MeanReversion vs PhaseAware)')
 
-    # DL pipeline diagnostics before strategy selector training
+    selector_trained: dict = {}
+    selector_feature_ordering: dict[str, list[str]] = {}
+
+    # Always compute DL column list for use in diagnostics below.
     _sample_df_4b = (
         processed_data[sorted(processed_data.keys())[0]]
         if processed_data else None
     )
     _dl_cols_4b = get_dl_feature_columns(_sample_df_4b) if _sample_df_4b is not None else []
-    print(
-        f"[DL PIPELINE] strategy-selector training: "
-        f"dl_enabled={dl_runtime_enabled} "
-        f"dl_cols={sorted(_dl_cols_4b)} "
-        f"pairs={sorted(processed_data.keys())}"
-    )
 
-    selector_trained = {}
-    selector_feature_ordering: dict[str, list[str]] = {}
-
-    for pair_name in sorted(processed_data.keys()):
-        df = processed_data[pair_name]
-        print(f'\n  --- {pair_name} ---')
-
-        try:
-            # Get backtest results for this pair
-            pair_backtest = hardcoded_results.get(pair_name, {})
-            if not pair_backtest:
-                print(f'    ✗ No backtest results available')
-                continue
-
-            # Track which strategy won in rolling windows
-            tracker = StrategyPerformanceTracker(window_days=20)
-            training_data = tracker.compute_strategy_returns(df, pair_backtest)
-
-            # Train selector model (3-class: TF vs MR vs PhaseAware)
-            selector = StrategySelector(
-                seed=run_cfg.seed,
-                missing_indicators_enabled=missing_indicators_enabled,
-            )
-            metrics = selector.train(
-                training_data,
-                diagnostics_label=f"dynamic selector training pair={pair_name}",
-            )
-
-            if metrics:
-                selector_trained[pair_name] = selector
-                selector_feature_ordering[pair_name] = _stable_feature_columns(
-                    list(selector.feature_cols or [])
-                )
-                print(f'    ✓ Model trained: CV accuracy {metrics["cv_accuracy"]:.4f}')
-            else:
-                print(f'    ✗ Training failed')
-
-        except Exception as e:
-            traceback.print_exc()
-            print(f'    ✗ {pair_name}: selector training failed — {e}')
-
-    if selector_trained:
-        print(f'\n✓ Strategy selectors trained for {len(selector_trained)} pairs')
+    if not _run_full_universe:
+        print('  Skipped: selector training is not required for explicit scope '
+              f'{list(_effective_scope.strategy_ids)}')
     else:
-        print(f'✗ No strategy selectors trained')
+        # DL pipeline diagnostics before strategy selector training
+        print(
+            f"[DL PIPELINE] strategy-selector training: "
+            f"dl_enabled={dl_runtime_enabled} "
+            f"dl_cols={sorted(_dl_cols_4b)} "
+            f"pairs={sorted(processed_data.keys())}"
+        )
+
+        for pair_name in sorted(processed_data.keys()):
+            df = processed_data[pair_name]
+            print(f'\n  --- {pair_name} ---')
+
+            try:
+                # Get backtest results for this pair
+                pair_backtest = hardcoded_results.get(pair_name, {})
+                if not pair_backtest:
+                    print(f'    ✗ No backtest results available')
+                    continue
+
+                # Track which strategy won in rolling windows
+                tracker = StrategyPerformanceTracker(window_days=20)
+                training_data = tracker.compute_strategy_returns(df, pair_backtest)
+
+                # Train selector model (3-class: TF vs MR vs PhaseAware)
+                selector = StrategySelector(
+                    seed=run_cfg.seed,
+                    missing_indicators_enabled=missing_indicators_enabled,
+                )
+                metrics = selector.train(
+                    training_data,
+                    diagnostics_label=f"dynamic selector training pair={pair_name}",
+                )
+
+                if metrics:
+                    selector_trained[pair_name] = selector
+                    selector_feature_ordering[pair_name] = _stable_feature_columns(
+                        list(selector.feature_cols or [])
+                    )
+                    print(f'    ✓ Model trained: CV accuracy {metrics["cv_accuracy"]:.4f}')
+                else:
+                    print(f'    ✗ Training failed')
+
+            except Exception as e:
+                traceback.print_exc()
+                print(f'    ✗ {pair_name}: selector training failed — {e}')
+
+        if selector_trained:
+            print(f'\n✓ Strategy selectors trained for {len(selector_trained)} pairs')
+        else:
+            print(f'✗ No strategy selectors trained')
     manifest["feature_ordering"]["strategy_selector_by_pair"] = {
         pair_name: selector_feature_ordering[pair_name]
         for pair_name in sorted(selector_feature_ordering)
@@ -3858,6 +3917,17 @@ if __name__ == '__main__':
             f"Available: {get_default_strategy_registry().available()}"
         ),
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        dest="debug",
+        default=False,
+        help=(
+            "Enable verbose debug output: [AWARENESS], [TRAINING DIAGNOSTICS], "
+            "[DL FEATURE USAGE], and other detailed per-fold diagnostics that are "
+            "suppressed by default for concise normal output."
+        ),
+    )
     args = parser.parse_args()
     main(
         output_dir=args.output_dir,
@@ -3867,4 +3937,5 @@ if __name__ == '__main__':
         behavioral_surface=args.behavioral_surface,
         recommendation_top_n=args.recommendation_top_n,
         strategy=args.strategy,
+        debug=args.debug,
     )
