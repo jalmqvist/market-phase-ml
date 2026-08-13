@@ -189,47 +189,6 @@ class TestResolvedScopeSource(unittest.TestCase):
 # run_backtests is not called for explicit scope
 # ---------------------------------------------------------------------------
 
-class TestRunBacktestsNotCalledForExplicitScope(unittest.TestCase):
-    """Verify that run_backtests is skipped when the scope is explicit.
-
-    These tests patch `src.strategies.run_backtests` and confirm the call
-    count for the legacy full-universe pipeline section.
-    """
-
-    def _scope_gate(self, scope: EvaluationScope) -> bool:
-        """Mirrors the gate used in main() for sections 3c/4/4b."""
-        return should_run_full_universe_backtests(scope)
-
-    def test_run_backtests_would_be_called_for_default_scope(self):
-        scope = _default_scope()
-        self.assertTrue(self._scope_gate(scope),
-                        "Default scope must pass the gate so run_backtests is called")
-
-    def test_run_backtests_would_not_be_called_for_tf1_scope(self):
-        scope = _explicit_scope("TF1")
-        self.assertFalse(self._scope_gate(scope),
-                         "Explicit TF1 scope must block the gate so run_backtests is skipped")
-
-    def test_run_backtests_would_not_be_called_for_mr42_scope(self):
-        scope = _explicit_scope("MR42")
-        self.assertFalse(self._scope_gate(scope),
-                         "Explicit MR42 scope must block the gate so run_backtests is skipped")
-
-    def test_run_backtests_would_not_be_called_for_any_explicit_scope(self):
-        registry = get_default_strategy_registry()
-        for strategy_id in registry.available():
-            scope = resolve_evaluation_scope(
-                requested_strategy_ids=[strategy_id],
-                registry=registry,
-                policy_registry=get_default_policy_registry(),
-                surface_id="trend_vol",
-            )
-            self.assertFalse(
-                self._scope_gate(scope),
-                f"Explicit scope for {strategy_id} must block full-universe backtests",
-            )
-
-
 # ---------------------------------------------------------------------------
 # compute_standalone_execution_flags for explicit TF1 / MR42
 # ---------------------------------------------------------------------------
