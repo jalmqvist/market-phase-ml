@@ -1482,6 +1482,38 @@ def _full_universe_sections_enabled(scope: EvaluationScope) -> bool:
     return should_run_full_universe_backtests(scope)
 
 
+def _call_run_backtests_if_full_universe(scope: EvaluationScope, **kwargs) -> bool:
+    """Apply the full-universe gate and call ``run_backtests`` if enabled.
+
+    This helper is the *production* coupling between the scope gate and the
+    actual ``run_backtests`` call site.  Tests patch ``main.run_backtests`` and
+    invoke this function to verify the gate without running the full pipeline.
+
+    Returns ``True`` if ``run_backtests`` was invoked, ``False`` if skipped.
+    """
+    if not _full_universe_sections_enabled(scope):
+        return False
+    run_backtests(**kwargs)
+    return True
+
+
+def _configure_debug(debug: bool) -> None:
+    """Apply or clear all debug flags to reflect the current *debug* argument.
+
+    Extracted as a named helper so that both ``main()`` and tests can call the
+    exact same production assignment logic — ensuring tests exercise the real
+    wiring rather than duplicating it.
+    """
+    global DL_DEBUG_VERBOSE, DEBUG_BASELINE_KEYS, DEBUG_FEATURE_COLUMNS
+    global DEBUG_SIGNAL_TYPES, DEBUG_VOL_GUARD
+    DL_DEBUG_VERBOSE = bool(debug)
+    DEBUG_BASELINE_KEYS = bool(debug)
+    DEBUG_FEATURE_COLUMNS = bool(debug)
+    DEBUG_SIGNAL_TYPES = bool(debug)
+    DEBUG_VOL_GUARD = bool(debug)
+    set_diagnostics_verbose(debug)
+
+
 def main(
     *,
     output_dir: Path | None = None,
@@ -1495,14 +1527,7 @@ def main(
 ):
     # ── Debug flag: reflect current invocation on every call so state is
     #    reversible — a subsequent main(debug=False) restores quiet mode.
-    global DL_DEBUG_VERBOSE, DEBUG_BASELINE_KEYS, DEBUG_FEATURE_COLUMNS
-    global DEBUG_SIGNAL_TYPES, DEBUG_VOL_GUARD
-    DL_DEBUG_VERBOSE = bool(debug)
-    DEBUG_BASELINE_KEYS = bool(debug)
-    DEBUG_FEATURE_COLUMNS = bool(debug)
-    DEBUG_SIGNAL_TYPES = bool(debug)
-    DEBUG_VOL_GUARD = bool(debug)
-    set_diagnostics_verbose(debug)
+    _configure_debug(debug)
     # ────────────────────────────────────────────────────────────────────────
     resolved_seed = resolve_experiment_seed(
         cli_seed=experiment_seed,

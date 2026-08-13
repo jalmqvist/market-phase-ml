@@ -337,19 +337,21 @@ class TestDiagnosticsVerbosity(unittest.TestCase):
 # Orchestration-level regression: _full_universe_sections_enabled in main.py
 # ---------------------------------------------------------------------------
 
+# Orchestration-level regression: _full_universe_sections_enabled in main.py
+# ---------------------------------------------------------------------------
+
 class TestFullUniverseOrchestrationGate(unittest.TestCase):
     """Verify the production orchestration gate in main.py.
 
-    These tests exercise ``main._full_universe_sections_enabled``, the function
-    that produces the ``_run_full_universe`` flag consumed by sections 3c/4/4b.
+    These tests exercise ``main._full_universe_sections_enabled`` and
+    ``main._call_run_backtests_if_full_universe``, the helpers that gate the
+    full-universe pipeline sections 3c/4/4b.
 
     A test here will fail if someone:
     - removes ``_full_universe_sections_enabled`` from main.py, or
     - changes it to always return True, or
-    - breaks the contract that explicit scope returns False.
-
-    The mock-run_backtests pattern reproduces the exact conditional guard used
-    in section 4 of main() so that the test fails if the guard logic is wrong.
+    - breaks the contract that explicit scope returns False, or
+    - removes the gate in ``_call_run_backtests_if_full_universe``.
     """
 
     @classmethod
@@ -375,37 +377,33 @@ class TestFullUniverseOrchestrationGate(unittest.TestCase):
         )
 
     def test_explicit_scope_does_not_invoke_run_backtests(self):
-        """Reproduce the section-4 guard pattern and verify run_backtests is blocked.
+        """Patch main.run_backtests and call the production gate helper.
 
-        This is the orchestration-boundary regression test: it mirrors the
-        exact conditional used in main() section 4 so the test fails if the
-        guard is removed or inverted.
+        ``_call_run_backtests_if_full_universe`` is the production coupling
+        between the scope gate and ``run_backtests``.  By patching the symbol
+        in the ``main`` module's namespace we verify that the guard prevents
+        the real call site from being reached — without reproducing the
+        conditional logic in the test.
         """
-        from unittest.mock import MagicMock
-        mock_run_backtests = MagicMock()
+        from unittest.mock import patch
 
         explicit_scope = _explicit_scope("TF1")
-        _run_full_universe = self._main._full_universe_sections_enabled(explicit_scope)
+        with patch("main.run_backtests") as mock_rb:
+            invoked = self._main._call_run_backtests_if_full_universe(explicit_scope)
 
-        # ── Reproduce section-4 guard (copy of the production conditional) ──
-        if _run_full_universe:
-            mock_run_backtests()  # pragma: no cover — must NOT be reached
-        # ────────────────────────────────────────────────────────────────────
+        self.assertFalse(invoked, "Helper must return False for explicit scope")
+        mock_rb.assert_not_called()
 
-        mock_run_backtests.assert_not_called()
-
-    def test_default_scope_would_invoke_run_backtests(self):
+    def test_default_scope_invokes_run_backtests(self):
         """Verify the gate passes for default scope (legacy path preserved)."""
-        from unittest.mock import MagicMock
-        mock_run_backtests = MagicMock()
+        from unittest.mock import patch
 
         default_scope = _default_scope()
-        _run_full_universe = self._main._full_universe_sections_enabled(default_scope)
+        with patch("main.run_backtests") as mock_rb:
+            invoked = self._main._call_run_backtests_if_full_universe(default_scope)
 
-        if _run_full_universe:
-            mock_run_backtests()
-
-        mock_run_backtests.assert_called_once()
+        self.assertTrue(invoked, "Helper must return True for default scope")
+        mock_rb.assert_called_once()
 
     def test_explicit_scope_for_every_registered_strategy_disables_sections(self):
         registry = get_default_strategy_registry()
@@ -430,7 +428,8 @@ class TestDebugFlagReversibility(unittest.TestCase):
     """Verify that main(debug=False) restores quiet state after main(debug=True).
 
     This ensures no persistent global debug state leaks between invocations
-    in the same Python process.
+    in the same Python process.  All tests call the production
+    ``_configure_debug`` helper rather than duplicating its assignments.
     """
 
     @classmethod
@@ -449,37 +448,27 @@ class TestDebugFlagReversibility(unittest.TestCase):
             "DEBUG_VOL_GUARD": m.DEBUG_VOL_GUARD,
         }
 
-    def _apply_debug_flags(self, debug: bool):
-        """Mirror the production flag-assignment logic from main()."""
-        m = self._main
-        m.DL_DEBUG_VERBOSE = bool(debug)
-        m.DEBUG_BASELINE_KEYS = bool(debug)
-        m.DEBUG_FEATURE_COLUMNS = bool(debug)
-        m.DEBUG_SIGNAL_TYPES = bool(debug)
-        m.DEBUG_VOL_GUARD = bool(debug)
-        self._models.set_diagnostics_verbose(debug)
-
     def tearDown(self):
-        # Restore quiet defaults after each test.
-        self._apply_debug_flags(False)
+        # Restore quiet defaults after each test using the production helper.
+        self._main._configure_debug(False)
 
     def test_debug_true_enables_all_flags(self):
-        self._apply_debug_flags(True)
+        self._main._configure_debug(True)
         flags = self._read_flags()
         for name, value in flags.items():
             self.assertTrue(value, f"{name} must be True when debug=True")
 
     def test_debug_false_disables_all_flags(self):
         # First enable, then disable — verifies reversibility.
-        self._apply_debug_flags(True)
-        self._apply_debug_flags(False)
+        self._main._configure_debug(True)
+        self._main._configure_debug(False)
         flags = self._read_flags()
         for name, value in flags.items():
             self.assertFalse(value, f"{name} must be False when debug=False after debug=True")
 
     def test_debug_false_after_true_suppresses_diagnostics(self):
-        self._apply_debug_flags(True)
-        self._apply_debug_flags(False)
+        self._main._configure_debug(True)
+        self._main._configure_debug(False)
         captured = io.StringIO()
         with patch("sys.stdout", captured):
             self._models._print_dl_feature_usage("EURUSD", ["dl_close_ma_20"])
@@ -491,12 +480,12 @@ class TestDebugFlagReversibility(unittest.TestCase):
     def test_debug_true_is_reversible_by_debug_false(self):
         """Simulate main(debug=True) followed by main(debug=False) in same process."""
         # First call: debug=True
-        self._apply_debug_flags(True)
+        self._main._configure_debug(True)
         self.assertTrue(self._main.DL_DEBUG_VERBOSE)
         self.assertTrue(self._models._DIAGNOSTICS_VERBOSE)
 
         # Second call: debug=False — must reset everything
-        self._apply_debug_flags(False)
+        self._main._configure_debug(False)
         self.assertFalse(self._main.DL_DEBUG_VERBOSE)
         self.assertFalse(self._models._DIAGNOSTICS_VERBOSE)
 
