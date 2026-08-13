@@ -1482,24 +1482,6 @@ def _full_universe_sections_enabled(scope: EvaluationScope) -> bool:
     return should_run_full_universe_backtests(scope)
 
 
-def _call_run_backtests_if_full_universe(scope: EvaluationScope, **kwargs) -> bool:
-    """Apply the full-universe gate and call ``run_backtests`` if enabled.
-
-    This helper is the *production* coupling between the scope gate and the
-    actual ``run_backtests`` call site.  Tests patch ``main.run_backtests`` and
-    invoke this function to verify the gate without running the full pipeline.
-
-    ``**kwargs`` are forwarded verbatim to ``run_backtests``; see
-    ``src.strategies.run_backtests`` for the accepted keyword arguments
-    (e.g. ``df``, ``initial_capital``, ``evaluation_policy_id``, etc.).
-
-    Returns ``True`` if ``run_backtests`` was invoked, ``False`` if skipped.
-    """
-    if not _full_universe_sections_enabled(scope):
-        return False
-    run_backtests(**kwargs)
-    return True
-
 
 def _configure_debug(debug: bool) -> None:
     """Apply or clear all debug flags to reflect the current *debug* argument.

@@ -340,15 +340,14 @@ class TestDiagnosticsVerbosity(unittest.TestCase):
 class TestFullUniverseOrchestrationGate(unittest.TestCase):
     """Verify the production orchestration gate in main.py.
 
-    These tests exercise ``main._full_universe_sections_enabled`` and
-    ``main._call_run_backtests_if_full_universe``, the helpers that gate the
-    full-universe pipeline sections 3c/4/4b.
+    These tests exercise ``main._full_universe_sections_enabled``, which is
+    the actual production helper called by ``main()`` to establish
+    ``_run_full_universe`` for sections 3c/4/4b.
 
     A test here will fail if someone:
     - removes ``_full_universe_sections_enabled`` from main.py, or
     - changes it to always return True, or
-    - breaks the contract that explicit scope returns False, or
-    - removes the gate in ``_call_run_backtests_if_full_universe``.
+    - breaks the contract that explicit scope returns False.
     """
 
     @classmethod
@@ -372,35 +371,6 @@ class TestFullUniverseOrchestrationGate(unittest.TestCase):
             self._main._full_universe_sections_enabled(scope),
             "_full_universe_sections_enabled must return True for default scope",
         )
-
-    def test_explicit_scope_does_not_invoke_run_backtests(self):
-        """Patch main.run_backtests and call the production gate helper.
-
-        ``_call_run_backtests_if_full_universe`` is the production coupling
-        between the scope gate and ``run_backtests``.  By patching the symbol
-        in the ``main`` module's namespace we verify that the guard prevents
-        the real call site from being reached — without reproducing the
-        conditional logic in the test.
-        """
-        from unittest.mock import patch
-
-        explicit_scope = _explicit_scope("TF1")
-        with patch("main.run_backtests") as mock_rb:
-            invoked = self._main._call_run_backtests_if_full_universe(explicit_scope)
-
-        self.assertFalse(invoked, "Helper must return False for explicit scope")
-        mock_rb.assert_not_called()
-
-    def test_default_scope_invokes_run_backtests(self):
-        """Verify the gate passes for default scope (legacy path preserved)."""
-        from unittest.mock import patch
-
-        default_scope = _default_scope()
-        with patch("main.run_backtests") as mock_rb:
-            invoked = self._main._call_run_backtests_if_full_universe(default_scope)
-
-        self.assertTrue(invoked, "Helper must return True for default scope")
-        mock_rb.assert_called_once()
 
     def test_explicit_scope_for_every_registered_strategy_disables_sections(self):
         registry = get_default_strategy_registry()
