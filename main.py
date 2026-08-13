@@ -1471,6 +1471,17 @@ def _assert_backtest_index_matches(pair_name: str, df_ref, results: dict, tag: s
             raise RuntimeError("Equity curve index mismatch at creation time")
 
 
+
+def _full_universe_sections_enabled(scope: EvaluationScope) -> bool:
+    """Return True iff sections 3c/4/4b should run the legacy full-universe pipeline.
+
+    Thin orchestration wrapper around ``should_run_full_universe_backtests``
+    so that integration tests can target the production decision path in
+    ``main()`` directly, rather than only testing the scope helper.
+    """
+    return should_run_full_universe_backtests(scope)
+
+
 def main(
     *,
     output_dir: Path | None = None,
@@ -1482,15 +1493,15 @@ def main(
     strategy: list[str] | None = None,
     debug: bool = False,
 ):
-    # ── Debug flag: promote all debug variables when --debug is set ──────────
+    # ── Debug flag: reflect current invocation on every call so state is
+    #    reversible — a subsequent main(debug=False) restores quiet mode.
     global DL_DEBUG_VERBOSE, DEBUG_BASELINE_KEYS, DEBUG_FEATURE_COLUMNS
     global DEBUG_SIGNAL_TYPES, DEBUG_VOL_GUARD
-    if debug:
-        DL_DEBUG_VERBOSE = True
-        DEBUG_BASELINE_KEYS = True
-        DEBUG_FEATURE_COLUMNS = True
-        DEBUG_SIGNAL_TYPES = True
-        DEBUG_VOL_GUARD = True
+    DL_DEBUG_VERBOSE = bool(debug)
+    DEBUG_BASELINE_KEYS = bool(debug)
+    DEBUG_FEATURE_COLUMNS = bool(debug)
+    DEBUG_SIGNAL_TYPES = bool(debug)
+    DEBUG_VOL_GUARD = bool(debug)
     set_diagnostics_verbose(debug)
     # ────────────────────────────────────────────────────────────────────────
     resolved_seed = resolve_experiment_seed(
@@ -1571,7 +1582,7 @@ def main(
     # Default runs retain the full-universe benchmark behavior.
     # Explicit runs skip the legacy full-universe backtests and selector
     # training so that only the requested strategy subset is evaluated.
-    _run_full_universe = should_run_full_universe_backtests(_effective_scope)
+    _run_full_universe = _full_universe_sections_enabled(_effective_scope)
     # ────────────────────────────────────────────────────────────────────────
 
     dl_mode_tag = "__dl_enabled" if dl_runtime_enabled else "__baseline"
