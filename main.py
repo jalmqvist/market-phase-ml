@@ -1489,6 +1489,10 @@ def _call_run_backtests_if_full_universe(scope: EvaluationScope, **kwargs) -> bo
     actual ``run_backtests`` call site.  Tests patch ``main.run_backtests`` and
     invoke this function to verify the gate without running the full pipeline.
 
+    ``**kwargs`` are forwarded verbatim to ``run_backtests``; see
+    ``src.strategies.run_backtests`` for the accepted keyword arguments
+    (e.g. ``df``, ``initial_capital``, ``evaluation_policy_id``, etc.).
+
     Returns ``True`` if ``run_backtests`` was invoked, ``False`` if skipped.
     """
     if not _full_universe_sections_enabled(scope):

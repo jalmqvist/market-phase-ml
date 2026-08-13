@@ -337,9 +337,6 @@ class TestDiagnosticsVerbosity(unittest.TestCase):
 # Orchestration-level regression: _full_universe_sections_enabled in main.py
 # ---------------------------------------------------------------------------
 
-# Orchestration-level regression: _full_universe_sections_enabled in main.py
-# ---------------------------------------------------------------------------
-
 class TestFullUniverseOrchestrationGate(unittest.TestCase):
     """Verify the production orchestration gate in main.py.
 
