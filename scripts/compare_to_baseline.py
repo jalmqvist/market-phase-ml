@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+# Force reload of loader module to prevent caching
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("benchmark.loader", "benchmark/loader.py")
+loader_module = importlib.util.module_from_spec(spec)
+sys.modules["benchmark.loader"] = loader_module
+spec.loader.exec_module(loader_module)
+
+from benchmark.loader import load_benchmark
 """
 analyze_reference_benchmark.py
 
@@ -42,25 +52,24 @@ from benchmark.report import print_report
 def parse_args():
 
     parser = argparse.ArgumentParser(
-
-        description=(
-            "Analyze MPML benchmark archive."
-        )
-
+        description="Analyze MPML benchmark archive."
     )
 
     parser.add_argument(
-
         "--archive",
-
         nargs="?",
-
         default="results_archive",
+        help="Path to benchmark archive.",
+    )
 
+    parser.add_argument(
+        "--sensitivity-mode",
+        action="store_true",
+        default=False,
         help=(
-            "Path to benchmark archive."
+            "Recompute deltas on-the-fly using the current baseline. "
+            "Use when comparing the same experiments against different baselines."
         ),
-
     )
 
     return parser.parse_args()
@@ -93,7 +102,8 @@ def main():
         )
 
         print_report(
-            benchmark
+            benchmark,
+            sensitivity_mode=args.sensitivity_mode,
         )
 
         return 0
@@ -132,5 +142,7 @@ def main():
 # ------------------------------------------------------------
 
 if __name__ == "__main__":
-
+    args = parse_args()
+    benchmark = load_benchmark(args.archive)
+    print_report(benchmark, sensitivity_mode=args.sensitivity_mode)
     sys.exit(main())

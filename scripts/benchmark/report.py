@@ -99,9 +99,8 @@ def section(title: str) -> None:
 # Main report
 # ---------------------------------------------------------------------
 
-def print_report(benchmark) -> None:
-
-    comparisons  = compare_to_baseline(benchmark)
+def print_report(benchmark, sensitivity_mode: bool = False) -> None:
+    comparisons  = compare_to_baseline(benchmark, sensitivity_mode=sensitivity_mode)
     architecture = benchmark.architectures[0]
     TARGET_PAIRS = ["EURJPY", "GBPJPY", "USDJPY"]
 
@@ -109,19 +108,25 @@ def print_report(benchmark) -> None:
     # Header
     # ------------------------------------------------------------------
 
+    sensitivity_note = (
+        "> **Sensitivity mode:** Deltas recomputed from absolute values "
+        "against current baseline.  \n"
+        if sensitivity_mode else ""
+    )
+
     print(f"""
-# MPML REFERENCE BENCHMARK
+    # MPML REFERENCE BENCHMARK
 
-**Architecture**: {architecture}  
-**Experiments**: {len(comparisons)}  
-**Baseline**: No-DL PhaseAware (aggregate)  
-**Target pairs**: EURJPY, GBPJPY, USDJPY (Reactive-JPY family)  
+    **Architecture**: {", ".join(architecture)}  
+    **Experiments**: {len(comparisons)}  
+    **Baseline**: No-DL PhaseAware (aggregate)  
+    **Target pairs**: EURJPY, GBPJPY, USDJPY (Reactive-JPY family)  
 
-> Δ values are walk-forward OOS deltas vs no-DL baseline.  
-> `+` = positive Sharpe uplift.  
-> For ΔDD: **smaller = better** (less drawdown).  
-> All values rounded to 3 decimals for readability.
-""")
+    {sensitivity_note}> Δ values are walk-forward OOS deltas vs no-DL baseline.  
+    > `+` = positive Sharpe uplift.  
+    > For ΔDD: **smaller = better** (less drawdown).  
+    > All values rounded to 3 decimals for readability.
+    """)
 
     # ------------------------------------------------------------------
     # Section 1 — Uplift Matrix (Markdown Table)

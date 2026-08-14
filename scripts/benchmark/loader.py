@@ -76,6 +76,12 @@ def detect_suffix(folder: Path) -> str:
     ]
     for filename, suffix in patterns:
         if (folder / filename).exists():
+            # If this is the baseline folder, warn if it's returning __dl_enabled
+            if folder.name == BASELINE_FOLDER and suffix == "__dl_enabled":
+                warnings.warn(
+                    f"Baseline folder {folder.name} contains __dl_enabled file — "
+                    "this may cause data contamination."
+                )
             return suffix
 
     available = sorted(f.name for f in folder.glob("results_per_pair*.csv"))
@@ -193,7 +199,9 @@ def load_baseline(folder: Path) -> ExperimentResult:
     """
     manifest = load_manifest(folder)
     surface  = manifest["experiment_surface"]
-    suffix   = detect_suffix(folder)
+
+    # FOR BASELINE: always use __baseline suffix — no fallback
+    suffix = "__baseline"
 
     architecture   = surface["artifact_model"]
     representation = surface["behavioral_surface"]
@@ -257,6 +265,23 @@ def load_baseline(folder: Path) -> ExperimentResult:
 # ---------------------------------------------------------------------
 # Experiment loader
 # ---------------------------------------------------------------------
+def load_absolute_experiment_values(folder: Path, suffix: str) -> dict:
+    """
+    Load absolute experiment values from dynamic_selector_results_per_pair.
+    These are the actual OOS values for the experiment.
+    """
+    try:
+        df = load_csv(folder, "dynamic_selector_results_per_pair", suffix)
+        return {
+            row["Pair"]: {
+                "return": float(row["Total Return (%)"]),
+                "sharpe": float(row["Sharpe"]),
+                "drawdown": float(row["Max DD (%)"]),
+            }
+            for _, row in df.iterrows()
+        }
+    except FileNotFoundError:
+        return {}
 
 def load_experiment(folder: Path) -> ExperimentResult:
     """
@@ -270,6 +295,13 @@ def load_experiment(folder: Path) -> ExperimentResult:
     manifest = load_manifest(folder)
     surface  = manifest["experiment_surface"]
     suffix   = detect_suffix(folder)
+
+    # If we detected __baseline in an experiment folder, warn — this is likely a mistake
+    if suffix == "__baseline":
+        warnings.warn(
+            f"Experiment folder {folder.name} uses __baseline suffix — "
+            "this may indicate a misconfigured run or file overlap."
+        )
 
     architecture   = surface["artifact_model"]
     representation = surface["behavioral_surface"]
@@ -303,13 +335,23 @@ def load_experiment(folder: Path) -> ExperimentResult:
 
     wf = load_csv(folder, "walkforward_results_per_pair", suffix)
 
+    # Load absolute experiment values for sensitivity mode
+    # These are loaded once here and stored on each WalkforwardPairResult
+    absolute_values = load_absolute_experiment_values(folder, suffix)
+
     for _, row in wf.iterrows():
+        pair_name = row["Pair"]
+        abs_val = absolute_values.get(pair_name, {})
+
         result = WalkforwardPairResult(
-            pair           = row["Pair"],
-            return_delta   = float(row["Return Δ"]),
-            sharpe_delta   = float(row["Sharpe Δ"]),
-            drawdown_delta = float(row["DD Δ"]),
-            folds          = int(row["Folds"]),
+            pair=pair_name,
+            return_delta=float(row["Return Δ"]),
+            sharpe_delta=float(row["Sharpe Δ"]),
+            drawdown_delta=float(row["DD Δ"]),
+            folds=int(row["Folds"]),
+            experiment_return=abs_val.get("return", 0.0),
+            experiment_sharpe=abs_val.get("sharpe", 0.0),
+            experiment_drawdown=abs_val.get("drawdown", 0.0),
         )
         experiment.wf_pairs[result.pair] = result
 

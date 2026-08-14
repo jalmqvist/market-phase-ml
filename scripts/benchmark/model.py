@@ -53,6 +53,11 @@ class WalkforwardPairResult:
 
     folds:         int
 
+    # absolute experiment values (for sensitivity mode)
+    experiment_return: float = 0.0
+    experiment_sharpe: float = 0.0
+    experiment_drawdown: float = 0.0
+
 
 # ---------------------------------------------------------------------
 # DynamicResult

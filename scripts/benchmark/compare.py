@@ -65,23 +65,61 @@ class ExperimentComparison:
 # ---------------------------------------------------------------------
 
 def compare_pair(
-    baseline:  PairResult,
-    wf_result: WalkforwardPairResult,
+    baseline:         PairResult,
+    wf_result:        WalkforwardPairResult,
+    sensitivity_mode: bool = False,
 ) -> PairComparison:
     """
-    Build a PairComparison using the walk-forward OOS deltas directly.
+    Build a PairComparison.
 
-    The uplift values come from the walk-forward file — they are
-    the actual OOS deltas computed by MPML, not derived from
-    in-sample aggregate subtraction.
+    Normal mode
+    -----------
+    Uses pre-baked deltas from walkforward_results_per_pair__dl_enabled.csv.
+    These were computed by MPML against the baseline that was active
+    at experiment run time.
+
+    Sensitivity mode
+    ----------------
+    Recomputes deltas on-the-fly using the currently loaded baseline.
+    This allows swapping the baseline folder without re-running MPML.
+    Requires absolute experiment values to be present on wf_result
+    (populated by load_absolute_experiment_values in loader.py).
+
+    CAUTION: In sensitivity mode, the computed deltas compare:
+        - Experiment OOS values (from dynamic_selector_results_per_pair)
+        - Baseline in-sample aggregate values (from results_per_pair__baseline)
+
+    These are NOT from the same evaluation window. Sensitivity-mode deltas
+    are therefore not directly comparable to normal-mode pre-baked deltas.
+    Use sensitivity mode only when you explicitly need to test how results
+    would change against a different baseline, accepting this semantic
+    limitation.
     """
+    if sensitivity_mode:
+        if wf_result.experiment_return == 0.0 \
+                and wf_result.experiment_sharpe == 0.0 \
+                and wf_result.experiment_drawdown == 0.0:
+            raise RuntimeError(
+                f"\nSensitivity mode requested but absolute experiment values "
+                f"are missing for {wf_result.pair}.\n\n"
+                f"Check that dynamic_selector_results_per_pair__dl_enabled.csv "
+                f"exists and was loaded correctly."
+            )
+        return_uplift   = wf_result.experiment_return   - baseline.total_return
+        sharpe_uplift   = wf_result.experiment_sharpe   - baseline.sharpe
+        drawdown_uplift = wf_result.experiment_drawdown - baseline.max_drawdown
+    else:
+        return_uplift   = wf_result.return_delta
+        sharpe_uplift   = wf_result.sharpe_delta
+        drawdown_uplift = wf_result.drawdown_delta
+
     return PairComparison(
-        pair           = baseline.pair,
-        baseline       = baseline,
-        wf_result      = wf_result,
-        return_uplift  = wf_result.return_delta,
-        sharpe_uplift  = wf_result.sharpe_delta,
-        drawdown_uplift = wf_result.drawdown_delta,
+        pair            = baseline.pair,
+        baseline        = baseline,
+        wf_result       = wf_result,
+        return_uplift   = return_uplift,
+        sharpe_uplift   = sharpe_uplift,
+        drawdown_uplift = drawdown_uplift,
     )
 
 
@@ -89,7 +127,10 @@ def compare_pair(
 # Whole benchmark
 # ---------------------------------------------------------------------
 
-def compare_to_baseline(benchmark: Benchmark) -> list[ExperimentComparison]:
+def compare_to_baseline(
+    benchmark:        Benchmark,
+    sensitivity_mode: bool = False,
+) -> list[ExperimentComparison]:
 
     comparisons = []
     baseline    = benchmark.baseline
@@ -103,13 +144,13 @@ def compare_to_baseline(benchmark: Benchmark) -> list[ExperimentComparison]:
 
         for pair_name in baseline.pair_names:
 
-            # Skip pairs not present in the experiment's walk-forward results
             if pair_name not in experiment.wf_pairs:
                 continue
 
             comparison = compare_pair(
-                baseline  = baseline.pair(pair_name),
-                wf_result = experiment.wf_pair(pair_name),
+                baseline         = baseline.pair(pair_name),
+                wf_result        = experiment.wf_pair(pair_name),
+                sensitivity_mode = sensitivity_mode,
             )
 
             if pair_name in population:
