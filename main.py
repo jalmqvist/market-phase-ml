@@ -1080,36 +1080,40 @@ def print_phase_distribution(df: pd.DataFrame,
 def save_results(all_pair_results: dict,
                  majors_summary: pd.DataFrame,
                  minors_summary: pd.DataFrame,
-                 mode_tag: str) -> None:
+                 mode_tag: str,
+                 export_legacy_full_universe: bool = True) -> None:
     """Save all results to CSV files."""
     _run_output_dir().mkdir(parents=True, exist_ok=True)
 
     # Per-pair results
-    per_pair_rows = []
-    for pair_name, results in all_pair_results.items():
-        for strategy_name, metrics in results.items():
-            if strategy_name.startswith('_'):
-                continue
-            per_pair_rows.append({
-                'Pair':             pair_name,
-                'Group':            (
-                    'Major' if pair_name in [
-                        PAIR_NAMES[t] for t in MAJORS
-                    ] else 'Minor'
-                ),
-                'Strategy':         strategy_name,
-                'Total Return (%)': metrics['total_return'],
-                'Sharpe Ratio':     metrics['sharpe_ratio'],
-                'Max Drawdown (%)': metrics['max_drawdown'],
-                'Win Rate (%)':     metrics['win_rate'],
-                'Profit Factor':    metrics['profit_factor'],
-                'N Trades':         metrics['n_trades'],
-            })
+    if export_legacy_full_universe:
+        per_pair_rows = []
+        for pair_name, results in all_pair_results.items():
+            for strategy_name, metrics in results.items():
+                if strategy_name.startswith('_'):
+                    continue
+                per_pair_rows.append({
+                    'Pair':             pair_name,
+                    'Group':            (
+                        'Major' if pair_name in [
+                            PAIR_NAMES[t] for t in MAJORS
+                        ] else 'Minor'
+                    ),
+                    'Strategy':         strategy_name,
+                    'Total Return (%)': metrics['total_return'],
+                    'Sharpe Ratio':     metrics['sharpe_ratio'],
+                    'Max Drawdown (%)': metrics['max_drawdown'],
+                    'Win Rate (%)':     metrics['win_rate'],
+                    'Profit Factor':    metrics['profit_factor'],
+                    'N Trades':         metrics['n_trades'],
+                })
 
-    per_pair_df = pd.DataFrame(per_pair_rows)
-    per_pair_path = _with_mode_tag('results/results_per_pair.csv', mode_tag)
-    per_pair_df.to_csv(per_pair_path, index=False)
-    print(f'  ✓ Saved {per_pair_path}')
+        per_pair_df = pd.DataFrame(per_pair_rows)
+        per_pair_path = _with_mode_tag('results/results_per_pair.csv', mode_tag)
+        per_pair_df.to_csv(per_pair_path, index=False)
+        print(f'  ✓ Saved {per_pair_path}')
+    else:
+        print("  Skipping legacy results_per_pair export: full-universe backtests were intentionally skipped.")
 
     # Group summaries
     if not majors_summary.empty:
@@ -1123,13 +1127,16 @@ def save_results(all_pair_results: dict,
         print(f'  ✓ Saved {minors_path}')
 
     # Combined summary
-    combined_summary = pd.concat(
-        [majors_summary, minors_summary],
-        ignore_index=True
-    )
-    summary_path = _with_mode_tag('results/results_summary.csv', mode_tag)
-    combined_summary.to_csv(summary_path, index=False)
-    print(f'  ✓ Saved {summary_path}')
+    if export_legacy_full_universe:
+        combined_summary = pd.concat(
+            [majors_summary, minors_summary],
+            ignore_index=True
+        )
+        summary_path = _with_mode_tag('results/results_summary.csv', mode_tag)
+        combined_summary.to_csv(summary_path, index=False)
+        print(f'  ✓ Saved {summary_path}')
+    else:
+        print("  Skipping legacy results_summary export: full-universe backtests were intentionally skipped.")
 
 #======
 # fold generator helper functions:
@@ -2714,6 +2721,7 @@ def main(
         majors_hardcoded,
         minors_hardcoded,
         mode_tag=dl_mode_tag,
+        export_legacy_full_universe=_run_full_universe,
     )
 
     # Save ATR results separately
@@ -3022,10 +3030,11 @@ def main(
                     test_start_ts=df_full.index[test_start_pos],
                     test_end_ts=df_full.index[test_end_pos],
                 )
-                _print_window_diagnostics(
-                    f"    [WF FOLD] pair={pair_name} fold={fold_id}",
-                    **fold_window_diag,
-                )
+                if DL_DEBUG_VERBOSE:
+                    _print_window_diagnostics(
+                        f"    [WF FOLD] pair={pair_name} fold={fold_id}",
+                        **fold_window_diag,
+                    )
                 df_test = df_full.iloc[test_start_pos:test_end_pos + 1].copy()
                 if len(df_test) < 50:
                     continue
@@ -3479,7 +3488,13 @@ def main(
                 pd.DataFrame(_timeline_rows).to_csv(timeline_path, index=False)
                 print(f"Saved: {timeline_path} ({len(_timeline_rows)} bars)")
             elif EXPORT_SELECTOR_STATE_TIMELINE:
-                print("  ⚠  selector_state_timeline: no bars collected (no folds completed).")
+                if not _wf_run_dynamic:
+                    print(
+                        "  selector_state_timeline: not generated "
+                        f"(dynamic selector inactive for explicit scope {list(_effective_scope.strategy_ids)})"
+                    )
+                else:
+                    print("  ⚠  selector_state_timeline: no bars collected (no folds completed).")
 
         strategy_specs = list(_wf_execution_plan["strategy_specs"])
         if not strategy_specs:
@@ -3935,12 +3950,18 @@ def main(
     )
 
     # ── 2. Group summary comparison (majors vs minors) ────────────────────
-    viz.plot_group_comparison(
-        majors_hardcoded,
-        minors_hardcoded,
-        majors_atr,
-        minors_atr
-    )
+    if _run_full_universe:
+        viz.plot_group_comparison(
+            majors_hardcoded,
+            minors_hardcoded,
+            majors_atr,
+            minors_atr
+        )
+    else:
+        print(
+            "Skipping group comparison visualization: "
+            f"legacy full-universe results are disabled for explicit scope {list(_effective_scope.strategy_ids)}"
+        )
 
     # ── 3. Phase distribution heatmap (cross-pair) ────────────────────────
     viz.plot_phase_distribution_heatmap(processed_data)
@@ -4022,10 +4043,13 @@ def main(
     print('✓ ANALYSIS COMPLETE!')
     print('=' * 60)
     print('\nOutput files:')
-    print(f"  {_with_mode_tag('results/results_per_pair.csv', dl_mode_tag)}")
-    print(f"  {_with_mode_tag('results/results_majors.csv', dl_mode_tag)}")
-    print(f"  {_with_mode_tag('results/results_minors.csv', dl_mode_tag)}")
-    print(f"  {_with_mode_tag('results/results_summary.csv', dl_mode_tag)}")
+    if _run_full_universe:
+        print(f"  {_with_mode_tag('results/results_per_pair.csv', dl_mode_tag)}")
+        print(f"  {_with_mode_tag('results/results_majors.csv', dl_mode_tag)}")
+        print(f"  {_with_mode_tag('results/results_minors.csv', dl_mode_tag)}")
+        print(f"  {_with_mode_tag('results/results_summary.csv', dl_mode_tag)}")
+    else:
+        print("  (legacy full-universe CSV exports skipped for explicit strategy scope)")
     print(f"  {_with_mode_tag('results/results_majors_atr.csv', dl_mode_tag)}")
     print(f"  {_with_mode_tag('results/results_minors_atr.csv', dl_mode_tag)}")
     print(f"  {_with_mode_tag('results/results_ml.csv', dl_mode_tag)}")
