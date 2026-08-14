@@ -2906,6 +2906,8 @@ def main(
         walkforward_rows = []
         vol_diag_rows = []
         _timeline_rows: list[dict] = []  # accumulates per-bar selector state (if enabled)
+        saved_selected_folds: dict[str, int] = {}
+        saved_equity_folds: dict[str, int] = {}
 
         for pair_name in sorted(processed_data.keys()):
             df_full = processed_data[pair_name]
@@ -2967,7 +2969,7 @@ def main(
                 )
                 training_data = pd.DataFrame()
                 selector_window_diag: dict = {}
-                vol_thr = np.nan
+                vol_thr = None
                 dyn_res: dict = {}
                 selected_s = pd.Series(dtype="object")
 
@@ -3003,10 +3005,10 @@ def main(
 
                     df_train_bars = df_full.iloc[train_start_pos:train_end_pos + 1].copy()
                     _vol_thr = _compute_vol_threshold(df_train_bars)
-                    vol_thr = _vol_thr if _vol_thr is not None else np.nan
                     vol_threshold_by_pair = (
                         {pair_name: _vol_thr} if _vol_thr is not None else {}
                     )
+                    vol_thr = _vol_thr
 
                     if DEBUG_VOL_GUARD and _vol_thr is not None and VOL_FEATURE in df_test.columns:
                         s_train = df_train_bars[VOL_FEATURE].dropna()
@@ -3050,8 +3052,6 @@ def main(
                 # --- Optional: save selected strategy series for plotting (small whitelist) ---
                 if _wf_run_dynamic and DEBUG_SAVE_SELECTED_SERIES and (pair_name in DEBUG_SELECTED_PAIRS):
                     # count folds saved for this pair
-                    if "saved_selected_folds" not in locals():
-                        saved_selected_folds = {}  # type: ignore[var-annotated]
                     saved_selected_folds.setdefault(pair_name, 0)
 
                     if saved_selected_folds[pair_name] < DEBUG_SELECTED_MAX_FOLDS_PER_PAIR:
@@ -3116,8 +3116,6 @@ def main(
                     and (pair_name in DEBUG_SELECTED_PAIRS)
                 ):
                     # count folds saved for this pair
-                    if "saved_equity_folds" not in locals():
-                        saved_equity_folds = {}  # type: ignore[var-annotated]
                     saved_equity_folds.setdefault(pair_name, 0)
 
                     if saved_equity_folds[pair_name] < DEBUG_SELECTED_MAX_FOLDS_PER_PAIR:
@@ -3295,7 +3293,7 @@ def main(
                     ),
 
                     # diagnostics
-                    "vol_thr": vol_thr,
+                    "vol_thr": vol_thr if vol_thr is not None else np.nan,
                     "Spike Bars (%)": vol_diag.get("spike_pct", np.nan),
                     "Near-Spike Bars (%)": vol_diag.get("near_spike_pct", np.nan),
                     "Switches / 1000 bars": vol_diag.get("switches_per_1000_bars", np.nan),
