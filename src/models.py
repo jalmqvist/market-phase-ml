@@ -540,16 +540,18 @@ class PhaseMLPredictor:
         first_dl_row_pos = None
         dl_train_coverage_values: list[float] = []
         first_fold_idx_with_dl_coverage = None
-        print(
-            f"  [WALKFORWARD DL] global_dl_cols={sorted(global_dl_numeric_cols)} "
-            f"feature_cols_includes_dl={bool(optional_dl_feature_cols)} "
-            f"feature_cols_count={len(feature_cols)}"
-        )
+        if _DIAGNOSTICS_VERBOSE:
+            print(
+                f"  [WALKFORWARD DL] global_dl_cols={sorted(global_dl_numeric_cols)} "
+                f"feature_cols_includes_dl={bool(optional_dl_feature_cols)} "
+                f"feature_cols_count={len(feature_cols)}"
+            )
         if global_dl_numeric_cols:
             global_dl_non_null = {
                 c: int(df[c].notna().sum()) for c in global_dl_numeric_cols
             }
-            print(f"  [WALKFORWARD DL] global_dl_non_null_counts={global_dl_non_null}")
+            if _DIAGNOSTICS_VERBOSE:
+                print(f"  [WALKFORWARD DL] global_dl_non_null_counts={global_dl_non_null}")
             dl_any_non_null_mask = X[global_dl_numeric_cols].notna().any(axis=1)
             if dl_any_non_null_mask.any():
                 non_null_positions = np.flatnonzero(dl_any_non_null_mask.to_numpy())
@@ -559,17 +561,19 @@ class PhaseMLPredictor:
                         self.train_window,
                         first_dl_row_pos + self.train_window,
                     )
-            print(
-                f"  [WALKFORWARD DL] first_non_null_dl_row_pos={first_dl_row_pos} "
-                f"dl_aware_walkforward_start={walkforward_start} "
-                f"min_dl_coverage_pct={self.min_dl_coverage_pct:.2f}"
-            )
-            if walkforward_start >= (n_bars - 1):
+            if _DIAGNOSTICS_VERBOSE:
                 print(
-                    "  [WALKFORWARD DL] dl_aware_walkforward_start is beyond available "
-                    f"history ({walkforward_start} >= {n_bars - 1}); "
-                    "no ML fold can be trained."
+                    f"  [WALKFORWARD DL] first_non_null_dl_row_pos={first_dl_row_pos} "
+                    f"dl_aware_walkforward_start={walkforward_start} "
+                    f"min_dl_coverage_pct={self.min_dl_coverage_pct:.2f}"
                 )
+            if walkforward_start >= (n_bars - 1):
+                if _DIAGNOSTICS_VERBOSE:
+                    print(
+                        "  [WALKFORWARD DL] dl_aware_walkforward_start is beyond available "
+                        f"history ({walkforward_start} >= {n_bars - 1}); "
+                        "no ML fold can be trained."
+                    )
 
         for i in range(walkforward_start, n_bars - 1):
             should_train = (
@@ -599,11 +603,12 @@ class PhaseMLPredictor:
                     "PhaseMLPredictor: inference_ts must be <= target_ts "
                     f"({inference_ts} !<= {target_ts})"
                 )
-                print(
-                    f"  [PHASE WF WINDOW] fold={i} "
-                    f"train={train_start_ts} -> {train_end_ts} "
-                    f"inference_ts={inference_ts} target_ts={target_ts}"
-                )
+                if _DIAGNOSTICS_VERBOSE:
+                    print(
+                        f"  [PHASE WF WINDOW] fold={i} "
+                        f"train={train_start_ts} -> {train_end_ts} "
+                        f"inference_ts={inference_ts} target_ts={target_ts}"
+                    )
 
                 if global_dl_numeric_cols:
                     fold_missing_dl_cols = [c for c in global_dl_numeric_cols if c not in X_train_raw.columns]
@@ -622,19 +627,21 @@ class PhaseMLPredictor:
                     dl_train_coverage_values.append(float(fold_dl_coverage))
                     if first_fold_idx_with_dl_coverage is None and fold_dl_coverage > 0.0:
                         first_fold_idx_with_dl_coverage = int(i)
-                    print(
-                        f"  [WALKFORWARD DL] fold={i} detected_dl_cols={sorted(global_dl_numeric_cols)} "
-                        f"feature_cols_includes_dl={all(c in feature_cols for c in global_dl_numeric_cols)} "
-                        f"train_raw_shape={X_train_raw.shape} "
-                        f"train_dl_non_null_counts={fold_dl_non_null_counts} "
-                        f"train_dl_coverage_pct={fold_dl_coverage:.2f}"
-                    )
-                    if fold_dl_coverage < self.min_dl_coverage_pct:
+                    if _DIAGNOSTICS_VERBOSE:
                         print(
-                            f"  [WALKFORWARD DL] fold={i} retrain_skipped_due_to_low_dl_coverage "
-                            f"train_dl_coverage_pct={fold_dl_coverage:.2f} "
-                            f"threshold={self.min_dl_coverage_pct:.2f}"
+                            f"  [WALKFORWARD DL] fold={i} detected_dl_cols={sorted(global_dl_numeric_cols)} "
+                            f"feature_cols_includes_dl={all(c in feature_cols for c in global_dl_numeric_cols)} "
+                            f"train_raw_shape={X_train_raw.shape} "
+                            f"train_dl_non_null_counts={fold_dl_non_null_counts} "
+                            f"train_dl_coverage_pct={fold_dl_coverage:.2f}"
                         )
+                    if fold_dl_coverage < self.min_dl_coverage_pct:
+                        if _DIAGNOSTICS_VERBOSE:
+                            print(
+                                f"  [WALKFORWARD DL] fold={i} retrain_skipped_due_to_low_dl_coverage "
+                                f"train_dl_coverage_pct={fold_dl_coverage:.2f} "
+                                f"threshold={self.min_dl_coverage_pct:.2f}"
+                            )
                         last_trained = i
                         continue
 
@@ -652,10 +659,11 @@ class PhaseMLPredictor:
                     add_optional_missing_indicators=self.missing_indicators_enabled,
                     awareness_diagnostics_seen=self._awareness_diagnostics_seen,
                 )
-                print(
-                    f"  [WALKFORWARD DL] fold={i} train_matrix_shape={X_train_raw.shape} "
-                    f"y_shape={(len(y_train),)} dl_coverage_pct={train_diag.get('dl_coverage_pct', 0.0):.2f}"
-                )
+                if _DIAGNOSTICS_VERBOSE:
+                    print(
+                        f"  [WALKFORWARD DL] fold={i} train_matrix_shape={X_train_raw.shape} "
+                        f"y_shape={(len(y_train),)} dl_coverage_pct={train_diag.get('dl_coverage_pct', 0.0):.2f}"
+                    )
 
                 if len(X_train_raw) < 50:
                     last_trained = i
@@ -733,11 +741,12 @@ class PhaseMLPredictor:
                         .any(axis=1)
                         .mean() * 100.0
                     ) if len(X_pred_raw) else 0.0
-                    print(
-                        f"  [WALKFORWARD DL] fold={i} test_matrix_shape={X_pred_raw.shape} "
-                        f"test_dl_non_null_counts={pred_dl_non_null_counts} "
-                        f"test_dl_coverage_pct={pred_dl_coverage:.2f}"
-                    )
+                    if _DIAGNOSTICS_VERBOSE:
+                        print(
+                            f"  [WALKFORWARD DL] fold={i} test_matrix_shape={X_pred_raw.shape} "
+                            f"test_dl_non_null_counts={pred_dl_non_null_counts} "
+                            f"test_dl_coverage_pct={pred_dl_coverage:.2f}"
+                        )
 
                 X_pred = pd.DataFrame(
                     scaler.transform(X_pred_raw),
@@ -762,31 +771,35 @@ class PhaseMLPredictor:
                 max_cov = float(np.max(coverage_arr))
                 p25_cov = float(np.percentile(coverage_arr, 25))
                 p75_cov = float(np.percentile(coverage_arr, 75))
-                print(
-                    "  [WALKFORWARD DL SUMMARY] "
-                    f"train_coverage_retrain_attempt_folds={len(dl_train_coverage_values)} "
-                    f"retrain_attempts_with_dl_coverage_gt_0={retrain_attempts_with_nonzero_dl_coverage} "
-                    f"first_fold_idx_with_dl_coverage={first_fold_idx_with_dl_coverage} "
-                    f"median_dl_coverage_pct={median_cov:.2f} "
-                    f"max_dl_coverage_pct={max_cov:.2f} "
-                    f"p25_dl_coverage_pct={p25_cov:.2f} "
-                    f"p75_dl_coverage_pct={p75_cov:.2f}"
-                )
+                if _DIAGNOSTICS_VERBOSE:
+                    print(
+                        "  [WALKFORWARD DL SUMMARY] "
+                        f"train_coverage_retrain_attempt_folds={len(dl_train_coverage_values)} "
+                        f"retrain_attempts_with_dl_coverage_gt_0={retrain_attempts_with_nonzero_dl_coverage} "
+                        f"first_fold_idx_with_dl_coverage={first_fold_idx_with_dl_coverage} "
+                        f"median_dl_coverage_pct={median_cov:.2f} "
+                        f"max_dl_coverage_pct={max_cov:.2f} "
+                        f"p25_dl_coverage_pct={p25_cov:.2f} "
+                        f"p75_dl_coverage_pct={p75_cov:.2f}"
+                    )
                 if retrain_attempts_with_nonzero_dl_coverage == 0:
-                    print(
-                        "  [WALKFORWARD DL SUMMARY] No fold achieved nonzero "
-                        "train_dl_coverage_pct; verify DL data availability in dataset."
-                    )
+                    if _DIAGNOSTICS_VERBOSE:
+                        print(
+                            "  [WALKFORWARD DL SUMMARY] No fold achieved nonzero "
+                            "train_dl_coverage_pct; verify DL data availability in dataset."
+                        )
                 else:
-                    print(
-                        f"  [WALKFORWARD DL SUMMARY] Folds achieve nonzero "
-                        f"train_dl_coverage_pct starting at fold={first_fold_idx_with_dl_coverage}."
-                    )
+                    if _DIAGNOSTICS_VERBOSE:
+                        print(
+                            f"  [WALKFORWARD DL SUMMARY] Folds achieve nonzero "
+                            f"train_dl_coverage_pct starting at fold={first_fold_idx_with_dl_coverage}."
+                        )
             else:
-                print(
-                    "  [WALKFORWARD DL SUMMARY] No training folds executed under DL-aware "
-                    "start logic; verify dataset length vs train_window."
-                )
+                if _DIAGNOSTICS_VERBOSE:
+                    print(
+                        "  [WALKFORWARD DL SUMMARY] No training folds executed under DL-aware "
+                        "start logic; verify dataset length vs train_window."
+                    )
 
         return predictions
 
