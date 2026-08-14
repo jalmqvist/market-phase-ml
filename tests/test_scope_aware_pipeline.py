@@ -347,6 +347,103 @@ class TestFullUniverseOrchestrationGate(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Production walk-forward execution plan
+# ---------------------------------------------------------------------------
+
+class TestWalkforwardExecutionPlan(unittest.TestCase):
+    """Verify that walk-forward execution is driven by the effective scope."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib
+        cls._main = importlib.import_module("main")
+        cls._registry = get_default_strategy_registry()
+
+    def test_explicit_tf1_runs_only_tf1(self):
+        plan = self._main._build_walkforward_execution_plan(
+            _explicit_scope("TF1"),
+            strategy_registry=self._registry,
+        )
+        self.assertEqual(plan["standalone_strategy_ids"], ("TF1",))
+        self.assertFalse(plan["run_phaseaware"])
+        self.assertFalse(plan["run_dynamic_selector"])
+        self.assertEqual(
+            [spec["strategy_id"] for spec in plan["strategy_specs"]],
+            ["TF1"],
+        )
+
+    def test_explicit_mr1_runs_only_mr1(self):
+        plan = self._main._build_walkforward_execution_plan(
+            _explicit_scope("MR1"),
+            strategy_registry=self._registry,
+        )
+        self.assertEqual(plan["standalone_strategy_ids"], ("MR1",))
+        self.assertFalse(plan["run_phaseaware"])
+        self.assertFalse(plan["run_dynamic_selector"])
+        self.assertEqual(
+            [spec["strategy_id"] for spec in plan["strategy_specs"]],
+            ["MR1"],
+        )
+
+    def test_explicit_tf1_mr1_runs_both_without_composites(self):
+        plan = self._main._build_walkforward_execution_plan(
+            _explicit_scope("TF1", "MR1"),
+            strategy_registry=self._registry,
+        )
+        self.assertEqual(plan["standalone_strategy_ids"], ("TF1", "MR1"))
+        self.assertFalse(plan["run_phaseaware"])
+        self.assertFalse(plan["run_dynamic_selector"])
+        self.assertEqual(
+            {spec["strategy_id"] for spec in plan["strategy_specs"]},
+            {"TF1", "MR1"},
+        )
+
+    def test_explicit_tf4_alone_excludes_composites(self):
+        plan = self._main._build_walkforward_execution_plan(
+            _explicit_scope("TF4"),
+            strategy_registry=self._registry,
+        )
+        self.assertEqual(plan["standalone_strategy_ids"], ("TF4",))
+        self.assertFalse(plan["run_phaseaware"])
+        self.assertFalse(plan["run_dynamic_selector"])
+
+    def test_explicit_mr42_alone_excludes_composites(self):
+        plan = self._main._build_walkforward_execution_plan(
+            _explicit_scope("MR42"),
+            strategy_registry=self._registry,
+        )
+        self.assertEqual(plan["standalone_strategy_ids"], ("MR42",))
+        self.assertFalse(plan["run_phaseaware"])
+        self.assertFalse(plan["run_dynamic_selector"])
+
+    def test_explicit_tf4_mr42_includes_canonical_composites(self):
+        plan = self._main._build_walkforward_execution_plan(
+            _explicit_scope("TF4", "MR42"),
+            strategy_registry=self._registry,
+        )
+        self.assertEqual(plan["standalone_strategy_ids"], ("TF4", "MR42"))
+        self.assertTrue(plan["run_phaseaware"])
+        self.assertTrue(plan["run_dynamic_selector"])
+        self.assertEqual(
+            {spec["strategy_id"] for spec in plan["strategy_specs"]},
+            {"TF4", "MR42", "PhaseAware_TF4_MR42", "StrategySelector_Dynamic_WF"},
+        )
+
+    def test_default_scope_preserves_two_spec_benchmark(self):
+        plan = self._main._build_walkforward_execution_plan(
+            _default_scope(),
+            strategy_registry=self._registry,
+        )
+        self.assertEqual(plan["standalone_strategy_ids"], ())
+        self.assertTrue(plan["run_phaseaware"])
+        self.assertTrue(plan["run_dynamic_selector"])
+        self.assertEqual(
+            [spec["strategy_id"] for spec in plan["strategy_specs"]],
+            ["PhaseAware_TF4_MR42", "StrategySelector_Dynamic_WF"],
+        )
+
+
+# ---------------------------------------------------------------------------
 # Debug flag reversibility
 # ---------------------------------------------------------------------------
 
@@ -414,6 +511,74 @@ class TestDebugFlagReversibility(unittest.TestCase):
         self._main._configure_debug(False)
         self.assertFalse(self._main.DL_DEBUG_VERBOSE)
         self.assertFalse(self._models._DIAGNOSTICS_VERBOSE)
+
+
+class TestWalkforwardDebugOutputGates(unittest.TestCase):
+    """Verify `[WALKFORWARD DL]` and `[PHASE WF WINDOW]` use the shared debug gate."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib
+        cls._models = importlib.import_module("src.models")
+
+    def _make_df(self):
+        import numpy as np
+        import pandas as pd
+
+        rows = 12
+        idx = pd.date_range("2024-01-01", periods=rows, freq="D")
+        phases = ["HV_Ranging", "HV_Trend", "LV_Ranging", "LV_Trend"] * 3
+        return pd.DataFrame(
+            {
+                "Close": np.linspace(1.0, 2.1, rows),
+                "feature_a": np.linspace(10.0, 21.0, rows),
+                "dl_demo_feature": np.linspace(0.1, 1.2, rows),
+                "phase": phases[:rows],
+            },
+            index=idx,
+        )
+
+    def _run_predictor(self, verbose: bool) -> str:
+        class _DummyModel:
+            def fit(self, X, y):
+                return self
+
+            def predict(self, X):
+                import numpy as np
+                return np.zeros(len(X), dtype=int)
+
+        self._models.set_diagnostics_verbose(verbose)
+        predictor = self._models.PhaseMLPredictor(
+            train_window=4,
+            retrain_freq=1,
+            smooth_labels=False,
+            seed=7,
+            missing_indicators_enabled=False,
+        )
+        predictor._build_model = lambda: _DummyModel()
+        captured = io.StringIO()
+        with patch("sys.stdout", captured):
+            predictor.fit_predict(self._make_df())
+        return captured.getvalue()
+
+    def tearDown(self):
+        self._models.set_diagnostics_verbose(True)
+
+    def test_walkforward_dl_suppressed_when_debug_false(self):
+        output = self._run_predictor(False)
+        self.assertNotIn("[WALKFORWARD DL]", output)
+
+    def test_walkforward_dl_emitted_when_debug_true(self):
+        output = self._run_predictor(True)
+        self.assertIn("[WALKFORWARD DL]", output)
+
+    def test_phase_wf_window_suppressed_when_debug_false(self):
+        output = self._run_predictor(False)
+        self.assertNotIn("[PHASE WF WINDOW]", output)
+
+    def test_phase_wf_window_emitted_when_debug_true(self):
+        output = self._run_predictor(True)
+        self.assertIn("[PHASE WF WINDOW]", output)
 
 
 if __name__ == "__main__":

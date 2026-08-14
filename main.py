@@ -57,7 +57,6 @@ from src.strategy_registry import (
 )
 from src.evaluation_scope import (
     EvaluationScope,
-    compute_standalone_execution_flags,
     filter_strategy_specs,
     resolve_evaluation_scope,
     should_run_full_universe_backtests,
@@ -1344,6 +1343,158 @@ def _run_baseline_bt(df_test: pd.DataFrame, pip_value: float) -> dict:
         pa_sl,
         pa_tp,
     )
+
+
+def _build_walkforward_default_strategy_specs(
+    *,
+    policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
+) -> list[dict]:
+    """Return the legacy composite-only benchmark spec set."""
+    scope_tf, scope_mr = resolve_phaseaware_strategy_pair(policy_id)
+    policy_scope_ids = (scope_tf, scope_mr)
+    return [
+        {
+            "strategy_id": phaseaware_strategy_name(policy_id),
+            "scope_strategy_ids": policy_scope_ids,
+            "expected_return_col": "Baseline Return (%)",
+            "expected_sharpe_col": "Baseline Sharpe",
+            "expected_drawdown_col": "Baseline Max DD (%)",
+            "n_trades_col": "Baseline Trades",
+            "confidence_col": None,
+            "strategy_role": "baseline",
+        },
+        {
+            "strategy_id": "StrategySelector_Dynamic_WF",
+            "scope_strategy_ids": policy_scope_ids,
+            "expected_return_col": "Dynamic Return (%)",
+            "expected_sharpe_col": "Dynamic Sharpe",
+            "expected_drawdown_col": "Dynamic Max DD (%)",
+            "n_trades_col": "Dynamic Trades",
+            "confidence_col": "Confident Bars (%)",
+            "strategy_role": "dynamic_selector",
+        },
+    ]
+
+
+def _build_walkforward_strategy_specs(
+    scope: EvaluationScope,
+    *,
+    strategy_registry=None,
+    policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
+) -> list[dict]:
+    """Return the StrategyEvaluation spec set for the active walk-forward scope."""
+    strategy_registry = strategy_registry or get_default_strategy_registry()
+    default_specs = _build_walkforward_default_strategy_specs(policy_id=policy_id)
+    if scope.source == "default":
+        return default_specs
+
+    standalone_specs = []
+    for strategy_id in scope.strategy_ids:
+        strategy_registry.get(strategy_id)
+        standalone_specs.append(
+            {
+                "strategy_id": strategy_id,
+                "scope_strategy_ids": (strategy_id,),
+                "expected_return_col": f"{strategy_id} Return (%)",
+                "expected_sharpe_col": f"{strategy_id} Sharpe",
+                "expected_drawdown_col": f"{strategy_id} Max DD (%)",
+                "n_trades_col": f"{strategy_id} Trades",
+                "confidence_col": None,
+                "strategy_role": "standalone_strategy",
+            }
+        )
+    return filter_strategy_specs(standalone_specs + default_specs, scope)
+
+
+def _build_walkforward_execution_plan(
+    scope: EvaluationScope,
+    *,
+    strategy_registry=None,
+    policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
+) -> dict:
+    """Resolve which walk-forward components actually execute for this scope."""
+    strategy_specs = _build_walkforward_strategy_specs(
+        scope,
+        strategy_registry=strategy_registry,
+        policy_id=policy_id,
+    )
+    composite_strategy_id = phaseaware_strategy_name(policy_id)
+    standalone_strategy_ids = tuple(
+        spec["strategy_id"]
+        for spec in strategy_specs
+        if spec["strategy_role"] == "standalone_strategy"
+    )
+    return {
+        "strategy_specs": strategy_specs,
+        "standalone_strategy_ids": standalone_strategy_ids,
+        "run_phaseaware": any(
+            spec["strategy_id"] == composite_strategy_id
+            for spec in strategy_specs
+        ),
+        "run_dynamic_selector": any(
+            spec["strategy_id"] == "StrategySelector_Dynamic_WF"
+            for spec in strategy_specs
+        ),
+    }
+
+
+def _run_registry_strategy_backtest(
+    *,
+    df: pd.DataFrame,
+    backtester: BT,
+    strategy_id: str,
+    strategy_registry=None,
+) -> dict:
+    """Instantiate a registry strategy and backtest it on *df*."""
+    strategy_registry = strategy_registry or get_default_strategy_registry()
+    strategy = strategy_registry.get(strategy_id).instantiate()
+    signals, sl_pct, tp_pct = strategy.generate_signals(df)
+    return backtester.run(df, signals, strategy_id, sl_pct, tp_pct)
+
+
+def _build_selector_reference_results(
+    *,
+    df_full: pd.DataFrame,
+    pair_name: str,
+    strategy_registry=None,
+    policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
+) -> dict:
+    """Build the minimal full-history results needed for selector labels."""
+    strategy_registry = strategy_registry or get_default_strategy_registry()
+    pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
+    backtester = BT(
+        initial_capital=INITIAL_CAPITAL,
+        spread_pips=SPREAD_PIPS,
+        slippage_pips=SLIPPAGE_PIPS,
+        commission_per_trade=COMMISSION_PER_TRADE,
+        pip_value=pip_value,
+        use_atr_sizing=False,
+    )
+    baseline_tf, baseline_mr = resolve_phaseaware_strategy_pair(policy_id)
+    results = {
+        baseline_tf: _run_registry_strategy_backtest(
+            df=df_full,
+            backtester=backtester,
+            strategy_id=baseline_tf,
+            strategy_registry=strategy_registry,
+        ),
+        baseline_mr: _run_registry_strategy_backtest(
+            df=df_full,
+            backtester=backtester,
+            strategy_id=baseline_mr,
+            strategy_registry=strategy_registry,
+        ),
+    }
+    pa = PhaseAwareStrategy(baseline_tf, baseline_mr)
+    pa_signals, pa_sl, pa_tp = pa.generate_signals(df_full)
+    results[phaseaware_strategy_name(policy_id)] = backtester.run(
+        df_full,
+        pa_signals,
+        phaseaware_strategy_name(policy_id),
+        pa_sl,
+        pa_tp,
+    )
+    return results
 
 
 def _build_causal_selector_training_data(
@@ -2743,6 +2894,18 @@ def main(
     if RUN_WALKFORWARD:
         print("\n[4f/5] Walk-forward evaluation (out-of-sample)...")
 
+        _wf_strategy_registry = get_default_strategy_registry()
+        _wf_execution_plan = _build_walkforward_execution_plan(
+            _effective_scope,
+            strategy_registry=_wf_strategy_registry,
+            policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+        )
+        _wf_run_phaseaware = bool(_wf_execution_plan["run_phaseaware"])
+        _wf_run_dynamic = bool(_wf_execution_plan["run_dynamic_selector"])
+        _wf_standalone_strategy_ids = tuple(
+            _wf_execution_plan["standalone_strategy_ids"]
+        )
+
         walkforward_rows = []
         vol_diag_rows = []
         _timeline_rows: list[dict] = []  # accumulates per-bar selector state (if enabled)
@@ -2751,10 +2914,20 @@ def main(
             df_full = processed_data[pair_name]
             print(f"\n  --- {pair_name} ---")
 
-            pair_results_full = hardcoded_results.get(pair_name, {})
-            if not pair_results_full:
-                print("    ✗ Missing hardcoded_results for pair; skipping")
-                continue
+            pair_results_full: dict = {}
+            if _wf_run_dynamic:
+                if _run_full_universe:
+                    pair_results_full = hardcoded_results.get(pair_name, {})
+                else:
+                    pair_results_full = _build_selector_reference_results(
+                        df_full=df_full,
+                        pair_name=pair_name,
+                        strategy_registry=_wf_strategy_registry,
+                        policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                    )
+                if not pair_results_full:
+                    print("    ✗ Missing selector reference results; skipping")
+                    continue
 
             folds = generate_walkforward_folds_by_pos(
                 df_full.index,
@@ -2783,73 +2956,9 @@ def main(
                     f"    [WF FOLD] pair={pair_name} fold={fold_id}",
                     **fold_window_diag,
                 )
-                training_data, selector_window_diag = _build_causal_selector_training_data(
-                    pair_name=pair_name,
-                    fold_id=fold_id,
-                    df_full=df_full,
-                    pair_results_full=pair_results_full,
-                    train_start_pos=train_start_pos,
-                    train_end_pos=train_end_pos,
-                    test_start_pos=test_start_pos,
-                    test_end_pos=test_end_pos,
-                    label_horizon_bars=LABEL_HORIZON_BARS,
-                    context_label="walkforward",
-                )
-
-                if len(training_data) < 200:
-                    print(f"    fold {fold_id}: ✗ too few training rows ({len(training_data)}); skipping")
-                    continue
-
-                # --- Train selector on this fold ---
-                selector = StrategySelector(
-                    seed=run_cfg.seed,
-                    missing_indicators_enabled=missing_indicators_enabled,
-                )
-                selector.train(
-                    training_data,
-                    do_cv=False,
-                    diagnostics_label=f"walkforward fold={fold_id} pair={pair_name}",
-                )  # outer WF is evaluation
-
-                # --- Test slice ---
                 df_test = df_full.iloc[test_start_pos:test_end_pos + 1].copy()
                 if len(df_test) < 50:
                     continue
-
-                # ---- Volatility guard (compute ONCE per fold; no leakage; bar-level scale) ----
-                df_train_bars = df_full.iloc[train_start_pos:train_end_pos + 1].copy()
-                vol_thr = _compute_vol_threshold(df_train_bars)
-                vol_threshold_by_pair = {pair_name: vol_thr} if vol_thr is not None else {}
-
-                if DEBUG_VOL_GUARD and vol_thr is not None and VOL_FEATURE in df_test.columns:
-                    s_train = df_train_bars[VOL_FEATURE].dropna()
-                    s_test = df_test[VOL_FEATURE].dropna()
-                    if len(s_test) and len(s_train):
-                        print(
-                            f"    [vol-guard] {pair_name} fold={fold_id} "
-                            f"train min/med/max="
-                            f"{float(s_train.min()):.6f}/{float(s_train.median()):.6f}/{float(s_train.max()):.6f} | "
-                            f"test min/med/max="
-                            f"{float(s_test.min()):.6f}/{float(s_test.median()):.6f}/{float(s_test.max()):.6f} | "
-                            f"thr(q={VOL_GUARD_Q:.2f})={vol_thr:.6f} frac>thr={float((s_test >= vol_thr).mean()):.3f}"
-                        )
-
-                # Dynamic selector strategy (per-fold)
-                tf_strats, mr_strats = _make_strategy_dicts()
-                dynamic_strategy = StrategySelector_Dynamic(
-                    selector_trained={pair_name: selector},
-                    tf_strategies=tf_strats,
-                    mr_strategies=mr_strats,
-                    evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
-                    tau_enter=WF_TAU,
-                    tau_exit=max(0.0, WF_TAU - 0.05),
-                    dl_debug_verbose=DL_DEBUG_VERBOSE,
-                    **DYNAMIC_POLICY_KWARGS,
-                    use_vol_guard=USE_VOL_GUARD,
-                    vol_feature=VOL_FEATURE,
-                    vol_threshold_by_pair=vol_threshold_by_pair,
-                    vol_guard_mode=VOL_GUARD_MODE,
-                )
                 pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
                 backtester = BT(
                     initial_capital=INITIAL_CAPITAL,
@@ -2859,13 +2968,91 @@ def main(
                     pip_value=pip_value,
                     use_atr_sizing=False,
                 )
-                dyn_signals, dyn_sl, dyn_tp, selected_s = dynamic_strategy.generate_signals(
-                    df_test, pair_name, return_selected=True
-                )
-                dyn_res = backtester.run(df_test, dyn_signals, 'StrategySelector_Dynamic_WF', dyn_sl, dyn_tp)
+                training_data = pd.DataFrame()
+                selector_window_diag: dict = {}
+                vol_thr = np.nan
+                dyn_res: dict = {}
+                dyn_signals = pd.Series(dtype=float)
+                selected_s = pd.Series(dtype="object")
+
+                if _wf_run_dynamic:
+                    training_data, selector_window_diag = _build_causal_selector_training_data(
+                        pair_name=pair_name,
+                        fold_id=fold_id,
+                        df_full=df_full,
+                        pair_results_full=pair_results_full,
+                        train_start_pos=train_start_pos,
+                        train_end_pos=train_end_pos,
+                        test_start_pos=test_start_pos,
+                        test_end_pos=test_end_pos,
+                        label_horizon_bars=LABEL_HORIZON_BARS,
+                        context_label="walkforward",
+                    )
+
+                    if len(training_data) < 200:
+                        print(
+                            f"    fold {fold_id}: ✗ too few training rows ({len(training_data)}); skipping"
+                        )
+                        continue
+
+                    selector = StrategySelector(
+                        seed=run_cfg.seed,
+                        missing_indicators_enabled=missing_indicators_enabled,
+                    )
+                    selector.train(
+                        training_data,
+                        do_cv=False,
+                        diagnostics_label=f"walkforward fold={fold_id} pair={pair_name}",
+                    )  # outer WF is evaluation
+
+                    df_train_bars = df_full.iloc[train_start_pos:train_end_pos + 1].copy()
+                    _vol_thr = _compute_vol_threshold(df_train_bars)
+                    vol_thr = _vol_thr if _vol_thr is not None else np.nan
+                    vol_threshold_by_pair = (
+                        {pair_name: _vol_thr} if _vol_thr is not None else {}
+                    )
+
+                    if DEBUG_VOL_GUARD and _vol_thr is not None and VOL_FEATURE in df_test.columns:
+                        s_train = df_train_bars[VOL_FEATURE].dropna()
+                        s_test = df_test[VOL_FEATURE].dropna()
+                        if len(s_test) and len(s_train):
+                            print(
+                                f"    [vol-guard] {pair_name} fold={fold_id} "
+                                f"train min/med/max="
+                                f"{float(s_train.min()):.6f}/{float(s_train.median()):.6f}/{float(s_train.max()):.6f} | "
+                                f"test min/med/max="
+                                f"{float(s_test.min()):.6f}/{float(s_test.median()):.6f}/{float(s_test.max()):.6f} | "
+                                f"thr(q={VOL_GUARD_Q:.2f})={_vol_thr:.6f} frac>thr={float((s_test >= _vol_thr).mean()):.3f}"
+                            )
+
+                    tf_strats, mr_strats = _make_strategy_dicts()
+                    dynamic_strategy = StrategySelector_Dynamic(
+                        selector_trained={pair_name: selector},
+                        tf_strategies=tf_strats,
+                        mr_strategies=mr_strats,
+                        evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                        tau_enter=WF_TAU,
+                        tau_exit=max(0.0, WF_TAU - 0.05),
+                        dl_debug_verbose=DL_DEBUG_VERBOSE,
+                        **DYNAMIC_POLICY_KWARGS,
+                        use_vol_guard=USE_VOL_GUARD,
+                        vol_feature=VOL_FEATURE,
+                        vol_threshold_by_pair=vol_threshold_by_pair,
+                        vol_guard_mode=VOL_GUARD_MODE,
+                    )
+                    dyn_signals, dyn_sl, dyn_tp, selected_s = dynamic_strategy.generate_signals(
+                        df_test, pair_name, return_selected=True
+                    )
+                    dyn_res = backtester.run(
+                        df_test,
+                        dyn_signals,
+                        'StrategySelector_Dynamic_WF',
+                        dyn_sl,
+                        dyn_tp,
+                    )
 
                 # --- Optional: save selected strategy series for plotting (small whitelist) ---
-                if DEBUG_SAVE_SELECTED_SERIES and (pair_name in DEBUG_SELECTED_PAIRS):
+                if _wf_run_dynamic and DEBUG_SAVE_SELECTED_SERIES and (pair_name in DEBUG_SELECTED_PAIRS):
                     # count folds saved for this pair
                     if "saved_selected_folds" not in locals():
                         saved_selected_folds = {}  # type: ignore[var-annotated]
@@ -2901,39 +3088,37 @@ def main(
 
                         saved_selected_folds[pair_name] += 1
 
-                # Baseline on same test slice
-                baseline_tf, baseline_mr = resolve_phaseaware_strategy_pair()
-                pa = PhaseAwareStrategy(baseline_tf, baseline_mr)
-                pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
-                base_res = backtester.run(
-                    df_test,
-                    pa_signals,
-                    f"{phaseaware_strategy_name()}_WF",
-                    pa_sl,
-                    pa_tp,
-                )
+                base_res: dict = {}
+                if _wf_run_phaseaware:
+                    baseline_tf, baseline_mr = resolve_phaseaware_strategy_pair(
+                        DEFAULT_PHASEAWARE_POLICY_ID
+                    )
+                    pa = PhaseAwareStrategy(baseline_tf, baseline_mr)
+                    pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
+                    base_res = backtester.run(
+                        df_test,
+                        pa_signals,
+                        f"{phaseaware_strategy_name()}_WF",
+                        pa_sl,
+                        pa_tp,
+                    )
 
-                # G3: run standalone backtests only for the strategies that are
-                # explicitly in scope.  Default runs skip both to preserve the
-                # pre-G3 baseline walk-forward output.
-                tf_res: dict = {}
-                mr_res: dict = {}
-                _run_tf, _run_mr = compute_standalone_execution_flags(
-                    _effective_scope, baseline_tf, baseline_mr
-                )
-                if _run_tf or _run_mr:
-                    _strategy_registry = get_default_strategy_registry()
-                if _run_tf:
-                    _tf_inst = _strategy_registry.get(baseline_tf).instantiate()
-                    _tf_signals, _tf_sl, _tf_tp = _tf_inst.generate_signals(df_test)
-                    tf_res = backtester.run(df_test, _tf_signals, baseline_tf, _tf_sl, _tf_tp)
-                if _run_mr:
-                    _mr_inst = _strategy_registry.get(baseline_mr).instantiate()
-                    _mr_signals, _mr_sl, _mr_tp = _mr_inst.generate_signals(df_test)
-                    mr_res = backtester.run(df_test, _mr_signals, baseline_mr, _mr_sl, _mr_tp)
+                standalone_results = {}
+                for strategy_id in _wf_standalone_strategy_ids:
+                    standalone_results[strategy_id] = _run_registry_strategy_backtest(
+                        df=df_test,
+                        backtester=backtester,
+                        strategy_id=strategy_id,
+                        strategy_registry=_wf_strategy_registry,
+                    )
 
                 # --- Optional: save equity curves + spike masks for plotting (small whitelist) ---
-                if DEBUG_SAVE_EQUITY_SERIES and (pair_name in DEBUG_SELECTED_PAIRS):
+                if (
+                    _wf_run_dynamic
+                    and _wf_run_phaseaware
+                    and DEBUG_SAVE_EQUITY_SERIES
+                    and (pair_name in DEBUG_SELECTED_PAIRS)
+                ):
                     # count folds saved for this pair
                     if "saved_equity_folds" not in locals():
                         saved_equity_folds = {}  # type: ignore[var-annotated]
@@ -3024,46 +3209,49 @@ def main(
                     f"{_test_start_date.date().isoformat()}/{_test_end_date.date().isoformat()}"
                 )
 
-                # --- diagnostics computed BEFORE appending rows ---
-                vol_diag = compute_vol_guard_diagnostics(
-                    pair_name=pair_name,
-                    fold_id=fold_id,
-                    df_test=df_test,
-                    selected_s=selected_s,
-                    vol_feature=VOL_FEATURE,
-                    vol_thr=vol_thr,
-                    near_mult=VOL_GUARD_NEAR_MULT,
-                    majors=loaded_majors,
-                    tau=WF_TAU,
-                    tag="wf",
-                )
-                vol_diag_rows.append(vol_diag)
+                if _wf_run_dynamic:
+                    vol_diag = compute_vol_guard_diagnostics(
+                        pair_name=pair_name,
+                        fold_id=fold_id,
+                        df_test=df_test,
+                        selected_s=selected_s,
+                        vol_feature=VOL_FEATURE,
+                        vol_thr=vol_thr,
+                        near_mult=VOL_GUARD_NEAR_MULT,
+                        majors=loaded_majors,
+                        tau=WF_TAU,
+                        tag="wf",
+                    )
+                    vol_diag_rows.append(vol_diag)
 
-                # --- optional per-bar selector state timeline accumulation ---
-                if EXPORT_SELECTOR_STATE_TIMELINE:
-                    _prev_strategy: str | None = None
-                    for _ti, _ts in enumerate(df_test.index):
-                        _strat = selected_s.iloc[_ti]
-                        _bar_dl_active = (
-                            bool(df_test[_dl_cols_fold].iloc[_ti].notna().any())
-                            if _dl_cols_fold else False
-                        )
-                        _switch_event = (_prev_strategy is not None and _strat != _prev_strategy)
-                        _timeline_rows.append({
-                            "timestamp": _ts.isoformat(),
-                            "pair": pair_name,
-                            "fold": fold_id,
-                            "selected_strategy": _strat,
-                            "dl_available": _bar_dl_active,
-                            "dl_overlap_pct": round(_dl_overlap_pct, 4),
-                            "dl_overlap_state": _dl_overlap_state,
-                            "switch_event": _switch_event,
-                            "previous_strategy": _prev_strategy if _prev_strategy is not None else "",
-                        })
-                        _prev_strategy = _strat
+                    if EXPORT_SELECTOR_STATE_TIMELINE:
+                        _prev_strategy: str | None = None
+                        for _ti, _ts in enumerate(df_test.index):
+                            _strat = selected_s.iloc[_ti]
+                            _bar_dl_active = (
+                                bool(df_test[_dl_cols_fold].iloc[_ti].notna().any())
+                                if _dl_cols_fold else False
+                            )
+                            _switch_event = (
+                                _prev_strategy is not None and _strat != _prev_strategy
+                            )
+                            _timeline_rows.append({
+                                "timestamp": _ts.isoformat(),
+                                "pair": pair_name,
+                                "fold": fold_id,
+                                "selected_strategy": _strat,
+                                "dl_available": _bar_dl_active,
+                                "dl_overlap_pct": round(_dl_overlap_pct, 4),
+                                "dl_overlap_state": _dl_overlap_state,
+                                "switch_event": _switch_event,
+                                "previous_strategy": _prev_strategy if _prev_strategy is not None else "",
+                            })
+                            _prev_strategy = _strat
+                else:
+                    vol_diag = {}
 
                 selector_train_end_ts = selector_window_diag.get("selector_train_end_ts")
-                walkforward_rows.append({
+                row = {
                     "Pair": pair_name,
                     "Fold": fold_id,
                     "Train Start": f["train_start_dt"],
@@ -3084,19 +3272,31 @@ def main(
 
                     "Baseline Return (%)": base_res.get("total_return", np.nan),
                     "Dynamic Return (%)": dyn_res.get("total_return", np.nan),
-                    "Return Δ": dyn_res.get("total_return", np.nan) - base_res.get("total_return", np.nan),
+                    "Return Δ": (
+                        dyn_res.get("total_return", np.nan) - base_res.get("total_return", np.nan)
+                        if dyn_res and base_res else np.nan
+                    ),
 
                     "Baseline Sharpe": base_res.get("sharpe_ratio", np.nan),
                     "Dynamic Sharpe": dyn_res.get("sharpe_ratio", np.nan),
-                    "Sharpe Δ": dyn_res.get("sharpe_ratio", np.nan) - base_res.get("sharpe_ratio", np.nan),
+                    "Sharpe Δ": (
+                        dyn_res.get("sharpe_ratio", np.nan) - base_res.get("sharpe_ratio", np.nan)
+                        if dyn_res and base_res else np.nan
+                    ),
 
                     "Baseline Max DD (%)": base_res.get("max_drawdown", np.nan),
                     "Dynamic Max DD (%)": dyn_res.get("max_drawdown", np.nan),
-                    "DD Δ": dyn_res.get("max_drawdown", np.nan) - base_res.get("max_drawdown", np.nan),
+                    "DD Δ": (
+                        dyn_res.get("max_drawdown", np.nan) - base_res.get("max_drawdown", np.nan)
+                        if dyn_res and base_res else np.nan
+                    ),
 
                     "Baseline Trades": base_res.get("n_trades", np.nan),
                     "Dynamic Trades": dyn_res.get("n_trades", np.nan),
-                    "Trades Δ": dyn_res.get("n_trades", np.nan) - base_res.get("n_trades", np.nan),
+                    "Trades Δ": (
+                        dyn_res.get("n_trades", np.nan) - base_res.get("n_trades", np.nan)
+                        if dyn_res and base_res else np.nan
+                    ),
 
                     # diagnostics
                     "vol_thr": vol_thr,
@@ -3118,27 +3318,31 @@ def main(
                     "dl_overlap_active": _dl_overlap_active,
                     "dl_overlap_state": _dl_overlap_state,
                     "dl_overlap_window": _dl_overlap_window,
-                })
-                # G3: append standalone TF/MR columns only for the strategies
-                # that were actually executed in this scope.
-                if _run_tf:
-                    walkforward_rows[-1].update({
-                        f"{baseline_tf} Return (%)": tf_res.get("total_return", np.nan),
-                        f"{baseline_tf} Sharpe": tf_res.get("sharpe_ratio", np.nan),
-                        f"{baseline_tf} Max DD (%)": tf_res.get("max_drawdown", np.nan),
-                        f"{baseline_tf} Trades": tf_res.get("n_trades", np.nan),
+                }
+                for strategy_id, strategy_res in standalone_results.items():
+                    row.update({
+                        f"{strategy_id} Return (%)": strategy_res.get("total_return", np.nan),
+                        f"{strategy_id} Sharpe": strategy_res.get("sharpe_ratio", np.nan),
+                        f"{strategy_id} Max DD (%)": strategy_res.get("max_drawdown", np.nan),
+                        f"{strategy_id} Trades": strategy_res.get("n_trades", np.nan),
                     })
-                if _run_mr:
-                    walkforward_rows[-1].update({
-                        f"{baseline_mr} Return (%)": mr_res.get("total_return", np.nan),
-                        f"{baseline_mr} Sharpe": mr_res.get("sharpe_ratio", np.nan),
-                        f"{baseline_mr} Max DD (%)": mr_res.get("max_drawdown", np.nan),
-                        f"{baseline_mr} Trades": mr_res.get("n_trades", np.nan),
-                    })
-                print(
-                    f"    fold {fold_id}: Sharpe base={base_res['sharpe_ratio']:+.3f} "
-                    f"dyn={dyn_res['sharpe_ratio']:+.3f} (Δ {dyn_res['sharpe_ratio'] - base_res['sharpe_ratio']:+.3f})"
-                )
+                walkforward_rows.append(row)
+                if dyn_res and base_res:
+                    print(
+                        f"    fold {fold_id}: Sharpe base={base_res['sharpe_ratio']:+.3f} "
+                        f"dyn={dyn_res['sharpe_ratio']:+.3f} "
+                        f"(Δ {dyn_res['sharpe_ratio'] - base_res['sharpe_ratio']:+.3f})"
+                    )
+                elif standalone_results:
+                    standalone_summary = " ".join(
+                        f"{strategy_id}={strategy_res.get('sharpe_ratio', np.nan):+.3f}"
+                        for strategy_id, strategy_res in sorted(standalone_results.items())
+                    )
+                    print(f"    fold {fold_id}: Sharpe {standalone_summary}")
+                elif base_res:
+                    print(
+                        f"    fold {fold_id}: Sharpe base={base_res.get('sharpe_ratio', np.nan):+.3f}"
+                    )
 
         wf_df = pd.DataFrame(walkforward_rows)
         if wf_df.empty:
@@ -3226,67 +3430,9 @@ def main(
             elif EXPORT_SELECTOR_STATE_TIMELINE:
                 print("  ⚠  selector_state_timeline: no bars collected (no folds completed).")
 
-        _scope_tf, _scope_mr = resolve_phaseaware_strategy_pair()
-        _policy_scope_ids = (_scope_tf, _scope_mr)
-        # Default benchmark spec set: the pre-G3 evaluation outputs (composite evaluations only).
-        # This is the canonical reference and must remain unchanged for default runs.
-        _default_benchmark_specs = [
-            {
-                "strategy_id": phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID),
-                "scope_strategy_ids": _policy_scope_ids,
-                "expected_return_col": "Baseline Return (%)",
-                "expected_sharpe_col": "Baseline Sharpe",
-                "expected_drawdown_col": "Baseline Max DD (%)",
-                "n_trades_col": "Baseline Trades",
-                "confidence_col": None,
-                "strategy_role": "baseline",
-            },
-            {
-                "strategy_id": "StrategySelector_Dynamic_WF",
-                "scope_strategy_ids": _policy_scope_ids,
-                "expected_return_col": "Dynamic Return (%)",
-                "expected_sharpe_col": "Dynamic Sharpe",
-                "expected_drawdown_col": "Dynamic Max DD (%)",
-                "n_trades_col": "Dynamic Trades",
-                "confidence_col": "Confident Bars (%)",
-                "strategy_role": "dynamic_selector",
-            },
-        ]
-        # Full spec set: adds standalone TF/MR evaluations for explicit --strategy selection.
-        # Only used for explicit runs; filter_strategy_specs selects compatible entries.
-        _all_strategy_specs = [
-            # Individual strategy specs — each requires only its own registry ID.
-            {
-                "strategy_id": _scope_tf,
-                "scope_strategy_ids": (_scope_tf,),
-                "expected_return_col": f"{_scope_tf} Return (%)",
-                "expected_sharpe_col": f"{_scope_tf} Sharpe",
-                "expected_drawdown_col": f"{_scope_tf} Max DD (%)",
-                "n_trades_col": f"{_scope_tf} Trades",
-                "confidence_col": None,
-                "strategy_role": "standalone_tf",
-            },
-            {
-                "strategy_id": _scope_mr,
-                "scope_strategy_ids": (_scope_mr,),
-                "expected_return_col": f"{_scope_mr} Return (%)",
-                "expected_sharpe_col": f"{_scope_mr} Sharpe",
-                "expected_drawdown_col": f"{_scope_mr} Max DD (%)",
-                "n_trades_col": f"{_scope_mr} Trades",
-                "confidence_col": None,
-                "strategy_role": "standalone_mr",
-            },
-            # Composite specs — require both TF and MR to be in scope.
-            *_default_benchmark_specs,
-        ]
-        if _effective_scope.source == "default":
-            # Default run: preserve the pre-G3 benchmark exactly — only composites.
-            strategy_specs = _default_benchmark_specs
-        else:
-            # Explicit run: filter all specs by the requested scope so that
-            # only specs whose scope_strategy_ids are fully satisfied are included.
-            strategy_specs = filter_strategy_specs(_all_strategy_specs, _effective_scope)
+        strategy_specs = list(_wf_execution_plan["strategy_specs"])
         if not strategy_specs:
+            _scope_tf, _scope_mr = resolve_phaseaware_strategy_pair()
             raise ValueError(
                 f"Configuration error: the selected evaluation scope "
                 f"{sorted(_effective_scope.strategy_ids)!r} does not match "
