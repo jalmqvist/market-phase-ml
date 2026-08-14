@@ -1437,6 +1437,77 @@ def _build_walkforward_execution_plan(
     }
 
 
+def _walkforward_uses_composite_aggregation(strategy_specs: list[dict]) -> bool:
+    """Return True when walk-forward exports should use legacy delta summaries."""
+    return any(
+        spec.get("strategy_role") != "standalone_strategy"
+        for spec in strategy_specs
+    )
+
+
+def _aggregate_walkforward_results(
+    wf_df: pd.DataFrame,
+    *,
+    strategy_specs: list[dict],
+) -> tuple[pd.DataFrame, dict]:
+    """Build per-pair and overall walk-forward summaries for the active scope."""
+    if _walkforward_uses_composite_aggregation(strategy_specs):
+        wf_pair = (
+            wf_df.groupby("Pair", as_index=False)
+            .agg({
+                "Return Δ": "mean",
+                "Sharpe Δ": "mean",
+                "DD Δ": "mean",
+                "Fold": "count",
+            })
+            .rename(columns={"Fold": "Folds"})
+        )
+        overall = {
+            "Pairs": int(wf_df["Pair"].nunique()),
+            "Folds": int(len(wf_df)),
+            "Avg Return Δ": float(wf_df["Return Δ"].mean()),
+            "Avg Sharpe Δ": float(wf_df["Sharpe Δ"].mean()),
+            "Avg Max DD Δ": float(wf_df["DD Δ"].mean()),
+            "Folds Sharpe Improved": int((wf_df["Sharpe Δ"] > 0).sum()),
+        }
+        return wf_pair, overall
+
+    metric_columns: list[str] = []
+    for spec in strategy_specs:
+        metric_columns.extend([
+            spec["expected_return_col"],
+            spec["expected_sharpe_col"],
+            spec["expected_drawdown_col"],
+            spec["n_trades_col"],
+        ])
+    metric_columns = list(dict.fromkeys(metric_columns))
+
+    missing_columns = [col for col in metric_columns if col not in wf_df.columns]
+    if missing_columns:
+        raise KeyError(
+            "Walk-forward standalone aggregation is missing expected columns: "
+            f"{missing_columns!r}"
+        )
+
+    wf_pair = (
+        wf_df.groupby("Pair", as_index=False)
+        .agg({
+            **{column: "mean" for column in metric_columns},
+            "Fold": "count",
+        })
+        .rename(columns={"Fold": "Folds"})
+    )
+    overall = {
+        "Pairs": int(wf_df["Pair"].nunique()),
+        "Folds": int(len(wf_df)),
+    }
+    overall.update({
+        f"Avg {column}": float(wf_df[column].mean())
+        for column in metric_columns
+    })
+    return wf_pair, overall
+
+
 def _run_registry_strategy_backtest(
     *,
     df: pd.DataFrame,
@@ -3347,28 +3418,14 @@ def main(
             wf_df.to_csv(wf_fold_path, index=False)
             print(f"Saved: {wf_fold_path}")
 
-            # Per-pair aggregation (mean across folds)
-            wf_pair = (wf_df.groupby("Pair", as_index=False)
-                       .agg({
-                "Return Δ": "mean",
-                "Sharpe Δ": "mean",
-                "DD Δ": "mean",
-                "Fold": "count",
-            })
-                       .rename(columns={"Fold": "Folds"}))
+            wf_pair, overall = _aggregate_walkforward_results(
+                wf_df,
+                strategy_specs=list(_wf_execution_plan["strategy_specs"]),
+            )
             wf_pair_path = _with_mode_tag("results/walkforward_results_per_pair.csv", dl_mode_tag)
             wf_pair.to_csv(wf_pair_path, index=False)
             print(f"Saved: {wf_pair_path}")
 
-            # Overall summary
-            overall = {
-                "Pairs": int(wf_df["Pair"].nunique()),
-                "Folds": int(len(wf_df)),
-                "Avg Return Δ": float(wf_df["Return Δ"].mean()),
-                "Avg Sharpe Δ": float(wf_df["Sharpe Δ"].mean()),
-                "Avg Max DD Δ": float(wf_df["DD Δ"].mean()),
-                "Folds Sharpe Improved": int((wf_df["Sharpe Δ"] > 0).sum()),
-            }
             wf_summary_path = _with_mode_tag("results/walkforward_results_summary.csv", dl_mode_tag)
             pd.DataFrame([overall]).to_csv(wf_summary_path, index=False)
             print(f"Saved: {wf_summary_path}")

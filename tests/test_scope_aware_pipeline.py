@@ -19,6 +19,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
+
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -441,6 +443,109 @@ class TestWalkforwardExecutionPlan(unittest.TestCase):
             [spec["strategy_id"] for spec in plan["strategy_specs"]],
             ["PhaseAware_TF4_MR42", "StrategySelector_Dynamic_WF"],
         )
+
+
+class TestWalkforwardAggregation(unittest.TestCase):
+    """Verify scope-aware walk-forward aggregation uses the executed strategy specs."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib
+        cls._main = importlib.import_module("main")
+        cls._registry = get_default_strategy_registry()
+
+    def _aggregate(self, scope: EvaluationScope, rows: list[dict]):
+        plan = self._main._build_walkforward_execution_plan(
+            scope,
+            strategy_registry=self._registry,
+        )
+        return self._main._aggregate_walkforward_results(
+            pd.DataFrame(rows),
+            strategy_specs=list(plan["strategy_specs"]),
+        )
+
+    def test_explicit_tf1_aggregates_without_composite_delta_columns(self):
+        wf_pair, overall = self._aggregate(
+            _explicit_scope("TF1"),
+            [
+                {"Pair": "EURUSD", "Fold": 1, "TF1 Return (%)": 1.0, "TF1 Sharpe": 0.20, "TF1 Max DD (%)": -4.0, "TF1 Trades": 5},
+                {"Pair": "EURUSD", "Fold": 2, "TF1 Return (%)": 3.0, "TF1 Sharpe": 0.60, "TF1 Max DD (%)": -6.0, "TF1 Trades": 7},
+                {"Pair": "USDJPY", "Fold": 1, "TF1 Return (%)": 2.0, "TF1 Sharpe": 0.10, "TF1 Max DD (%)": -3.0, "TF1 Trades": 4},
+            ],
+        )
+        self.assertEqual(
+            list(wf_pair.columns),
+            ["Pair", "TF1 Return (%)", "TF1 Sharpe", "TF1 Max DD (%)", "TF1 Trades", "Folds"],
+        )
+        eurusd = wf_pair.loc[wf_pair["Pair"] == "EURUSD"].iloc[0]
+        self.assertAlmostEqual(eurusd["TF1 Return (%)"], 2.0)
+        self.assertAlmostEqual(eurusd["TF1 Sharpe"], 0.4)
+        self.assertAlmostEqual(eurusd["TF1 Max DD (%)"], -5.0)
+        self.assertAlmostEqual(eurusd["TF1 Trades"], 6.0)
+        self.assertEqual(int(eurusd["Folds"]), 2)
+        self.assertAlmostEqual(overall["Avg TF1 Return (%)"], 2.0)
+        self.assertAlmostEqual(overall["Avg TF1 Sharpe"], 0.3)
+        self.assertAlmostEqual(overall["Avg TF1 Max DD (%)"], -13.0 / 3.0)
+        self.assertAlmostEqual(overall["Avg TF1 Trades"], 16.0 / 3.0)
+        self.assertNotIn("Avg Return Δ", overall)
+
+    def test_explicit_mr1_aggregates_without_composite_delta_columns(self):
+        wf_pair, overall = self._aggregate(
+            _explicit_scope("MR1"),
+            [
+                {"Pair": "EURUSD", "Fold": 1, "MR1 Return (%)": -1.0, "MR1 Sharpe": -0.20, "MR1 Max DD (%)": -2.0, "MR1 Trades": 8},
+                {"Pair": "EURUSD", "Fold": 2, "MR1 Return (%)": 4.0, "MR1 Sharpe": 0.50, "MR1 Max DD (%)": -5.0, "MR1 Trades": 6},
+            ],
+        )
+        self.assertEqual(
+            list(wf_pair.columns),
+            ["Pair", "MR1 Return (%)", "MR1 Sharpe", "MR1 Max DD (%)", "MR1 Trades", "Folds"],
+        )
+        eurusd = wf_pair.iloc[0]
+        self.assertAlmostEqual(eurusd["MR1 Return (%)"], 1.5)
+        self.assertAlmostEqual(eurusd["MR1 Sharpe"], 0.15)
+        self.assertAlmostEqual(eurusd["MR1 Max DD (%)"], -3.5)
+        self.assertAlmostEqual(eurusd["MR1 Trades"], 7.0)
+        self.assertEqual(int(eurusd["Folds"]), 2)
+        self.assertAlmostEqual(overall["Avg MR1 Return (%)"], 1.5)
+        self.assertAlmostEqual(overall["Avg MR1 Sharpe"], 0.15)
+        self.assertAlmostEqual(overall["Avg MR1 Max DD (%)"], -3.5)
+        self.assertAlmostEqual(overall["Avg MR1 Trades"], 7.0)
+        self.assertNotIn("Avg Return Δ", overall)
+
+    def test_default_scope_preserves_composite_delta_aggregation(self):
+        wf_pair, overall = self._aggregate(
+            _default_scope(),
+            [
+                {"Pair": "EURUSD", "Fold": 1, "Return Δ": 2.0, "Sharpe Δ": 0.10, "DD Δ": -1.0},
+                {"Pair": "EURUSD", "Fold": 2, "Return Δ": 4.0, "Sharpe Δ": -0.10, "DD Δ": -3.0},
+            ],
+        )
+        self.assertEqual(list(wf_pair.columns), ["Pair", "Return Δ", "Sharpe Δ", "DD Δ", "Folds"])
+        self.assertAlmostEqual(wf_pair.iloc[0]["Return Δ"], 3.0)
+        self.assertAlmostEqual(wf_pair.iloc[0]["Sharpe Δ"], 0.0)
+        self.assertAlmostEqual(wf_pair.iloc[0]["DD Δ"], -2.0)
+        self.assertEqual(int(wf_pair.iloc[0]["Folds"]), 2)
+        self.assertEqual(
+            set(overall.keys()),
+            {"Pairs", "Folds", "Avg Return Δ", "Avg Sharpe Δ", "Avg Max DD Δ", "Folds Sharpe Improved"},
+        )
+        self.assertAlmostEqual(overall["Avg Return Δ"], 3.0)
+        self.assertAlmostEqual(overall["Avg Sharpe Δ"], 0.0)
+        self.assertAlmostEqual(overall["Avg Max DD Δ"], -2.0)
+        self.assertEqual(overall["Folds Sharpe Improved"], 1)
+
+    def test_explicit_tf4_mr42_preserves_composite_delta_aggregation(self):
+        wf_pair, overall = self._aggregate(
+            _explicit_scope("TF4", "MR42"),
+            [
+                {"Pair": "EURUSD", "Fold": 1, "Return Δ": 1.0, "Sharpe Δ": 0.20, "DD Δ": -0.5},
+                {"Pair": "USDJPY", "Fold": 1, "Return Δ": -2.0, "Sharpe Δ": -0.10, "DD Δ": -1.5},
+            ],
+        )
+        self.assertEqual(list(wf_pair.columns), ["Pair", "Return Δ", "Sharpe Δ", "DD Δ", "Folds"])
+        self.assertIn("Avg Return Δ", overall)
+        self.assertNotIn("Avg TF4 Return (%)", overall)
 
 
 # ---------------------------------------------------------------------------
