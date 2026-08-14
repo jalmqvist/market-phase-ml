@@ -548,6 +548,8 @@ class TestWalkforwardDebugOutputGates(unittest.TestCase):
                 return np.zeros(len(X), dtype=int)
 
         self._models.set_diagnostics_verbose(verbose)
+        saved_dl_signals_enabled = self._models.DL_SIGNALS_ENABLED
+        self._models.DL_SIGNALS_ENABLED = True
         predictor = self._models.PhaseMLPredictor(
             train_window=4,
             retrain_freq=1,
@@ -557,8 +559,11 @@ class TestWalkforwardDebugOutputGates(unittest.TestCase):
         )
         predictor._build_model = lambda: _DummyModel()
         captured = io.StringIO()
-        with patch("sys.stdout", captured):
-            predictor.fit_predict(self._make_df())
+        try:
+            with patch("sys.stdout", captured):
+                predictor.fit_predict(self._make_df())
+        finally:
+            self._models.DL_SIGNALS_ENABLED = saved_dl_signals_enabled
         return captured.getvalue()
 
     def tearDown(self):
