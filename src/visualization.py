@@ -1614,6 +1614,9 @@ def plot_group_comparison(majors_hardcoded: pd.DataFrame,
     Sharpe and Profit Factor have independent y-axes.
     """
     _ensure_figures_dir()
+    if majors_hardcoded.empty and minors_hardcoded.empty:
+        print("Skipping group comparison: no full-universe strategy results available.")
+        return
 
     # Metrics split into two groups for independent y-axis scaling
     METRICS_CONFIG = [
