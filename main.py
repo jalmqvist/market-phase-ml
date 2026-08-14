@@ -2969,7 +2969,6 @@ def main(
                 selector_window_diag: dict = {}
                 vol_thr = np.nan
                 dyn_res: dict = {}
-                dyn_signals = pd.Series(dtype=float)
                 selected_s = pd.Series(dtype="object")
 
                 if _wf_run_dynamic:
@@ -3429,7 +3428,6 @@ def main(
 
         strategy_specs = list(_wf_execution_plan["strategy_specs"])
         if not strategy_specs:
-            _scope_tf, _scope_mr = resolve_phaseaware_strategy_pair()
             raise ValueError(
                 f"Configuration error: the selected evaluation scope "
                 f"{sorted(_effective_scope.strategy_ids)!r} does not match "
