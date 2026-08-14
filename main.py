@@ -1390,7 +1390,6 @@ def _build_walkforward_strategy_specs(
 
     standalone_specs = []
     for strategy_id in scope.strategy_ids:
-        strategy_registry.get(strategy_id)
         standalone_specs.append(
             {
                 "strategy_id": strategy_id,
@@ -2902,9 +2901,7 @@ def main(
         )
         _wf_run_phaseaware = bool(_wf_execution_plan["run_phaseaware"])
         _wf_run_dynamic = bool(_wf_execution_plan["run_dynamic_selector"])
-        _wf_standalone_strategy_ids = tuple(
-            _wf_execution_plan["standalone_strategy_ids"]
-        )
+        _wf_standalone_strategy_ids = _wf_execution_plan["standalone_strategy_ids"]
 
         walkforward_rows = []
         vol_diag_rows = []
