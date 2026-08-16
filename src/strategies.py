@@ -567,31 +567,43 @@ class MR3Strategy:
 
 class MR32Strategy:
     """
-    RSI mean reversion with MA(200) trend filter.
+    RSI mean reversion with phase-aware trend filter + ADX guard.
 
-    Only trades in the direction of the long-term trend:
-        Long:  RSI < 35 AND close > MA(200)  — pullback in uptrend
-        Short: RSI > 65 AND close < MA(200)  — rally in downtrend
+    Uses the pre-computed 'phase' column instead of MA(200/50) to
+    avoid NaN warmup issues on short walkforward folds.
 
-    Exit: RSI crosses 60 (long exit) or 40 (short exit) + 2.5% SL
+    Only trades in the direction implied by the current phase:
+        Long:  RSI crosses below rsi_long AND phase is not HV_Trend
+               (avoid fading strong uptrends)
+        Short: RSI crosses above rsi_short AND phase is not HV_Trend
+               (avoid fading strong downtrends)
 
-    Reference: Original system by Jonas Almqvist (MQL4)
+    ADX guard: skips entries when market is in extreme trend
+    (ADX > adx_filter), keeping it in ranging/moderate territory.
+
+    Exit: RSI crosses back through 55 (long) or 45 (short) + SL
+
+    Differentiation from other MR strategies:
+        - MR3:  No trend filter, no ADX guard, exits at RSI 50
+        - MR32: Phase-aware filter + ADX guard, wider exits (55/45)
+        - MR42: BB entry + strict ADX < 20 (ranging only)
+        - MR5:  BB entry, no filters at all
     """
 
     def __init__(self,
                  rsi_period: int = 14,
                  rsi_long: float = 35.0,
                  rsi_short: float = 65.0,
-                 rsi_exit_long: float = 60.0,
-                 rsi_exit_short: float = 40.0,
-                 ma_period: int = 200,
+                 rsi_exit_long: float = 55.0,
+                 rsi_exit_short: float = 45.0,
+                 adx_filter: float = 35.0,
                  sl_pct: float = 0.025):
         self.rsi_period = rsi_period
         self.rsi_long = rsi_long
         self.rsi_short = rsi_short
         self.rsi_exit_long = rsi_exit_long
         self.rsi_exit_short = rsi_exit_short
-        self.ma_period = ma_period
+        self.adx_filter = adx_filter
         self.sl_pct = sl_pct
         self.name = 'MR32'
 
@@ -603,18 +615,32 @@ class MR32Strategy:
         """
         rsi = df['rsi']
         prev_rsi = rsi.shift(1)
+        adx = _adx(df)
+        phase = df['phase']
 
-        ma200 = SMAIndicator(
-            close=df['Close'], window=self.ma_period
-        ).sma_indicator()
+        # Phase filter: block entries during strong trend phases
+        # HV_Trend = strong directional move, worst environment for MR
+        # LV_Trend, HV_Ranging, LV_Ranging = all acceptable
+        not_hv_trend = phase != 'HV_Trend'
 
-        close = df['Close']
+        # Entry: RSI crossover into extreme zone
+        # + not in a strong trend phase
+        # + ADX not at extreme trend strength
+        long_entry = (
+                (rsi < self.rsi_long) &
+                (prev_rsi >= self.rsi_long) &  # crossover
+                not_hv_trend &
+                (adx < self.adx_filter)
+        )
+        short_entry = (
+                (rsi > self.rsi_short) &
+                (prev_rsi <= self.rsi_short) &  # crossover
+                not_hv_trend &
+                (adx < self.adx_filter)
+        )
 
-        # Entry: RSI in extreme zone AND price on correct side of MA(200)
-        long_entry = (rsi < self.rsi_long) & (close > ma200)
-        short_entry = (rsi > self.rsi_short) & (close < ma200)
-
-        # Exit: RSI crosses back through exit level
+        # Exit: RSI crosses back through asymmetric exit levels
+        # Wider than MR3's 50 — gives trades more room
         long_exit = (rsi > self.rsi_exit_long) & (prev_rsi <= self.rsi_exit_long)
         short_exit = (rsi < self.rsi_exit_short) & (prev_rsi >= self.rsi_exit_short)
 
@@ -627,7 +653,7 @@ class MR32Strategy:
         signals = raw.ffill().fillna(0).astype(int)
 
         sl_pct_series = pd.Series(self.sl_pct, index=df.index)
-        tp_pct_series = pd.Series(0.0, index=df.index)  # no TP, RSI exit
+        tp_pct_series = pd.Series(0.0, index=df.index)
 
         return signals, sl_pct_series, tp_pct_series
 
