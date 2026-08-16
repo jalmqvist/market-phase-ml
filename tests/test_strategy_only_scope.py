@@ -144,19 +144,29 @@ class TestLegacyMLStageSkippedForExplicitScope(unittest.TestCase):
 
     # ── Test 3: legacy ML experiment stage not invoked ─────────────────────
     def test_ml_experiment_stage_gated_for_mr32(self):
-        """_strategy_only_scope_enabled() is the gate for [3/5].
+        """_strategy_only_scope_enabled() is the gate for [3/5] PhaseMLExperiment.
 
         When it returns True the ``PhaseMLExperiment`` loop is skipped and
-        ``ml_results_all`` is set to ``{}``.
+        ``ml_results_all`` is set to ``{}``.  The stage must also be gated for
+        a scope containing only a single MR strategy.
         """
         scope = _explicit_scope("MR32")
         self.assertTrue(self._main._strategy_only_scope_enabled(scope))
+        # Confirm the inverse: the full-universe path is NOT taken.
+        self.assertFalse(self._main._full_universe_sections_enabled(scope))
 
     # ── Test 4: ML phase prediction stage not invoked ─────────────────────
-    def test_ml_phase_prediction_stage_gated_for_mr32(self):
-        """_strategy_only_scope_enabled() is also the gate for [3b/5]."""
-        scope = _explicit_scope("MR32")
-        self.assertTrue(self._main._strategy_only_scope_enabled(scope))
+    def test_ml_phase_prediction_stage_gated_for_multi_strategy_scope(self):
+        """_strategy_only_scope_enabled() is the gate for [3b/5] PhaseMLPredictor.
+
+        Verify that a multi-strategy explicit scope also bypasses [3b/5] — the
+        optimization must apply regardless of how many strategies are requested.
+        """
+        scope = _explicit_scope("MR5", "MR32")
+        self.assertTrue(self._main._strategy_only_scope_enabled(scope),
+                        "[3b/5] must be skipped for multi-strategy explicit scope")
+        # [3c/5] (ML-predicted-phase backtests) is guarded by _full_universe.
+        self.assertFalse(self._main._full_universe_sections_enabled(scope))
 
     # ── Test 5: full-universe backtest/aggregation not invoked ────────────
     def test_full_universe_backtest_gated_for_mr32(self):
