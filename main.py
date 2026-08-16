@@ -1710,6 +1710,23 @@ def _full_universe_sections_enabled(scope: EvaluationScope) -> bool:
     return should_run_full_universe_backtests(scope)
 
 
+def _strategy_only_scope_enabled(scope: EvaluationScope) -> bool:
+    """Return True when an explicit --strategy scope is active.
+
+    In this mode the expensive legacy ML experiments ([3/5], [3b/5]) and the
+    full-universe aggregation ([5/5] legacy reporting) are skipped because they
+    are not required for strategy-specific evaluation.
+
+    The condition mirrors the ``_strategy_only_scope`` local variable in
+    ``main()`` and is exposed as a module-level helper so that tests can verify
+    the branching decision without running the full pipeline.
+    """
+    return (
+        not should_run_full_universe_backtests(scope)
+        and bool(scope.strategy_ids)
+    )
+
+
 
 def _configure_debug(debug: bool) -> None:
     """Apply or clear all debug flags to reflect the current *debug* argument.
@@ -1822,6 +1839,13 @@ def main(
     # Explicit runs skip the legacy full-universe backtests and selector
     # training so that only the requested strategy subset is evaluated.
     _run_full_universe = _full_universe_sections_enabled(_effective_scope)
+    # True when an explicit --strategy scope is active.  The expensive legacy
+    # ML experiments and full-universe aggregation stages are not needed for
+    # strategy-specific evaluation and are skipped to avoid unnecessary work.
+    _strategy_only_scope = (
+        not _run_full_universe
+        and bool(_effective_scope.strategy_ids)
+    )
     # ────────────────────────────────────────────────────────────────────────
 
     dl_mode_tag = "__dl_enabled" if dl_runtime_enabled else "__baseline"
@@ -2225,134 +2249,166 @@ def main(
     # ─────────────────────────────────────────
     print('\n[3/5] Running ML experiments...')
 
-    ml_params     = dict(
-        n_splits=5,
-        random_state=run_cfg.seed,
-        missing_indicators_enabled=missing_indicators_enabled,
-    )
-    ml_data_hash  = _hash_dict_of_dataframes(processed_data)
-    ml_param_hash = _hash_params(**ml_params)
-
-    ml_results_all = load_cache(
-        'ml_results', ml_data_hash, ml_param_hash
-    )
-
-    if ml_results_all is None:
-        print('  No cache found — running ML experiments...')
-        ml_results_all = {}
-
-        for pair_name in sorted(processed_data.keys()):
-            df = processed_data[pair_name]
-            df.attrs["pair_name"] = pair_name
-            print(f'\n  --- {pair_name} ---')
-            try:
-                experiment = PhaseMLExperiment(
-                    n_splits=ml_params['n_splits'],
-                    random_state=ml_params['random_state'],
-                    smooth_labels=True,  # False to disable
-                    confirmation_bars=5,  # tune this value
-                    missing_indicators_enabled=missing_indicators_enabled,
-                )
-                experiment.run_baseline(df)
-                experiment.run_phase_features(df)
-                experiment.run_phase_models(
-                    df, min_samples=MIN_PHASE_SAMPLES
-                )
-                ml_results_all[pair_name] = experiment.compare_results()
-            except Exception as e:
-                print(f'  ✗ {pair_name}: ML experiment failed — {e}')
-
-        save_cache(
-            'ml_results', ml_results_all,
-            ml_data_hash, ml_param_hash
+    if _strategy_only_scope:
+        # Skip the expensive full-universe ML experiments; they are not needed
+        # for strategy-specific evaluation.
+        print(
+            f'  Skipped for explicit strategy scope '
+            f'{list(_effective_scope.strategy_ids)}'
         )
+        ml_results_all: dict = {}
     else:
-        print('  Loaded ML results from cache.')
-
-    if ml_results_all:
-        ml_combined = pd.concat(
-            [df.assign(Pair=pair)
-             for pair, df in ml_results_all.items()],
-            ignore_index=True
+        ml_params     = dict(
+            n_splits=5,
+            random_state=run_cfg.seed,
+            missing_indicators_enabled=missing_indicators_enabled,
         )
-        ml_results_path = _with_mode_tag('results/results_ml.csv', dl_mode_tag)
-        ml_combined.to_csv(ml_results_path, index=False)
-        print(f'\n✓ ML results saved to {ml_results_path}')
+        ml_data_hash  = _hash_dict_of_dataframes(processed_data)
+        ml_param_hash = _hash_params(**ml_params)
+
+        ml_results_all = load_cache(
+            'ml_results', ml_data_hash, ml_param_hash
+        )
+
+        if ml_results_all is None:
+            print('  No cache found — running ML experiments...')
+            ml_results_all = {}
+
+            for pair_name in sorted(processed_data.keys()):
+                df = processed_data[pair_name]
+                df.attrs["pair_name"] = pair_name
+                print(f'\n  --- {pair_name} ---')
+                try:
+                    experiment = PhaseMLExperiment(
+                        n_splits=ml_params['n_splits'],
+                        random_state=ml_params['random_state'],
+                        smooth_labels=True,  # False to disable
+                        confirmation_bars=5,  # tune this value
+                        missing_indicators_enabled=missing_indicators_enabled,
+                    )
+                    experiment.run_baseline(df)
+                    experiment.run_phase_features(df)
+                    experiment.run_phase_models(
+                        df, min_samples=MIN_PHASE_SAMPLES
+                    )
+                    ml_results_all[pair_name] = experiment.compare_results()
+                except Exception as e:
+                    print(f'  ✗ {pair_name}: ML experiment failed — {e}')
+
+            save_cache(
+                'ml_results', ml_results_all,
+                ml_data_hash, ml_param_hash
+            )
+        else:
+            print('  Loaded ML results from cache.')
+
+        if ml_results_all:
+            ml_combined = pd.concat(
+                [df.assign(Pair=pair)
+                 for pair, df in ml_results_all.items()],
+                ignore_index=True
+            )
+            ml_results_path = _with_mode_tag('results/results_ml.csv', dl_mode_tag)
+            ml_combined.to_csv(ml_results_path, index=False)
+            print(f'\n✓ ML results saved to {ml_results_path}')
 
     # ─────────────────────────────────────────
     # 3b. ML PHASE PREDICTION
     # ─────────────────────────────────────────
     print('\n[3b/5] Running ML phase prediction...')
 
-    predictor_params = dict(
-        train_window=504,
-        retrain_freq=21,
-        confirmation_bars=5,
-        smooth_labels=True,
-        random_state=run_cfg.seed,
-        seed=run_cfg.seed,
-        min_dl_coverage_pct=MIN_DL_TRAIN_COVERAGE_PCT,
-        missing_indicators_enabled=missing_indicators_enabled,
-    )
-
-    # Cache key: hash of processed data + predictor parameters
-    pred_data_hash  = _hash_dict_of_dataframes(processed_data)
-    pred_param_hash = _hash_params(**predictor_params)
-
-    ml_predicted_data = load_cache(
-        'ml_predicted_phases', pred_data_hash, pred_param_hash
-    )
-
-    if ml_predicted_data is None:
-        print('  No cache found — running ML phase prediction...')
-        ml_predicted_data = {}
-        predictor_feature_ordering: dict[str, list[str]] = {}
-
-        predictor = PhaseMLPredictor(**predictor_params)
-
-        for pair_name in sorted(processed_data.keys()):
-            df = processed_data[pair_name]
-            df.attrs["pair_name"] = pair_name
-            print(f'\n  --- {pair_name} ---')
-            try:
-                predictions = predictor.fit_predict(df)
-                eval_scores = predictor.evaluate(df, predictions)
-
-                # Add predicted phase column to DataFrame copy
-                df_ml = df.copy()
-                df_ml['predicted_phase'] = predictions
-
-                ml_predicted_data[pair_name] = {
-                    'df':         df_ml,
-                    'eval':       eval_scores,
-                    'predictions': predictions
-                }
-                predictor_feature_ordering[pair_name] = _stable_feature_columns(
-                    list(getattr(predictor, "feature_cols", []) or [])
-                )
-            except Exception as e:
-                traceback.print_exc()
-                print(f'  ✗ {pair_name}: ML prediction failed — {e}')
-
-        save_cache(
-            'ml_predicted_phases', ml_predicted_data,
-            pred_data_hash, pred_param_hash
+    if _strategy_only_scope:
+        # Skip the expensive ML phase prediction; it is not needed for
+        # strategy-specific evaluation (only [3c/5] consumes it, which is
+        # also skipped).
+        print(
+            f'  Skipped for explicit strategy scope '
+            f'{list(_effective_scope.strategy_ids)}'
         )
+        ml_predicted_data: dict = {}
+        predictor_feature_ordering: dict[str, list[str]] = {}
     else:
-        print('  Loaded ML predicted phases from cache.')
-        predictor_feature_ordering = {
-            pair_name: _stable_feature_columns(
-                list(
-                    col
-                    for col in processed_data[pair_name].columns
-                    if col not in PhaseMLExperiment.EXCLUDE_COLS
-                    and is_numeric_dtype(processed_data[pair_name][col])
-                    and not is_bool_dtype(processed_data[pair_name][col])
-                    and (DL_SIGNALS_ENABLED or (col not in D1_FEATURE_COLS and not str(col).startswith("dl_")))
-                )
+        predictor_params = dict(
+            train_window=504,
+            retrain_freq=21,
+            confirmation_bars=5,
+            smooth_labels=True,
+            random_state=run_cfg.seed,
+            seed=run_cfg.seed,
+            min_dl_coverage_pct=MIN_DL_TRAIN_COVERAGE_PCT,
+            missing_indicators_enabled=missing_indicators_enabled,
+        )
+
+        # Cache key: hash of processed data + predictor parameters
+        pred_data_hash  = _hash_dict_of_dataframes(processed_data)
+        pred_param_hash = _hash_params(**predictor_params)
+
+        ml_predicted_data = load_cache(
+            'ml_predicted_phases', pred_data_hash, pred_param_hash
+        )
+
+        if ml_predicted_data is None:
+            print('  No cache found — running ML phase prediction...')
+            ml_predicted_data = {}
+            predictor_feature_ordering = {}
+
+            predictor = PhaseMLPredictor(**predictor_params)
+
+            for pair_name in sorted(processed_data.keys()):
+                df = processed_data[pair_name]
+                df.attrs["pair_name"] = pair_name
+                print(f'\n  --- {pair_name} ---')
+                try:
+                    predictions = predictor.fit_predict(df)
+                    eval_scores = predictor.evaluate(df, predictions)
+
+                    # Add predicted phase column to DataFrame copy
+                    df_ml = df.copy()
+                    df_ml['predicted_phase'] = predictions
+
+                    ml_predicted_data[pair_name] = {
+                        'df':         df_ml,
+                        'eval':       eval_scores,
+                        'predictions': predictions
+                    }
+                    predictor_feature_ordering[pair_name] = _stable_feature_columns(
+                        list(getattr(predictor, "feature_cols", []) or [])
+                    )
+                except Exception as e:
+                    traceback.print_exc()
+                    print(f'  ✗ {pair_name}: ML prediction failed — {e}')
+
+            save_cache(
+                'ml_predicted_phases', ml_predicted_data,
+                pred_data_hash, pred_param_hash
             )
-            for pair_name in sorted(processed_data.keys())
-        }
+        else:
+            print('  Loaded ML predicted phases from cache.')
+            predictor_feature_ordering = {
+                pair_name: _stable_feature_columns(
+                    list(
+                        col
+                        for col in processed_data[pair_name].columns
+                        if col not in PhaseMLExperiment.EXCLUDE_COLS
+                        and is_numeric_dtype(processed_data[pair_name][col])
+                        and not is_bool_dtype(processed_data[pair_name][col])
+                        and (DL_SIGNALS_ENABLED or (col not in D1_FEATURE_COLS and not str(col).startswith("dl_")))
+                    )
+                )
+                for pair_name in sorted(processed_data.keys())
+            }
+
+        # ── Print accuracy scores regardless of cache hit ─────────────────────
+        print('\n  ML Phase Prediction Accuracy Summary:')
+        predictor = PhaseMLPredictor(**predictor_params)
+        for pair_name, pred_data in ml_predicted_data.items():
+            print(f'\n  --- {pair_name} ---')
+            eval_scores = predictor.evaluate(
+                processed_data[pair_name],
+                pred_data['predictions']
+            )
+            ml_predicted_data[pair_name]['eval'] = eval_scores
+
     manifest["feature_ordering"]["phase_predictor_by_pair"] = {
         pair_name: predictor_feature_ordering[pair_name]
         for pair_name in sorted(predictor_feature_ordering)
@@ -2362,17 +2418,6 @@ def main(
         run_manifest_path=manifest_path,
         experiment_manifest_path=experiment_manifest_path,
     )
-
-    # ── Print accuracy scores regardless of cache hit ─────────────────────
-    print('\n  ML Phase Prediction Accuracy Summary:')
-    predictor = PhaseMLPredictor(**predictor_params)
-    for pair_name, pred_data in ml_predicted_data.items():
-        print(f'\n  --- {pair_name} ---')
-        eval_scores = predictor.evaluate(
-            processed_data[pair_name],
-            pred_data['predictions']
-        )
-        ml_predicted_data[pair_name] ['eval'] = eval_scores
 
     # ─────────────────────────────────────────
     # 3c. BACKTEST WITH ML-PREDICTED PHASES
@@ -2670,69 +2715,81 @@ def main(
         experiment_manifest_path=experiment_manifest_path,
     )
 
-    # Aggregate by group for both sizing methods
-    # DL pipeline diagnostics before aggregation
-    print(
-        f"[DL PIPELINE] aggregation: "
-        f"dl_enabled={dl_runtime_enabled} "
-        f"pairs={sorted(processed_data.keys())} "
-        f"hardcoded_pairs={sorted(hardcoded_results.keys())}"
-    )
-    print('\n--- Hardcoded Size Multipliers ---')
-    majors_hardcoded = aggregate_backtest_results(
-        hardcoded_results, loaded_majors, 'Majors'
-    )
-    minors_hardcoded = aggregate_backtest_results(
-        hardcoded_results, loaded_minors, 'Minors'
-    )
+    # Aggregate by group for both sizing methods; skip when there are no
+    # full-universe backtest results (explicit strategy scope).
+    if _run_full_universe:
+        # DL pipeline diagnostics before aggregation
+        print(
+            f"[DL PIPELINE] aggregation: "
+            f"dl_enabled={dl_runtime_enabled} "
+            f"pairs={sorted(processed_data.keys())} "
+            f"hardcoded_pairs={sorted(hardcoded_results.keys())}"
+        )
+        print('\n--- Hardcoded Size Multipliers ---')
+        majors_hardcoded = aggregate_backtest_results(
+            hardcoded_results, loaded_majors, 'Majors'
+        )
+        minors_hardcoded = aggregate_backtest_results(
+            hardcoded_results, loaded_minors, 'Minors'
+        )
 
-    print('\n--- ATR Constant Risk Sizing ---')
-    majors_atr = aggregate_backtest_results(
-        atr_results, loaded_majors, 'Majors'
-    )
-    minors_atr = aggregate_backtest_results(
-        atr_results, loaded_minors, 'Minors'
-    )
+        print('\n--- ATR Constant Risk Sizing ---')
+        majors_atr = aggregate_backtest_results(
+            atr_results, loaded_majors, 'Majors'
+        )
+        minors_atr = aggregate_backtest_results(
+            atr_results, loaded_minors, 'Minors'
+        )
 
-    # Print summaries
-    for label, df in [
-        ('MAJORS — Hardcoded Sizing', majors_hardcoded),
-        ('MINORS — Hardcoded Sizing', minors_hardcoded),
-        ('MAJORS — ATR Constant Risk', majors_atr),
-        ('MINORS — ATR Constant Risk', minors_atr),
-    ]:
-        if not df.empty:
-            print(f'\n{"=" * 60}')
-            print(label)
-            print('=' * 60)
-            print(df.to_string(index=False))
+        # Print summaries
+        for label, df in [
+            ('MAJORS — Hardcoded Sizing', majors_hardcoded),
+            ('MINORS — Hardcoded Sizing', minors_hardcoded),
+            ('MAJORS — ATR Constant Risk', majors_atr),
+            ('MINORS — ATR Constant Risk', minors_atr),
+        ]:
+            if not df.empty:
+                print(f'\n{"=" * 60}')
+                print(label)
+                print('=' * 60)
+                print(df.to_string(index=False))
 
-    # Save results
-    print('\nSaving results...')
-    # DL pipeline diagnostics before final export
-    print(
-        f"[DL PIPELINE] final export: "
-        f"dl_enabled={dl_runtime_enabled} "
-        f"dl_cols={sorted(_dl_cols_4b)} "
-        f"mode_tag={dl_mode_tag}"
-    )
-    save_results(
-        hardcoded_results,
-        majors_hardcoded,
-        minors_hardcoded,
-        mode_tag=dl_mode_tag,
-        export_legacy_full_universe=_run_full_universe,
-    )
+        # Save results
+        print('\nSaving results...')
+        # DL pipeline diagnostics before final export
+        print(
+            f"[DL PIPELINE] final export: "
+            f"dl_enabled={dl_runtime_enabled} "
+            f"dl_cols={sorted(_dl_cols_4b)} "
+            f"mode_tag={dl_mode_tag}"
+        )
+        save_results(
+            hardcoded_results,
+            majors_hardcoded,
+            minors_hardcoded,
+            mode_tag=dl_mode_tag,
+            export_legacy_full_universe=_run_full_universe,
+        )
 
-    # Save ATR results separately
-    _run_output_dir().mkdir(parents=True, exist_ok=True)
-    if not majors_atr.empty:
-        majors_atr_path = _with_mode_tag('results/results_majors_atr.csv', dl_mode_tag)
-        majors_atr.to_csv(majors_atr_path, index=False)
-    if not minors_atr.empty:
-        minors_atr_path = _with_mode_tag('results/results_minors_atr.csv', dl_mode_tag)
-        minors_atr.to_csv(minors_atr_path, index=False)
-    print('  ✓ ATR sizing results saved')
+        # Save ATR results separately
+        _run_output_dir().mkdir(parents=True, exist_ok=True)
+        if not majors_atr.empty:
+            majors_atr_path = _with_mode_tag('results/results_majors_atr.csv', dl_mode_tag)
+            majors_atr.to_csv(majors_atr_path, index=False)
+        if not minors_atr.empty:
+            minors_atr_path = _with_mode_tag('results/results_minors_atr.csv', dl_mode_tag)
+            minors_atr.to_csv(minors_atr_path, index=False)
+        print('  ✓ ATR sizing results saved')
+    else:
+        # Explicit strategy scope: no full-universe backtest results to aggregate.
+        print(
+            f'\n[5/5] Legacy aggregation/reporting skipped for explicit strategy '
+            f'scope {list(_effective_scope.strategy_ids)}'
+        )
+        majors_hardcoded = pd.DataFrame()
+        minors_hardcoded = pd.DataFrame()
+        majors_atr       = pd.DataFrame()
+        minors_atr       = pd.DataFrame()
 
 
     # ─────────────────────────────────────────
