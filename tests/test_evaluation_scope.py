@@ -296,15 +296,15 @@ class TestUnknownStrategyId(unittest.TestCase):
 
 class TestIncompatibleStrategy(unittest.TestCase):
     def test_strategy_incompatible_with_surface(self):
-        """Test 5: Strategy incompatible with active surface fails clearly.
+        """Test 5: Unknown Behavioral Surface ID fails clearly.
 
-        All current registry strategies declare support for 'trend_vol'.
-        We test against a non-existent surface to confirm the compatibility
-        check fires, since the registry does not currently include a strategy
-        that is compatible only with a different surface.
+        The corrected architecture separates strategy capability from behavioral
+        surface conditioning.  A valid registry strategy may be evaluated against
+        any *registered* Behavioral Surface.  What must still fail clearly is a
+        request against an *unknown* (unregistered) surface ID.
         """
-        # MR42 supports trend_vol; requesting it against a fictional surface
-        # should raise ValueError.
+        # Requesting any strategy against a fictional, unregistered surface
+        # must raise ValueError (or KeyError propagated as ValueError).
         with self.assertRaises((ValueError, KeyError)):
             resolve_evaluation_scope(
                 ["MR42"],
@@ -313,54 +313,42 @@ class TestIncompatibleStrategy(unittest.TestCase):
                 surface_id="nonexistent_surface_xyz",
             )
 
-    def test_strategy_not_on_surface_raises_with_clear_message(self):
-        """Incompatible surface error message names the incompatible strategy."""
-        # Build a minimal registry containing a strategy that only supports
-        # a different surface (simulate incompatibility).
-        from src.strategy_registry import (
-            StrategyCapabilities,
-            StrategyDefinition,
-            StrategyRegistry,
-            EvaluationPolicy,
-            EvaluationPolicyRegistry,
-        )
-        from src.strategies import TF4Strategy
+    def test_unknown_surface_raises_with_clear_message(self):
+        """Unknown surface error message names the unknown surface ID.
 
-        # Strategy declares support only for a fictional surface
-        fictional_surface_strategy = StrategyDefinition(
-            strategy_id="TF4",
-            display_name="TF4 test",
-            family="TrendFollowing",
-            implementation=TF4Strategy,
-            capabilities=StrategyCapabilities(
-                supported_surfaces=("trend_vol",),
-                supported_states=("HVTF", "LVTF"),
-                supported_assets=("fx",),
-                supported_directions=("long", "short"),
-            ),
-        )
-        mini_registry = StrategyRegistry([fictional_surface_strategy])
-        mini_policy_registry = EvaluationPolicyRegistry(
-            [EvaluationPolicy(
-                policy_id="phaseaware_default",
-                display_name="PhaseAware Default",
-                strategies=("TF4",),
-            )],
-            strategy_registry=mini_registry,
-        )
-
-        # TF4 supports trend_vol but not reactive_jpy; requesting reactive_jpy
-        # surface should yield an incompatible error.
-        with self.assertRaises(ValueError) as ctx:
+        Architectural contract (corrected): the evaluation-scope surface check
+        validates that the Behavioral Surface *exists*.  It does not require the
+        strategy to declare the surface as a native capability.  The error message
+        must identify the unknown surface_id so the operator can diagnose the
+        misconfiguration.
+        """
+        with self.assertRaises((ValueError, KeyError)) as ctx:
             resolve_evaluation_scope(
                 ["TF4"],
-                registry=mini_registry,
-                policy_registry=mini_policy_registry,
-                surface_id="reactive_jpy",
+                registry=_REGISTRY,
+                policy_registry=_POLICY_REGISTRY,
+                surface_id="nonexistent_surface_xyz",
             )
         msg = str(ctx.exception)
-        self.assertIn("TF4", msg)
-        self.assertIn("reactive_jpy", msg)
+        self.assertIn("nonexistent_surface_xyz", msg)
+
+    def test_valid_strategy_against_reactive_jpy_succeeds(self):
+        """A valid registry strategy may participate in a reactive_jpy evaluation.
+
+        Under the corrected architecture, strategy capability and behavioral-surface
+        conditioning are independent.  TF4 declares 'trend_vol' as its native
+        surface, but it is still a valid executable strategy.  Evaluating TF4
+        conditionally on the Reactive-JPY surface is a valid experiment and must
+        not be rejected by resolve_evaluation_scope().
+        """
+        scope = resolve_evaluation_scope(
+            ["TF4"],
+            registry=_REGISTRY,
+            policy_registry=_POLICY_REGISTRY,
+            surface_id="reactive_jpy",
+        )
+        self.assertEqual(scope.strategy_ids, ("TF4",))
+        self.assertEqual(scope.source, "explicit")
 
 
 # ---------------------------------------------------------------------------
@@ -795,6 +783,169 @@ class TestScopeAwareExecutionDecision(unittest.TestCase):
         run_tf, run_mr = compute_standalone_execution_flags(scope, self.tf, self.mr)
         self.assertTrue(run_tf)
         self.assertTrue(run_mr)
+
+
+# ---------------------------------------------------------------------------
+# Test 14 — Behavioral Surface evaluation scope (reactive_jpy)
+# ---------------------------------------------------------------------------
+
+class TestBehavioralSurfaceEvaluationScope(unittest.TestCase):
+    """Test 14: Behavioral-surface-conditioned evaluation scope resolution.
+
+    A valid registry strategy may participate in a behavioral-surface experiment
+    without declaring that surface as a native strategy capability.
+
+    Architecture:
+      Strategy capability   = what the strategy can execute
+      Behavioral Surface    = the market population/state on which it is evaluated
+      Evaluation Scope      = which strategies participate in an experiment
+
+    These are three independent dimensions.
+    """
+
+    _REACTIVE_SURFACE = "reactive_jpy"
+
+    def test_reactive_jpy_tf_strategy_resolves(self):
+        """Test 14.1: reactive_jpy + TF1 must resolve successfully.
+
+        TF1 declares 'trend_vol' as its native surface.  Evaluating TF1
+        conditionally on the Reactive-JPY behavioral surface is a valid
+        experiment; scope resolution must not reject it.
+        """
+        scope = resolve_evaluation_scope(
+            ["TF1"],
+            registry=_REGISTRY,
+            policy_registry=_POLICY_REGISTRY,
+            surface_id=self._REACTIVE_SURFACE,
+        )
+        self.assertEqual(scope.strategy_ids, ("TF1",))
+        self.assertEqual(scope.source, "explicit")
+
+    def test_reactive_jpy_mr_strategy_resolves(self):
+        """Test 14.2: reactive_jpy + MR5 must resolve successfully.
+
+        Confirms the fix is not accidentally limited to trend-following strategies.
+        MR5 is a MeanReversion strategy that declares 'trend_vol'; it must also
+        be accepted for a reactive_jpy behavioral surface experiment.
+        """
+        scope = resolve_evaluation_scope(
+            ["MR5"],
+            registry=_REGISTRY,
+            policy_registry=_POLICY_REGISTRY,
+            surface_id=self._REACTIVE_SURFACE,
+        )
+        self.assertEqual(scope.strategy_ids, ("MR5",))
+        self.assertEqual(scope.source, "explicit")
+
+    def test_reactive_jpy_multiple_strategies_resolve(self):
+        """Test 14.3: Multiple strategies against reactive_jpy resolve successfully."""
+        scope = resolve_evaluation_scope(
+            ["TF1", "TF4", "MR5"],
+            registry=_REGISTRY,
+            policy_registry=_POLICY_REGISTRY,
+            surface_id=self._REACTIVE_SURFACE,
+        )
+        self.assertEqual(set(scope.strategy_ids), {"TF1", "TF4", "MR5"})
+        self.assertEqual(scope.source, "explicit")
+
+    def test_reactive_jpy_unknown_strategy_still_fails(self):
+        """Test 14.4: Unknown strategy ID against reactive_jpy surface still fails."""
+        with self.assertRaises(ValueError) as ctx:
+            resolve_evaluation_scope(
+                ["BOGUS_ID"],
+                registry=_REGISTRY,
+                policy_registry=_POLICY_REGISTRY,
+                surface_id=self._REACTIVE_SURFACE,
+            )
+        self.assertIn("BOGUS_ID", str(ctx.exception))
+        self.assertIn("Configuration error", str(ctx.exception))
+
+    def test_invalid_behavioral_surface_still_fails(self):
+        """Test 14.5: An unknown surface ID must still fail clearly."""
+        with self.assertRaises((ValueError, KeyError)) as ctx:
+            resolve_evaluation_scope(
+                ["TF1"],
+                registry=_REGISTRY,
+                policy_registry=_POLICY_REGISTRY,
+                surface_id="totally_unknown_surface",
+            )
+        self.assertIn("totally_unknown_surface", str(ctx.exception))
+
+    def test_invalid_behavioral_state_cross_surface_fails(self):
+        """Test 14.6: LVTF belongs to trend_vol, not reactive_jpy — must fail.
+
+        State namespaces are surface-specific.  A state ID that belongs to
+        one surface must not be accepted as a valid state for a different
+        surface.
+        """
+        with self.assertRaises(ValueError) as ctx:
+            resolve_evaluation_scope(
+                ["TF1"],
+                registry=_REGISTRY,
+                policy_registry=_POLICY_REGISTRY,
+                surface_id=self._REACTIVE_SURFACE,
+                state_id="LVTF",
+            )
+        msg = str(ctx.exception)
+        self.assertIn("LVTF", msg)
+        self.assertIn("reactive_jpy", msg)
+
+    def test_valid_reactive_jpy_state_accepted(self):
+        """A valid reactive_jpy state is accepted without error."""
+        scope = resolve_evaluation_scope(
+            ["TF1"],
+            registry=_REGISTRY,
+            policy_registry=_POLICY_REGISTRY,
+            surface_id=self._REACTIVE_SURFACE,
+            state_id="JPY_CONSENSUS_YOUNG",
+        )
+        self.assertEqual(scope.strategy_ids, ("TF1",))
+        self.assertEqual(scope.source, "explicit")
+
+    def test_trend_vol_tf1_still_resolves(self):
+        """Test 14.7a: Existing trend_vol + TF1 behaviour is unchanged."""
+        scope = resolve_evaluation_scope(
+            ["TF1"],
+            registry=_REGISTRY,
+            policy_registry=_POLICY_REGISTRY,
+            surface_id="trend_vol",
+        )
+        self.assertEqual(scope.strategy_ids, ("TF1",))
+        self.assertEqual(scope.source, "explicit")
+
+    def test_trend_vol_tf4_still_resolves(self):
+        """Test 14.7b: Existing trend_vol + TF4 behaviour is unchanged."""
+        scope = resolve_evaluation_scope(
+            ["TF4"],
+            registry=_REGISTRY,
+            policy_registry=_POLICY_REGISTRY,
+            surface_id="trend_vol",
+        )
+        self.assertEqual(scope.strategy_ids, ("TF4",))
+        self.assertEqual(scope.source, "explicit")
+
+    def test_trend_vol_mr5_still_resolves(self):
+        """Test 14.7c: Existing trend_vol + MR5 behaviour is unchanged."""
+        scope = resolve_evaluation_scope(
+            ["MR5"],
+            registry=_REGISTRY,
+            policy_registry=_POLICY_REGISTRY,
+            surface_id="trend_vol",
+        )
+        self.assertEqual(scope.strategy_ids, ("MR5",))
+        self.assertEqual(scope.source, "explicit")
+
+    def test_reactive_jpy_scope_manifest_records_explicit_source(self):
+        """Manifest block for a reactive_jpy explicit scope records source=explicit."""
+        scope = resolve_evaluation_scope(
+            ["TF1"],
+            registry=_REGISTRY,
+            policy_registry=_POLICY_REGISTRY,
+            surface_id=self._REACTIVE_SURFACE,
+        )
+        block = scope.to_manifest_block()
+        self.assertEqual(block["source"], "explicit")
+        self.assertEqual(block["strategy_ids"], ["TF1"])
 
 
 if __name__ == "__main__":

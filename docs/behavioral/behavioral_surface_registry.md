@@ -502,6 +502,29 @@ surfaces become available throughout MPML simply by being registered.
 
 ---
 
+## Strategy Capability vs Behavioral Surface Conditioning
+
+Behavioral Surfaces and Strategy Capability are independent concepts.
+
+| Concept | Description |
+|---|---|
+| **Strategy Capability** | What a strategy is intrinsically implemented to execute.  Declared via `supported_surfaces` on `StrategyCapabilities` in the Strategy Registry. |
+| **Behavioral Surface / State** | The market population or conditioning regime on which a strategy is *evaluated*.  Owned by the Behavioral Surface registry. |
+| **Evaluation Scope** | Which strategies participate in a particular experiment.  Controlled by `resolve_evaluation_scope` (G3). |
+
+A strategy does **not** need to declare a Behavioral Surface as a native capability in order to be evaluated conditionally within that surface's experiment.
+
+For example, a `TrendFollowing` strategy that declares `trend_vol` as its native capability is still a valid executable strategy for a `reactive_jpy` behavioral surface experiment.  The behavioral surface conditions the *evaluation universe*; it does not change the strategy's intrinsic implementation or require the strategy to be Reactive-JPY-specific.
+
+`resolve_evaluation_scope` enforces this separation:
+
+- Unknown strategy IDs are rejected (Strategy Registry remains authoritative).
+- Unknown Behavioral Surface IDs are rejected (Behavioral Surface registry is validated).
+- State IDs provided for validation must belong to the active surface (cross-surface state IDs are rejected).
+- A valid registered strategy may participate in *any* valid registered surface experiment without needing to declare that surface as a native capability.
+
+---
+
 ## Out of Scope (Phase B / Phase C)
 
 The following are explicitly deferred to later roadmap phases:
