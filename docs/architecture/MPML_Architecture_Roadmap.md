@@ -1534,7 +1534,7 @@ existing benchmark evaluation scope exactly.
 - Support for evaluating one or multiple explicitly named strategies
 - Validation of requested strategy identifiers against the Strategy Registry
 - Clear handling of unknown strategy identifiers
-- Clear handling of strategies incompatible with the active Behavioral Surface
+- Validation that the active Behavioral Surface is a registered surface
 - Experiment manifest recording of the resolved evaluation scope
 - Backward-compatible default behavior
 
@@ -1543,6 +1543,24 @@ existing benchmark evaluation scope exactly.
 G3 controls which strategy evidence is generated.
 
 It does not control how that evidence is ranked.
+
+#### Separation of Strategy Capability, Behavioral Surface, and Evaluation Scope
+
+Three distinct concepts must not be conflated:
+
+| Concept | Description |
+|---|---|
+| **Strategy Capability** | What the strategy is intrinsically implemented to execute (declared via `supported_surfaces` on `StrategyCapabilities`) |
+| **Behavioral Surface / State** | The market population or conditioning regime on which the strategy is *evaluated* (owned by the Behavioral Surface registry) |
+| **Evaluation Scope** | Which strategies participate in a particular experiment (controlled by G3 / `resolve_evaluation_scope`) |
+
+A strategy does not need to declare a Behavioral Surface as a native capability in order to be evaluated conditionally within that surface's experiment.  For example, a `TrendFollowing` strategy that declares `trend_vol` as its native surface is still a valid executable strategy.  Evaluating it within a `reactive_jpy` behavioral surface experiment is a valid research configuration; the surface conditions the evaluation universe without changing the strategy's intrinsic implementation.
+
+This separation is enforced in `resolve_evaluation_scope`:
+
+- **Strategy Registry** remains the authority for strategy identity and intrinsic capability.
+- **Behavioral Surface registry** is validated to confirm the surface exists and (when a `state_id` is provided) that the state belongs to that surface.
+- **Evaluation Scope** accepts any valid registered strategy for any valid registered surface.
 
 The distinction is therefore:
 

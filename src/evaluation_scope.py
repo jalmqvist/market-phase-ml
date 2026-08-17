@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from mpml.behavioral import registry as behavioral_registry
 from src.strategy_registry import (
     DEFAULT_PHASEAWARE_POLICY_ID,
     EvaluationPolicyRegistry,
@@ -64,6 +65,7 @@ def resolve_evaluation_scope(
     registry: StrategyRegistry,
     policy_registry: EvaluationPolicyRegistry,
     surface_id: str,
+    state_id: str | None = None,
     default_policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
 ) -> EvaluationScope:
     """Resolve the effective evaluation scope.
@@ -73,8 +75,17 @@ def resolve_evaluation_scope(
     When no strategy IDs are explicitly requested the default scope is
     derived from the active EvaluationPolicy and the existing runtime is
     preserved exactly.  When strategy IDs are explicitly requested they
-    are validated against the Strategy Registry and checked for
-    compatibility with the active Behavioral Surface.
+    are validated against the Strategy Registry, and the Behavioral Surface
+    is validated as a registered surface.
+
+    Architectural note: strategy capability (``supported_surfaces`` on
+    :class:`~src.strategy_registry.StrategyCapabilities`) describes what a
+    strategy is intrinsically implemented for.  Behavioral Surface / State
+    describes the market population on which the strategy is *evaluated*.
+    Evaluation Scope determines which strategies participate in a particular
+    experiment.  These three concepts are independent.  A strategy does not
+    need to declare a Behavioral Surface as a native capability in order to
+    be evaluated conditionally within that surface's experiment.
 
     Parameters
     ----------
@@ -86,7 +97,12 @@ def resolve_evaluation_scope(
     policy_registry:
         Evaluation Policy Registry for resolving the default scope.
     surface_id:
-        Active Behavioral Surface ID used for compatibility checking.
+        Active Behavioral Surface ID.  Must be a registered surface;
+        does not restrict which strategies may participate.
+    state_id:
+        Optional Behavioral State ID.  When provided it must belong to
+        *surface_id*; cross-surface state IDs (e.g. ``"LVTF"`` passed
+        with ``surface_id="reactive_jpy"``) are rejected.
     default_policy_id:
         Evaluation policy used to derive the default scope.
 
@@ -100,8 +116,9 @@ def resolve_evaluation_scope(
     ValueError
         If any requested strategy ID is unknown in the registry.
     ValueError
-        If any requested strategy ID is incompatible with the active
-        Behavioral Surface.
+        If the surface_id is not a registered Behavioral Surface.
+    ValueError
+        If state_id is provided but does not belong to surface_id.
     """
     if not requested_strategy_ids:
         # Default scope: strategies from the active EvaluationPolicy.
@@ -129,18 +146,45 @@ def resolve_evaluation_scope(
             f"Available: {registry.available()}"
         )
 
-    # Check compatibility with the active Behavioral Surface.
-    compatible_ids = {
-        defn.strategy_id
-        for defn in registry.supporting_surface(surface_id)
-    }
-    incompatible = [sid for sid in deduplicated if sid not in compatible_ids]
-    if incompatible:
+    # Validate the Behavioral Surface itself.  This rejects unknown surface
+    # IDs while allowing any valid registry strategy to be evaluated
+    # conditionally on a Behavioral Surface — regardless of whether that
+    # strategy declares the surface as a native capability.
+    #
+    # Architectural note
+    # ------------------
+    # Strategy capability (supported_surfaces on StrategyCapabilities) describes
+    # what a strategy is intrinsically implemented for.  Behavioral Surface /
+    # State describes the market population on which the strategy is *evaluated*.
+    # Evaluation Scope determines which strategies participate in a particular
+    # experiment.  These are three distinct concepts and must not be conflated.
+    #
+    # A TrendFollowing strategy does not need to declare "reactive_jpy" in its
+    # supported_surfaces in order to be evaluated conditionally within the
+    # Reactive-JPY behavioral surface experiment.  The behavioral surface
+    # conditions the evaluation universe; it is not an intrinsic strategy
+    # attribute.
+    if surface_id not in behavioral_registry:
         raise ValueError(
-            f"Configuration error: strategy ID(s) {incompatible} are not "
-            f"compatible with Behavioral Surface {surface_id!r}. "
-            f"Compatible strategies for this surface: {sorted(compatible_ids)}"
+            f"Configuration error: unknown Behavioral Surface {surface_id!r}. "
+            f"Available surfaces: {behavioral_registry.available()}"
         )
+
+    # Validate the Behavioral State when provided.  The state must belong to
+    # the active surface — cross-surface state IDs (e.g. "LVTF" with
+    # surface_id="reactive_jpy") are rejected here rather than silently
+    # producing meaningless results downstream.
+    if state_id is not None:
+        surface = behavioral_registry.load(surface_id)
+        try:
+            surface.get_state(state_id)
+        except KeyError:
+            surface_states = [s.state_id for s in surface.states()]
+            raise ValueError(
+                f"Configuration error: Behavioral State {state_id!r} does not "
+                f"belong to surface {surface_id!r}. "
+                f"Valid states for this surface: {sorted(surface_states)}"
+            ) from None
 
     return EvaluationScope(
         strategy_ids=tuple(deduplicated),

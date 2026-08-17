@@ -90,3 +90,36 @@ The generated `report.md` includes:
 - Selector uplift: does DL-gated routing improve OOS Sharpe?
 
 See [`docs/research/analysis_framework_v2.md`](../research/analysis_framework_v2.md) for full documentation.
+
+## Infrastructure note — Behavioral Surface evaluation scope
+
+> **Status: resolved (infrastructure fix, not a research result)**
+
+Behavioral Surface evaluation of the existing strategy universe (e.g. `reactive_jpy`
+with `TF1` or `MR5`) was previously blocked by an evaluation-scope compatibility
+defect in `resolve_evaluation_scope`.
+
+The defect caused the function to reject any valid strategy against the
+`reactive_jpy` surface because no strategy declared `reactive_jpy` as a native
+strategy capability (`supported_surfaces`).  This was an architectural mismatch:
+strategy capability and behavioral-surface conditioning are independent concepts
+and must not be conflated.
+
+The fix separates evaluation-scope resolution from intrinsic strategy capability:
+
+- **Strategy capability** (`supported_surfaces`) describes what a strategy is
+  intrinsically implemented to execute.
+- **Behavioral Surface / State** describes the market population on which the
+  strategy is *evaluated*.
+- **Evaluation Scope** determines which strategies participate in a particular
+  experiment.
+
+A valid registered strategy may now participate in any valid registered
+Behavioral Surface experiment without needing to declare that surface as a
+native capability.  Validation of unknown strategy IDs, unknown surface IDs,
+and cross-surface state IDs is preserved.
+
+This is an infrastructure correction.  It does not constitute a research result
+and does not imply any conclusion about behavioral-surface-conditioned strategy
+performance.
+
