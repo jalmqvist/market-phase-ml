@@ -415,33 +415,32 @@ The Strategy Registry should describe strategy capabilities rather than encode s
 
 # Evaluation Policies
 
-Strategy compatibility and experiment scope are independent concepts.
+Strategy capability and experiment scope are independent concepts.
 
-The Strategy Registry describes which strategies are capable of operating under a given Behavioral Surface or Behavioral State.
+The Strategy Registry describes the intrinsic capabilities of each strategy. In
+particular, `supported_surfaces` and `supported_states` describe what a strategy
+is implemented to execute; they do not determine the Behavioral Surface on which
+the strategy may be evaluated.
 
-Evaluation Policies determine which compatible strategies participate in a particular experiment.
+Evaluation Policies determine which registered strategies participate in a
+particular experiment. The active Behavioral Surface/State conditions the
+evaluation universe independently of intrinsic strategy capability.
 
 For example
 
 ```
-Behavioral Surface
-
-↓
-
 Strategy Registry
-
-↓
-
-Compatible Strategies
-
-↓
-
-Evaluation Policy
-
-↓
-
+        ↓
+Evaluation Policy / explicit Evaluation Scope
+        ↓
 Strategies Evaluated
+        ↑
+Behavioral Surface / State
 ```
+
+The Behavioral Surface / State therefore conditions *where and on which market
+population* the selected strategies are evaluated, while the Evaluation Scope
+determines *which strategies* participate.
 
 Typical policies may include
 
@@ -514,28 +513,22 @@ Strategy rankings are generated offline using walk-forward evaluation.
 Unlike earlier MPML implementations, the ranking engine should not contain
 hardcoded knowledge of specific strategies or behavioral surfaces.
 
-Instead, rankings emerge by combining metadata from the Behavioral Surface
-Registry and the Strategy Registry.
+Instead, rankings emerge by combining the active Behavioral Surface/State
+with the selected strategies and their registry metadata.
 
 ```
-Behavioral Surface
-
-↓
-
-Behavioral State
-
-↓
-
-Compatible Strategies
-
-↓
-
+Behavioral Surface / State
+        ↓
+Selected Strategies
+        ↓
 Walk-forward Evidence
-
-↓
-
+        ↓
 Strategy Ranking
 ```
+
+The Behavioral Surface / State conditions the evaluation universe; it does not
+first filter strategies by requiring the surface to appear in their intrinsic
+`supported_surfaces` capability metadata.
 
 Ranking criteria may include
 
@@ -576,11 +569,7 @@ Behavioral State
 
 ↓
 
-Strategy Registry
-
-↓
-
-Compatible Strategies
+Evaluation Scope / Selected Strategies
 
 ↓
 
@@ -590,6 +579,10 @@ Walk-forward Ranking
 
 Recommendation
 ```
+
+The Strategy Registry supplies intrinsic strategy metadata; it does not imply
+that a strategy must declare the active Behavioral Surface as a native
+capability in order to be evaluated there.
 
 Each recommendation contains
 
