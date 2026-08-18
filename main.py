@@ -1515,17 +1515,202 @@ def _aggregate_walkforward_results(
     return wf_pair, overall
 
 
+def _canonical_trend_vol_regime(value) -> str:
+    """Map legacy phase labels to the canonical MPML/MSML Trend/Vol names."""
+    mapping = {
+        "HV_Trend": "HVTF",
+        "LV_Trend": "LVTF",
+        "HV_Ranging": "HVR",
+        "LV_Ranging": "LVR",
+        # Already-canonical values are preserved.
+        "HVTF": "HVTF",
+        "LVTF": "LVTF",
+        "HVR": "HVR",
+        "LVR": "LVR",
+    }
+    if value is None or pd.isna(value):
+        return ""
+    return mapping.get(str(value), str(value))
+
+
+def _build_strategy_regime_profile(
+    signal_timeline_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build per-fold strategy × Trend/Vol regime exposure/preference statistics.
+
+    The profile is descriptive only. It does not modify strategy execution.
+    Relative preference is:
+
+        P(regime | signal_active) / P(regime)
+
+    where ``signal_active`` means signal != 0. A value of 1.0 therefore means
+    the strategy's active signals are distributed across the regime in
+    proportion to the regime's population in the test window.
+    """
+    if signal_timeline_df.empty:
+        return pd.DataFrame()
+
+    df = signal_timeline_df.copy()
+    df["signal_active"] = df["signal"].astype(float).ne(0)
+    regimes = ["HVTF", "LVTF", "HVR", "LVR"]
+
+    group_cols = ["pair", "fold", "strategy"]
+    population = (
+        df.groupby(group_cols, as_index=False)
+        .size()
+        .rename(columns={"size": "total_test_bars"})
+    )
+    active_totals = (
+        df.groupby(group_cols, as_index=False)["signal_active"]
+        .sum()
+        .rename(columns={"signal_active": "total_active_bars"})
+    )
+    long_totals = (
+        df.assign(_long=df["signal"].astype(float).eq(1))
+        .groupby(group_cols, as_index=False)["_long"]
+        .sum()
+        .rename(columns={"_long": "total_long_signals"})
+    )
+    short_totals = (
+        df.assign(_short=df["signal"].astype(float).eq(-1))
+        .groupby(group_cols, as_index=False)["_short"]
+        .sum()
+        .rename(columns={"_short": "total_short_signals"})
+    )
+
+    long_by_regime = (
+        df.assign(_long=df["signal"].astype(float).eq(1))
+        .groupby(group_cols + ["regime"], as_index=False)["_long"]
+        .sum()
+        .rename(columns={"_long": "long_signal_bars"})
+    )
+    short_by_regime = (
+        df.assign(_short=df["signal"].astype(float).eq(-1))
+        .groupby(group_cols + ["regime"], as_index=False)["_short"]
+        .sum()
+        .rename(columns={"_short": "short_signal_bars"})
+    )
+    regime_counts = (
+        df.groupby(group_cols + ["regime"], as_index=False)
+        .agg(
+            regime_population_bars=("regime", "size"),
+            active_signal_bars=("signal_active", "sum"),
+        )
+        .merge(long_by_regime, on=group_cols + ["regime"], how="left")
+        .merge(short_by_regime, on=group_cols + ["regime"], how="left")
+    )
+
+    # Emit all four canonical regimes, including zero-population/zero-activity
+    # combinations, so absence of evidence is visible rather than omitted.
+    combos = population[group_cols].merge(
+        pd.DataFrame({"regime": regimes}), how="cross"
+    )
+    profile = combos.merge(
+        regime_counts, on=group_cols + ["regime"], how="left"
+    ).fillna({
+        "regime_population_bars": 0,
+        "active_signal_bars": 0,
+        "long_signal_bars": 0,
+        "short_signal_bars": 0,
+    })
+    profile = profile.merge(population, on=group_cols, how="left")
+    profile = profile.merge(active_totals, on=group_cols, how="left")
+    profile = profile.merge(long_totals, on=group_cols, how="left")
+    profile = profile.merge(short_totals, on=group_cols, how="left")
+
+    profile["regime_pct"] = (
+        profile["regime_population_bars"] / profile["total_test_bars"] * 100.0
+    )
+    profile["active_signal_pct"] = (
+        profile["active_signal_bars"] / profile["total_test_bars"] * 100.0
+    )
+    profile["signal_active_pct_within_regime"] = np.where(
+        profile["regime_population_bars"] > 0,
+        profile["active_signal_bars"] / profile["regime_population_bars"] * 100.0,
+        np.nan,
+    )
+    profile["signal_share_pct"] = np.where(
+        profile["total_active_bars"] > 0,
+        profile["active_signal_bars"] / profile["total_active_bars"] * 100.0,
+        np.nan,
+    )
+    profile["relative_preference"] = np.where(
+        (profile["regime_pct"] > 0) & (profile["total_active_bars"] > 0),
+        profile["signal_share_pct"] / profile["regime_pct"],
+        np.nan,
+    )
+
+    # Stable, explicit ordering.
+    profile["regime"] = pd.Categorical(
+        profile["regime"], categories=regimes, ordered=True
+    )
+    profile = profile.sort_values(group_cols + ["regime"]).reset_index(drop=True)
+
+    return profile[
+        group_cols
+        + [
+            "regime",
+            "total_test_bars",
+            "regime_population_bars",
+            "regime_pct",
+            "active_signal_bars",
+            "active_signal_pct",
+            "signal_active_pct_within_regime",
+            "total_active_bars",
+            "signal_share_pct",
+            "relative_preference",
+            "long_signal_bars",
+            "short_signal_bars",
+            "total_long_signals",
+            "total_short_signals",
+        ]
+    ]
+
+
 def _run_registry_strategy_backtest(
     *,
     df: pd.DataFrame,
     backtester: BT,
     strategy_id: str,
     strategy_registry=None,
+    signal_timeline_rows: list[dict] | None = None,
+    pair_name: str | None = None,
+    fold_id: int | None = None,
 ) -> dict:
-    """Instantiate a registry strategy and backtest it on *df*."""
+    """Instantiate a registry strategy and backtest it on *df*.
+
+    When ``signal_timeline_rows`` is supplied, preserve the already-generated
+    per-bar strategy signal alongside the aggregate backtest result.  This is
+    an evaluation artifact only: the standalone strategy itself remains
+    unconditional and is not modified by behavioral-surface conditioning.
+    """
     strategy_registry = strategy_registry or get_default_strategy_registry()
     strategy = strategy_registry.get(strategy_id).instantiate()
     signals, sl_pct, tp_pct = strategy.generate_signals(df)
+
+    if signal_timeline_rows is not None:
+        if pair_name is None or fold_id is None:
+            raise ValueError(
+                "signal_timeline_rows requires pair_name and fold_id."
+            )
+
+        signal_s = pd.Series(signals, index=df.index)
+        sl_s = pd.Series(sl_pct, index=df.index)
+        tp_s = pd.Series(tp_pct, index=df.index)
+
+        for ts in df.index:
+            signal_timeline_rows.append({
+                "pair": pair_name,
+                "fold": fold_id,
+                "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                "regime": _canonical_trend_vol_regime(df.loc[ts, "phase"]) if "phase" in df.columns else "",
+                "strategy": strategy_id,
+                "signal": signal_s.loc[ts],
+                "signal_active": bool(float(signal_s.loc[ts]) != 0),
+                "sl_pct": sl_s.loc[ts],
+                "tp_pct": tp_s.loc[ts],
+            })
+
     return backtester.run(df, signals, strategy_id, sl_pct, tp_pct)
 
 
@@ -3042,6 +3227,7 @@ def main(
         walkforward_rows = []
         vol_diag_rows = []
         _timeline_rows: list[dict] = []  # accumulates per-bar selector state (if enabled)
+        _strategy_signal_timeline_rows: list[dict] = []
         saved_selected_folds: dict[str, int] = {}
         saved_equity_folds: dict[str, int] = {}
 
@@ -3243,6 +3429,9 @@ def main(
                         backtester=backtester,
                         strategy_id=strategy_id,
                         strategy_registry=_wf_strategy_registry,
+                        signal_timeline_rows=_strategy_signal_timeline_rows,
+                        pair_name=pair_name,
+                        fold_id=fold_id,
                     )
 
                 # --- Optional: save equity curves + spike masks for plotting (small whitelist) ---
@@ -3538,6 +3727,43 @@ def main(
 
             print("\nWalk-forward summary:")
             print(pd.DataFrame([overall]).to_string(index=False))
+
+            # --- Standalone strategy signal timeline + regime profile ---
+            # The timeline preserves the exact per-bar signals already generated
+            # for standalone WF backtests. Behavioral regime is evaluation
+            # context only; it does not alter strategy execution.
+            if _strategy_signal_timeline_rows:
+                strategy_timeline_df = pd.DataFrame(_strategy_signal_timeline_rows)
+
+                strategy_timeline_path = _with_mode_tag(
+                    "results/strategy_signal_timeline.csv",
+                    dl_mode_tag,
+                )
+                strategy_timeline_df.to_csv(
+                    strategy_timeline_path, index=False
+                )
+                print(
+                    f"Saved: {strategy_timeline_path} "
+                    f"({len(strategy_timeline_df)} bars)"
+                )
+
+                strategy_regime_profile = _build_strategy_regime_profile(
+                    strategy_timeline_df
+                )
+                if not strategy_regime_profile.empty:
+                    strategy_profile_path = _with_mode_tag(
+                        "results/strategy_regime_profile.csv",
+                        dl_mode_tag,
+                    )
+                    strategy_regime_profile.to_csv(
+                        strategy_profile_path, index=False
+                    )
+                    print(
+                        f"Saved: {strategy_profile_path} "
+                        f"({len(strategy_regime_profile)} rows)"
+                    )
+            else:
+                print("  strategy signal timeline: no standalone strategy bars collected.")
 
             # --- Optional selector state timeline export ---
             if EXPORT_SELECTOR_STATE_TIMELINE and _timeline_rows:
