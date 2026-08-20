@@ -1444,6 +1444,64 @@ def _build_walkforward_execution_plan(
     }
 
 
+def _compute_behavioral_eligible_pairs(
+    d1_predictions: "pd.DataFrame",
+    *,
+    strategy_only_scope: bool,
+    dl_runtime_enabled: bool,
+) -> "frozenset[str] | None":
+    """Return the frozenset of pair names eligible for behavioral evaluation.
+
+    Pair names are normalized to MPML format (e.g. ``"EURJPY"``) by upper-casing
+    and stripping hyphens from the artifact pair keys (``"eur-jpy"``).
+
+    Returns ``None`` when no pair restriction should be applied — this preserves
+    the existing behavior for default/full-universe runs and baseline runs.
+
+    Returns a non-empty frozenset only when ALL of the following conditions hold:
+
+    * ``strategy_only_scope=True`` — an explicit ``--strategy`` scope is active.
+    * ``dl_runtime_enabled=True`` — a behavioral artifact was resolved.
+    * ``d1_predictions`` is non-empty and contains a ``"pair"`` column.
+
+    Parameters
+    ----------
+    d1_predictions : pd.DataFrame
+        Daily DL prediction frame from :class:`BehavioralArtifactRuntime`.
+        The ``"pair"`` column carries artifact-format pair keys (``"eur-jpy"``).
+    strategy_only_scope : bool
+        ``True`` when ``_strategy_only_scope`` is active (explicit strategy).
+    dl_runtime_enabled : bool
+        ``True`` when the behavioral artifact runtime is enabled.
+
+    Returns
+    -------
+    frozenset[str] | None
+        Normalized pair names covered by the behavioral surface, or ``None``
+        when no pair-scope restriction applies.
+    """
+    if not strategy_only_scope or not dl_runtime_enabled:
+        return None
+    if d1_predictions is None or d1_predictions.empty:
+        return None
+    if "pair" not in d1_predictions.columns:
+        return None
+    artifact_pairs = (
+        d1_predictions["pair"]
+        .dropna()
+        .astype(str)
+        .unique()
+        .tolist()
+    )
+    if not artifact_pairs:
+        return None
+    return frozenset(
+        p.strip().upper().replace("-", "")
+        for p in artifact_pairs
+        if p.strip()
+    )
+
+
 def _walkforward_uses_composite_aggregation(strategy_specs: list[dict]) -> bool:
     """Return True when walk-forward exports should use legacy delta summaries."""
     return any(
@@ -3231,9 +3289,51 @@ def main(
         saved_selected_folds: dict[str, int] = {}
         saved_equity_folds: dict[str, int] = {}
 
+        # ── Behavioral surface pair-scope gate ─────────────────────────────
+        # When an explicit strategy + behavioral surface is active, restrict
+        # the walkforward to only the pairs covered by the behavioral surface
+        # (i.e. the pairs for which the artifact provides DL predictions).
+        # This enforces the behavioral conditioning: the evaluation runs on the
+        # correct pair population and the df_test that enters strategy evaluation
+        # carries the DL feature columns attached during pair processing.
+        # Default/full-universe runs are never restricted.
+        _wf_behavioral_eligible_pairs = _compute_behavioral_eligible_pairs(
+            preloaded_daily_dl,
+            strategy_only_scope=_strategy_only_scope,
+            dl_runtime_enabled=dl_runtime_enabled,
+        )
+        if _wf_behavioral_eligible_pairs is not None:
+            print(
+                f"[BEHAVIORAL] explicit strategy + behavioral surface conditioning:\n"
+                f"  surface   : {_resolved_behavioral_surface_id!r}\n"
+                f"  state     : {_resolved_behavioral_state_id!r}\n"
+                f"  strategy  : {list(_effective_scope.strategy_ids)}\n"
+                f"  eligible pairs: {sorted(_wf_behavioral_eligible_pairs)}"
+            )
+        # ───────────────────────────────────────────────────────────────────
+
         for pair_name in sorted(processed_data.keys()):
             df_full = processed_data[pair_name]
             print(f"\n  --- {pair_name} ---")
+
+            # Behavioral surface pair-scope gate: skip pairs not covered by
+            # the active behavioral surface when explicit strategy scope is used.
+            if _wf_behavioral_eligible_pairs is not None:
+                _normalized_pair = pair_name.upper().replace("-", "")
+                if _normalized_pair not in _wf_behavioral_eligible_pairs:
+                    print(
+                        f"  [BEHAVIORAL] {pair_name}: excluded from evaluation "
+                        f"(not in {_resolved_behavioral_surface_id!r} pair scope "
+                        f"{sorted(_wf_behavioral_eligible_pairs)})"
+                    )
+                    continue
+                _pair_dl_cols = get_dl_feature_columns(df_full)
+                print(
+                    f"  [BEHAVIORAL] {pair_name}: behavioral-conditioned evaluation input "
+                    f"(surface={_resolved_behavioral_surface_id!r} "
+                    f"state={_resolved_behavioral_state_id!r} "
+                    f"dl_cols={_pair_dl_cols})"
+                )
 
             pair_results_full: dict = {}
             if _wf_run_dynamic:
