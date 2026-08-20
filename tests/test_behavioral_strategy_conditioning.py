@@ -549,13 +549,9 @@ class TestWalkforwardPairScopeGate(unittest.TestCase):
             dl_runtime_enabled=False,
         )
         self.assertIsNone(baseline_eligible, "Baseline gate must be None (no restriction)")
-        # None → no gate → all pairs admitted
-        included_baseline = [
-            p for p in self.__class__._processed_pairs
-            if baseline_eligible is None or p.upper().replace("-", "") in baseline_eligible
-        ]
+        # None → no gate → all pairs admitted; assert all four pairs would be included
         self.assertEqual(
-            sorted(included_baseline),
+            sorted(self.__class__._processed_pairs),
             ["EURJPY", "EURUSD", "GBPJPY", "USDJPY"],
         )
 
