@@ -21,7 +21,11 @@ from src.data import (
     resolve_market_data_source,
 )
 from src.phases import MarketPhaseDetector
-from src.strategies import instantiate_evaluated_strategy_dicts, run_backtests
+from src.strategies import (
+    instantiate_evaluated_strategy_dicts,
+    run_backtests,
+    trades_to_dataframe,
+)
 from src import visualization as viz
 from src.visualization import PhaseVisualizer
 from src.cache import (
@@ -3289,6 +3293,11 @@ def main(
         saved_selected_folds: dict[str, int] = {}
         saved_equity_folds: dict[str, int] = {}
 
+        # Research artifacts for standalone strategy analysis.
+        # These are populated from the exact backtest results used for WF metrics.
+        strategy_trade_rows = []
+        strategy_execution_rows = []
+
         # ── Behavioral surface pair-scope gate ─────────────────────────────
         # When an explicit strategy + behavioral surface is active, restrict
         # the walkforward to only the pairs covered by the behavioral surface
@@ -3538,6 +3547,44 @@ def main(
                         pair_name=pair_name,
                         fold_id=fold_id,
                     )
+
+                # --- Research artifacts: standalone strategy trades + execution timeline ---
+                for strategy_id, strategy_res in standalone_results.items():
+                    # Completed trades
+                    trades_df = trades_to_dataframe(
+                        strategy_res.get("trades", [])
+                    )
+
+                    if not trades_df.empty:
+                        trades_df.insert(0, "pair", pair_name)
+                        trades_df.insert(1, "fold", fold_id)
+
+                        # strategy is already present in TradeResult, but keep the explicit
+                        # standalone strategy ID as the authoritative benchmark identifier.
+                        trades_df["strategy_id"] = strategy_id
+
+                        trades_df["fold_test_start"] = f["test_start_dt"]
+                        trades_df["fold_test_end"] = f["test_end_dt"]
+
+                        strategy_trade_rows.extend(
+                            trades_df.to_dict(orient="records")
+                        )
+
+                    # Per-bar execution state
+                    execution_df = strategy_res.get("execution_timeline")
+
+                    if execution_df is not None and not execution_df.empty:
+                        execution_df = execution_df.copy()
+
+                        execution_df.insert(0, "pair", pair_name)
+                        execution_df.insert(1, "fold", fold_id)
+                        execution_df.insert(2, "strategy_id", strategy_id)
+                        execution_df["fold_test_start"] = f["test_start_dt"]
+                        execution_df["fold_test_end"] = f["test_end_dt"]
+
+                        strategy_execution_rows.extend(
+                            execution_df.to_dict(orient="records")
+                        )
 
                 # --- Optional: save equity curves + spike masks for plotting (small whitelist) ---
                 if (
@@ -3789,6 +3836,49 @@ def main(
             wf_summary_path = _with_mode_tag("results/walkforward_results_summary.csv", dl_mode_tag)
             pd.DataFrame([overall]).to_csv(wf_summary_path, index=False)
             print(f"Saved: {wf_summary_path}")
+
+            # ─────────────────────────────────────────
+            # STANDALONE STRATEGY RESEARCH ARTIFACTS
+            # ─────────────────────────────────────────
+
+            # These artifacts contain the raw evidence used to study where individual
+            # strategies operate and how individual trades behave. They are intentionally
+            # kept separate from aggregate walk-forward metrics.
+
+            if strategy_trade_rows:
+                strategy_trades_df = pd.DataFrame(strategy_trade_rows)
+
+                strategy_trades_path = _with_mode_tag(
+                    "results/strategy_trades.csv",
+                    dl_mode_tag,
+                )
+                strategy_trades_df.to_csv(strategy_trades_path, index=False)
+
+                print(
+                    f"Saved: {strategy_trades_path} "
+                    f"({len(strategy_trades_df):,} completed trades)"
+                )
+            else:
+                print("No standalone strategy trades available for export.")
+
+            if strategy_execution_rows:
+                strategy_execution_df = pd.DataFrame(strategy_execution_rows)
+
+                strategy_execution_path = _with_mode_tag(
+                    "results/strategy_execution_timeline.csv",
+                    dl_mode_tag,
+                )
+                strategy_execution_df.to_csv(
+                    strategy_execution_path,
+                    index=False,
+                )
+
+                print(
+                    f"Saved: {strategy_execution_path} "
+                    f"({len(strategy_execution_df):,} execution bars)"
+                )
+            else:
+                print("No standalone strategy execution timeline available for export.")
 
             # --- New diagnostics outputs ---
             if vol_diag_rows:
