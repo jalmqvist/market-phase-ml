@@ -3302,13 +3302,18 @@ def main(
             strategy_only_scope=_strategy_only_scope,
             dl_runtime_enabled=dl_runtime_enabled,
         )
+        _wf_behavioral_eligible_sorted: list[str] | None = (
+            sorted(_wf_behavioral_eligible_pairs)
+            if _wf_behavioral_eligible_pairs is not None
+            else None
+        )
         if _wf_behavioral_eligible_pairs is not None:
             print(
                 f"[BEHAVIORAL] explicit strategy + behavioral surface conditioning:\n"
                 f"  surface   : {_resolved_behavioral_surface_id!r}\n"
                 f"  state     : {_resolved_behavioral_state_id!r}\n"
                 f"  strategy  : {list(_effective_scope.strategy_ids)}\n"
-                f"  eligible pairs: {sorted(_wf_behavioral_eligible_pairs)}"
+                f"  eligible pairs: {_wf_behavioral_eligible_sorted}"
             )
         # ───────────────────────────────────────────────────────────────────
 
@@ -3324,7 +3329,7 @@ def main(
                     print(
                         f"  [BEHAVIORAL] {pair_name}: excluded from evaluation "
                         f"(not in {_resolved_behavioral_surface_id!r} pair scope "
-                        f"{sorted(_wf_behavioral_eligible_pairs)})"
+                        f"{_wf_behavioral_eligible_sorted})"
                     )
                     continue
                 _pair_dl_cols = get_dl_feature_columns(df_full)
