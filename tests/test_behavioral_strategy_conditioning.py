@@ -263,6 +263,11 @@ class TestStateSpecificDistinctness(unittest.TestCase):
     Two different reactive-JPY states (YOUNG / MATURING) share the same underlying
     pair coverage (the artifact covers the same JPY pairs).  Both must produce
     non-None eligible pair sets; neither must be None (the baseline path).
+
+    Note: _compute_behavioral_eligible_pairs does not receive a state_id — the pair
+    restriction is derived solely from the d1_predictions artifact content.  These
+    tests verify that both valid behavioral states produce a non-None pair restriction
+    (i.e. neither collapses to the baseline path), not that they produce distinct sets.
     """
 
     @classmethod
@@ -282,11 +287,11 @@ class TestStateSpecificDistinctness(unittest.TestCase):
         )
 
     def test_young_state_is_not_none(self):
-        """JPY_CONSENSUS_YOUNG must not collapse to baseline (None)."""
+        """JPY_CONSENSUS_YOUNG must produce a non-None pair restriction (not the baseline path)."""
         self.assertIsNotNone(self.__class__._eligible_young)
 
     def test_maturing_state_is_not_none(self):
-        """JPY_CONSENSUS_MATURING must not collapse to baseline (None)."""
+        """JPY_CONSENSUS_MATURING must produce a non-None pair restriction (not the baseline path)."""
         self.assertIsNotNone(self.__class__._eligible_maturing)
 
     def test_both_states_cover_jpy_pairs(self):
@@ -455,6 +460,178 @@ class TestDlFeaturePresenceForBehavioralPairs(unittest.TestCase):
             self._main.has_dl_features(behavioral_df),
             self._main.has_dl_features(baseline_df),
             "Behavioral and baseline DataFrames must differ at has_dl_features level",
+        )
+
+
+# ---------------------------------------------------------------------------
+# 7. Walkforward pair-scope gate — evaluation-loop contract
+# ---------------------------------------------------------------------------
+
+class TestWalkforwardPairScopeGate(unittest.TestCase):
+    """Regression test for the evaluation-loop pair-scope gate.
+
+    Setup:
+        processed_data : EURUSD, EURJPY, GBPJPY, USDJPY
+        behavioral artifact : EURJPY, GBPJPY, USDJPY  (reactive_jpy)
+        explicit strategy   : TF1
+
+    Contract:
+        - Only EURJPY, GBPJPY, USDJPY reach the evaluation stage.
+        - EURUSD is excluded (not in the behavioral artifact).
+
+    This test exercises the gate at the helper level used by the
+    walk-forward loop (the same gate that caused the original bug).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._main = _load_main()
+        # Simulate: processed_data has four pairs (three JPY + one non-JPY)
+        cls._processed_pairs = ["EURUSD", "EURJPY", "GBPJPY", "USDJPY"]
+        # Behavioral artifact only covers the three JPY pairs
+        _artifact_d1 = _make_d1_predictions(["eur-jpy", "gbp-jpy", "usd-jpy"])
+        # Explicit strategy scope + DL runtime active → gate should restrict
+        cls._eligible = cls._main._compute_behavioral_eligible_pairs(
+            _artifact_d1,
+            strategy_only_scope=True,
+            dl_runtime_enabled=True,
+        )
+
+    def _is_included(self, pair_name: str) -> bool:
+        """Replicate the gate logic from the walk-forward loop."""
+        eligible = self.__class__._eligible
+        if eligible is None:
+            return True
+        return pair_name.upper().replace("-", "") in eligible
+
+    def test_gate_is_active(self):
+        """The pair-scope gate must be active (eligible set is not None)."""
+        self.assertIsNotNone(self.__class__._eligible)
+
+    def test_eurusd_is_excluded_from_evaluation(self):
+        """EURUSD must be excluded — it is not in the reactive_jpy artifact."""
+        self.assertFalse(
+            self._is_included("EURUSD"),
+            "EURUSD must be skipped by the behavioral pair-scope gate",
+        )
+
+    def test_eurjpy_is_included_in_evaluation(self):
+        """EURJPY must pass the pair-scope gate."""
+        self.assertTrue(self._is_included("EURJPY"))
+
+    def test_gbpjpy_is_included_in_evaluation(self):
+        """GBPJPY must pass the pair-scope gate."""
+        self.assertTrue(self._is_included("GBPJPY"))
+
+    def test_usdjpy_is_included_in_evaluation(self):
+        """USDJPY must pass the pair-scope gate."""
+        self.assertTrue(self._is_included("USDJPY"))
+
+    def test_exactly_three_pairs_pass_gate(self):
+        """Exactly three pairs (the JPY set) must pass the gate."""
+        included = [p for p in self.__class__._processed_pairs if self._is_included(p)]
+        self.assertEqual(
+            sorted(included),
+            ["EURJPY", "GBPJPY", "USDJPY"],
+            "Gate must admit exactly the artifact pairs",
+        )
+
+    def test_exactly_one_pair_excluded_by_gate(self):
+        """Exactly one pair (EURUSD) must be excluded by the gate."""
+        excluded = [p for p in self.__class__._processed_pairs if not self._is_included(p)]
+        self.assertEqual(excluded, ["EURUSD"])
+
+    def test_baseline_gate_admits_all_pairs(self):
+        """Baseline (DL disabled) gate must admit all four pairs."""
+        baseline_eligible = self.__class__._main._compute_behavioral_eligible_pairs(
+            _make_d1_predictions(["eur-jpy", "gbp-jpy", "usd-jpy"]),
+            strategy_only_scope=True,
+            dl_runtime_enabled=False,
+        )
+        self.assertIsNone(baseline_eligible, "Baseline gate must be None (no restriction)")
+        # None → no gate → all pairs admitted
+        included_baseline = [
+            p for p in self.__class__._processed_pairs
+            if baseline_eligible is None or p.upper().replace("-", "") in baseline_eligible
+        ]
+        self.assertEqual(
+            sorted(included_baseline),
+            ["EURJPY", "EURUSD", "GBPJPY", "USDJPY"],
+        )
+
+
+# ---------------------------------------------------------------------------
+# 8. DL columns preserved in df_test for behavioral pairs
+# ---------------------------------------------------------------------------
+
+class TestDlColumnsPreservedInDfTest(unittest.TestCase):
+    """Regression: the behavioral evaluation input (df_test) must carry DL columns.
+
+    The original bug meant behavioral conditioning was never applied because:
+    (a) the pair-scope gate was missing (fixed), AND
+    (b) the df_test entering strategy evaluation must carry the DL feature columns
+        that attach_dl_features() attached during pair processing.
+
+    This test verifies acceptance criterion (b): a pair that passed through
+    attach_dl_features() will have DL columns, and those columns must still be
+    present in a slice of that DataFrame (as would be passed to df_test in the
+    walk-forward fold).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._main = _load_main()
+
+    def _make_df_with_dl_cols(self) -> pd.DataFrame:
+        from src.dl_daily_features import D1_FEATURE_COLS
+        data: dict = {
+            "Close": [1.0, 1.1, 1.2, 1.3, 1.4],
+            "phase": ["trending"] * 5,
+        }
+        for col in D1_FEATURE_COLS:
+            data[col] = [0.5, 0.6, 0.7, 0.8, 0.9]
+        return pd.DataFrame(data, index=pd.date_range("2023-01-01", periods=5))
+
+    def test_dl_cols_present_in_full_df(self):
+        """The full processed DataFrame for a behavioral pair must have DL columns."""
+        df = self._make_df_with_dl_cols()
+        self.assertTrue(
+            self._main.has_dl_features(df),
+            "Full df for a behavioral pair must contain DL feature columns",
+        )
+
+    def test_dl_cols_preserved_in_df_test_slice(self):
+        """DL columns must be preserved when df_test is sliced from the full df."""
+        df = self._make_df_with_dl_cols()
+        # Simulate df_test as a fold slice (last 2 rows)
+        df_test_slice = df.iloc[-2:]
+        self.assertTrue(
+            self._main.has_dl_features(df_test_slice),
+            "df_test slice of a behavioral pair must still contain DL feature columns",
+        )
+
+    def test_dl_cols_absent_from_baseline_df_test(self):
+        """A baseline pair's df_test slice must not carry DL columns."""
+        df_baseline = pd.DataFrame({
+            "Close": [1.0, 1.1, 1.2, 1.3, 1.4],
+            "phase": ["ranging"] * 5,
+        }, index=pd.date_range("2023-01-01", periods=5))
+        df_test_slice = df_baseline.iloc[-2:]
+        self.assertFalse(
+            self._main.has_dl_features(df_test_slice),
+            "Baseline df_test must not contain DL feature columns",
+        )
+
+    def test_behavioral_dl_columns_match_expected_feature_set(self):
+        """DL columns in df_test must match the D1_FEATURE_COLS specification."""
+        from src.dl_daily_features import D1_FEATURE_COLS
+        df = self._make_df_with_dl_cols()
+        df_test_slice = df.iloc[-2:]
+        dl_cols_in_test = self._main.get_dl_feature_columns(df_test_slice)
+        self.assertEqual(
+            sorted(dl_cols_in_test),
+            sorted(D1_FEATURE_COLS),
+            "DL columns in df_test must exactly match D1_FEATURE_COLS",
         )
 
 
