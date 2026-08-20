@@ -21,9 +21,9 @@ This test file verifies:
    - EURJPY, GBPJPY, USDJPY are in the eligible set
    - Non-JPY pairs are not in the eligible set
 
-4. State-specific distinctness
-   - Different states yield distinct eligible pair sets (both non-None)
-   - Selecting a state does not collapse into the baseline path
+4. State-specific non-collapse
+   - Both YOUNG and MATURING produce a non-None pair restriction
+   - Neither state collapses into the baseline path (None)
 
 5. Existing behavior preserved
    - Default/full-universe scope → no pair restriction
@@ -468,7 +468,7 @@ class TestDlFeaturePresenceForBehavioralPairs(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestWalkforwardPairScopeGate(unittest.TestCase):
-    """Regression test for the evaluation-loop pair-scope gate.
+    """Contract/unit regression test for the walk-forward pair-scope gate.
 
     Setup:
         processed_data : EURUSD, EURJPY, GBPJPY, USDJPY
@@ -479,8 +479,10 @@ class TestWalkforwardPairScopeGate(unittest.TestCase):
         - Only EURJPY, GBPJPY, USDJPY reach the evaluation stage.
         - EURUSD is excluded (not in the behavioral artifact).
 
-    This test exercises the gate at the helper level used by the
-    walk-forward loop (the same gate that caused the original bug).
+    This test intentionally reproduces the gate logic used by the walk-forward
+    loop rather than executing the full pipeline.  That is preferable to a
+    heavyweight integration test and directly targets the same gate that caused
+    the original bug.
     """
 
     @classmethod
@@ -549,9 +551,14 @@ class TestWalkforwardPairScopeGate(unittest.TestCase):
             dl_runtime_enabled=False,
         )
         self.assertIsNone(baseline_eligible, "Baseline gate must be None (no restriction)")
-        # None → no gate → all pairs admitted; assert all four pairs would be included
+        # None → no gate → apply the same admission logic used in the behavioral case:
+        # all four pairs are admitted
+        included_baseline = [
+            p for p in self.__class__._processed_pairs
+            if baseline_eligible is None or p.upper().replace("-", "") in baseline_eligible
+        ]
         self.assertEqual(
-            sorted(self.__class__._processed_pairs),
+            sorted(included_baseline),
             ["EURJPY", "EURUSD", "GBPJPY", "USDJPY"],
         )
 
@@ -561,17 +568,12 @@ class TestWalkforwardPairScopeGate(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestDlColumnsPreservedInDfTest(unittest.TestCase):
-    """Regression: the behavioral evaluation input (df_test) must carry DL columns.
+    """Regression: DL feature columns must survive the df → df_test slice.
 
-    The original bug meant behavioral conditioning was never applied because:
-    (a) the pair-scope gate was missing (fixed), AND
-    (b) the df_test entering strategy evaluation must carry the DL feature columns
-        that attach_dl_features() attached during pair processing.
-
-    This test verifies acceptance criterion (b): a pair that passed through
-    attach_dl_features() will have DL columns, and those columns must still be
-    present in a slice of that DataFrame (as would be passed to df_test in the
-    walk-forward fold).
+    The fixture constructs the DL columns manually (it does not call
+    attach_dl_features() itself); the test verifies that those columns are
+    still present after a fold-style iloc slice, matching the contract that
+    the behavioral evaluation input (df_test) carries DL features.
     """
 
     @classmethod
