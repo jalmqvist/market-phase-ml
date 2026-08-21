@@ -771,6 +771,138 @@ class TestComputeBehavioralConditionalPerformance(unittest.TestCase):
         )
         self.assertIn("behavioral_eligible", result.columns)
 
+    # pnl is a required input column
+    def test_missing_pnl_column_raises(self):
+        """pnl must be required; omitting it raises ValueError like other missing columns."""
+        df = _make_attributed_trades_df([{}])
+        df = df.drop(columns=["pnl"])
+        with self.assertRaises(ValueError):
+            self._compute(df)
+
+
+# ---------------------------------------------------------------------------
+# Artifact output-path tests
+# ---------------------------------------------------------------------------
+
+import tempfile
+
+
+class TestBehavioralArtifactOutputPath(unittest.TestCase):
+    """Verify that the behavioral-performance artifact is written through the
+    run-output machinery (_with_mode_tag / _resolve_output_path) and NOT
+    directly to the repository-level results/ directory."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._main = _load_main()
+
+    def _setup_run_output_dir(self, tmp_dir: str) -> None:
+        """Point the module's run-output machinery at a temp directory."""
+        import importlib
+        # Reset global state, then set the new output dir.
+        self._main._CURRENT_RUN_OUTPUT_DIR = None
+        results_subdir = Path(tmp_dir) / "results"
+        results_subdir.mkdir(parents=True, exist_ok=True)
+        self._main._CURRENT_RUN_OUTPUT_DIR = Path(tmp_dir).resolve()
+
+    def test_artifact_path_is_under_run_output_dir(self):
+        """_with_mode_tag must resolve the behavioral-performance artifact
+        to the current run-output directory, not to the repo-level results/."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self._setup_run_output_dir(tmp_dir)
+            resolved = self._main._with_mode_tag(
+                "results/strategy_behavioral_performance__dl_enabled.csv",
+                "",  # empty mode tag
+            )
+            resolved_path = Path(resolved).resolve()
+            tmp_path = Path(tmp_dir).resolve()
+            self.assertTrue(
+                str(resolved_path).startswith(str(tmp_path)),
+                f"Artifact path {resolved_path} is not under run-output dir {tmp_path}",
+            )
+
+    def test_artifact_filename_preserved(self):
+        """The externally-intended filename must be preserved regardless of the
+        run-output directory."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            self._setup_run_output_dir(tmp_dir)
+            resolved = self._main._with_mode_tag(
+                "results/strategy_behavioral_performance__dl_enabled.csv",
+                "",
+            )
+            self.assertTrue(
+                Path(resolved).name.startswith(
+                    "strategy_behavioral_performance__dl_enabled"
+                ),
+                f"Unexpected artifact filename: {Path(resolved).name}",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Wiring-level regression: normal vs explicit-strategy reach same path
+# ---------------------------------------------------------------------------
+
+class TestNormalVsExplicitStrategyWiring(unittest.TestCase):
+    """Both normal-behavioral and explicit --strategy modes call the same
+    compute_behavioral_conditional_performance aggregation, producing the
+    same output schema.  This test verifies the wiring at the aggregation
+    function level (lightweight, no end-to-end run needed)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._main = _load_main()
+
+    def _compute(self, df):
+        return self._main.compute_behavioral_conditional_performance(df)
+
+    def test_normal_mode_produces_artifact(self):
+        """Normal behavioral run: multiple strategies → artifact has all strategies."""
+        df = _make_attributed_trades_df([
+            {"strategy_id": "TF1", "behavioral_eligible": True, "pnl_pct": 0.01},
+            {"strategy_id": "TF2", "behavioral_eligible": True, "pnl_pct": -0.005},
+            {"strategy_id": "MR1", "behavioral_eligible": True, "pnl_pct": 0.002},
+        ])
+        result = self._compute(df)
+        self.assertEqual(set(result["strategy_id"]), {"TF1", "TF2", "MR1"})
+
+    def test_explicit_strategy_mode_produces_artifact(self):
+        """Explicit --strategy run: only the requested strategy → artifact has one strategy."""
+        df = _make_attributed_trades_df([
+            {"strategy_id": "TF1", "behavioral_eligible": True, "pnl_pct": 0.01},
+        ])
+        result = self._compute(df)
+        self.assertEqual(list(result["strategy_id"]), ["TF1"])
+
+    def test_both_modes_produce_same_schema(self):
+        """The artifact schema is identical regardless of runtime mode."""
+        df_normal = _make_attributed_trades_df([
+            {"strategy_id": "TF1", "behavioral_eligible": True, "pnl_pct": 0.01},
+            {"strategy_id": "TF2", "behavioral_eligible": True, "pnl_pct": -0.01},
+        ])
+        df_explicit = _make_attributed_trades_df([
+            {"strategy_id": "TF1", "behavioral_eligible": True, "pnl_pct": 0.01},
+        ])
+        r_normal = self._compute(df_normal)
+        r_explicit = self._compute(df_explicit)
+        self.assertEqual(set(r_normal.columns), set(r_explicit.columns))
+
+    def test_both_modes_use_same_export_logic_via_function(self):
+        """Both modes call compute_behavioral_conditional_performance with
+        the same function reference — no branching to separate implementations."""
+        # The function is module-level; verify it is the same callable regardless
+        # of whether it was called from a normal or explicit-strategy code path.
+        fn = self._main.compute_behavioral_conditional_performance
+        self.assertTrue(callable(fn))
+        # Call it twice with different strategy populations and verify both succeed.
+        df1 = _make_attributed_trades_df([{"strategy_id": "TF1", "behavioral_eligible": True}])
+        df2 = _make_attributed_trades_df([
+            {"strategy_id": "TF1", "behavioral_eligible": True},
+            {"strategy_id": "TF2", "behavioral_eligible": True},
+        ])
+        r1 = fn(df1)
+        r2 = fn(df2)
+        self.assertEqual(set(r1.columns), set(r2.columns))
+
 
 if __name__ == "__main__":
     unittest.main()

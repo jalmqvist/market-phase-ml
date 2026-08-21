@@ -1619,6 +1619,7 @@ def compute_behavioral_conditional_performance(
         - ``pair`` (str)
         - ``fold`` (str or int)
         - ``strategy_id`` (str)
+        - ``pnl`` (float) — absolute P&L used for ``total_pnl`` (required)
         - ``pnl_pct`` (float) — per-trade return used for return metrics
 
     Returns
@@ -1650,6 +1651,7 @@ def compute_behavioral_conditional_performance(
         "pair",
         "fold",
         "strategy_id",
+        "pnl",
         "pnl_pct",
     }
     missing = required - set(strategy_trades_df.columns)
@@ -1678,7 +1680,7 @@ def compute_behavioral_conditional_performance(
         rets = grp["pnl_pct"]
         wins = int((rets > 0).sum())
         n = len(grp)
-        total_pnl = grp["pnl"].sum() if "pnl" in grp.columns else float("nan")
+        total_pnl = grp["pnl"].sum()
         return pd.Series(
             {
                 "eligible_trades": n,
@@ -4094,8 +4096,9 @@ def main(
                     _beh_perf_df = compute_behavioral_conditional_performance(
                         strategy_trades_df
                     )
-                    _beh_perf_path = (
-                        "results/strategy_behavioral_performance__dl_enabled.csv"
+                    _beh_perf_path = _with_mode_tag(
+                        "results/strategy_behavioral_performance__dl_enabled.csv",
+                        dl_mode_tag,
                     )
                     _beh_perf_df.to_csv(_beh_perf_path, index=False)
                     print(
