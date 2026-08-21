@@ -1227,6 +1227,7 @@ class Backtester:
         trades = []
 
         equity_curve = []
+        execution_timeline = []
 
         try:
             for i in range(len(df)):
@@ -1235,11 +1236,14 @@ class Backtester:
                 current_high = float(df['High'].iloc[i])
                 current_low = float(df['Low'].iloc[i])
 
-                # Use previous bar's signal (your existing convention)
-                if i == 0:
-                    signal = 0.0
+                # Preserve the existing execution convention:
+                # the signal generated on the previous bar is executed on this bar.
+                if hasattr(signals, "iloc"):
+                    raw_signal = float(signals.iloc[i])
+                    signal = 0.0 if i == 0 else float(signals.iloc[i - 1])
                 else:
-                    signal = float(signals.iloc[i - 1]) if hasattr(signals, "iloc") else float(signals[i - 1])
+                    raw_signal = float(signals[i])
+                    signal = 0.0 if i == 0 else float(signals[i - 1])
 
                 phase = str(df['phase'].iloc[i])
                 atr = float(df['atr'].iloc[i])
@@ -1412,6 +1416,14 @@ class Backtester:
                     else:               # short
                         sl_price = entry_price * (1.0 + bar_sl_pct) if use_sl else 0.0
                         tp_price = entry_price * (1.0 - bar_tp_pct) if use_tp else 0.0
+                execution_timeline.append({
+                    'timestamp': current_date,
+                    'phase': phase,
+                    'raw_signal': raw_signal,
+                    'executed_signal': signal,
+                    'position': position,
+                    'equity': capital,
+                })
                 equity_curve.append(capital)
         except Exception:
             import traceback
@@ -1456,12 +1468,16 @@ class Backtester:
             if equity_curve:
                 equity_curve[-1] = capital
 
+            if execution_timeline:
+                execution_timeline[-1]['equity'] = capital
+
 
         # Build metrics
         metrics = self._calculate_metrics(trades, equity_curve, df.index)
         metrics['strategy']     = strategy_name
         metrics['trades']       = trades
         metrics['equity_curve'] = pd.Series(equity_curve, index=df.index)
+        metrics['execution_timeline'] = pd.DataFrame(execution_timeline)
         """
         metrics['equity_curve'] = pd.Series(
             equity_curve[1:],  # drop the initial capital entry
@@ -1512,19 +1528,7 @@ class Backtester:
                 'phase_performance': pd.DataFrame()
             }
 
-        trades_df = pd.DataFrame([{
-            'entry_date': t.entry_date,
-            'exit_date': t.exit_date,
-            'pnl': t.pnl,
-            'pnl_pct': t.pnl_pct,
-            'direction': t.direction,
-            'phase': t.phase,
-            'strategy': t.strategy,
-            'size_multiplier': t.size_multiplier,
-            'position_size': t.position_size,
-            'stop_distance': t.stop_distance,
-            'exit_reason': t.exit_reason,
-        } for t in trades])
+        trades_df = trades_to_dataframe(trades)
 
         equity = pd.Series(equity_curve, index=dates)
         returns = equity.pct_change().dropna()
