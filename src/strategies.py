@@ -37,6 +37,13 @@ class TradeResult:
     exit_reason:     str          # 'SL', 'TP', or 'signal'
 
 
+_TRADE_COLUMNS = [
+    "entry_date", "exit_date", "entry_price", "exit_price",
+    "direction", "phase", "strategy", "size_multiplier",
+    "position_size", "stop_distance", "pnl", "pnl_pct", "exit_reason",
+]
+
+
 def trades_to_dataframe(trades: list) -> pd.DataFrame:
     """Convert a list of :class:`TradeResult` objects to a DataFrame.
 
@@ -53,11 +60,6 @@ def trades_to_dataframe(trades: list) -> pd.DataFrame:
     pd.DataFrame
         One row per trade with columns matching :class:`TradeResult` fields.
     """
-    _TRADE_COLUMNS = [
-        "entry_date", "exit_date", "entry_price", "exit_price",
-        "direction", "phase", "strategy", "size_multiplier",
-        "position_size", "stop_distance", "pnl", "pnl_pct", "exit_reason",
-    ]
     if not trades:
         return pd.DataFrame(columns=_TRADE_COLUMNS)
     return pd.DataFrame([

@@ -1569,8 +1569,7 @@ def _apply_behavioral_attribution_to_trades(
     if dl_cols and not df_test.empty:
         # Per-bar state-active mask — the established MPML semantic for DL coverage.
         _state_active_mask = df_test[dl_cols].notna().any(axis=1)
-        _active_timestamps: frozenset = frozenset(df_test.index[_state_active_mask])
-        out["behavioral_eligible"] = out["entry_date"].isin(_active_timestamps)
+        out["behavioral_eligible"] = out["entry_date"].isin(df_test.index[_state_active_mask])
     else:
         # No DL columns in this fold — no observations are state-active.
         out["behavioral_eligible"] = False
