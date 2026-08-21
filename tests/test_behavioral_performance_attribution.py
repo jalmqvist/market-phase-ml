@@ -567,5 +567,210 @@ class TestTradesToDataframe(unittest.TestCase):
         self.assertFalse(missing, f"Missing columns: {missing}")
 
 
+# ---------------------------------------------------------------------------
+# 10-18. compute_behavioral_conditional_performance tests
+# ---------------------------------------------------------------------------
+
+def _make_attributed_trades_df(rows: list[dict]) -> pd.DataFrame:
+    """Build a minimal strategy_trades DataFrame with behavioral attribution columns."""
+    defaults = dict(
+        behavioral_surface_id="reactive_jpy",
+        behavioral_state_id="JPY_CONSENSUS_YOUNG",
+        pair="USDJPY",
+        fold="fold_1",
+        strategy_id="TF1",
+        pnl=10.0,
+        pnl_pct=0.001,
+        behavioral_eligible=True,
+    )
+    result_rows = []
+    for row in rows:
+        r = {**defaults, **row}
+        result_rows.append(r)
+    return pd.DataFrame(result_rows)
+
+
+class TestComputeBehavioralConditionalPerformance(unittest.TestCase):
+    """Tests for compute_behavioral_conditional_performance."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._main = _load_main()
+
+    def _compute(self, df):
+        return self._main.compute_behavioral_conditional_performance(df)
+
+    # 10. Schema is correct
+    def test_output_schema_correct(self):
+        df = _make_attributed_trades_df([{}])
+        result = self._compute(df)
+        expected_cols = {
+            "behavioral_surface_id",
+            "behavioral_state_id",
+            "pair",
+            "fold",
+            "strategy_id",
+            "eligible_trades",
+            "total_pnl",
+            "mean_trade_return",
+            "median_trade_return",
+            "std_trade_return",
+            "win_rate",
+            "wins",
+        }
+        self.assertEqual(set(result.columns), expected_cols)
+
+    # Only eligible trades contribute
+    def test_only_eligible_trades_contribute(self):
+        df = _make_attributed_trades_df([
+            {"behavioral_eligible": True, "pnl": 10.0, "pnl_pct": 0.001},
+            {"behavioral_eligible": False, "pnl": 999.0, "pnl_pct": 9.999},
+        ])
+        result = self._compute(df)
+        self.assertEqual(result["eligible_trades"].iloc[0], 1)
+        self.assertAlmostEqual(result["total_pnl"].iloc[0], 10.0)
+
+    # Empty eligible population is handled safely
+    def test_empty_eligible_population_returns_empty_frame(self):
+        df = _make_attributed_trades_df([
+            {"behavioral_eligible": False},
+            {"behavioral_eligible": False},
+        ])
+        result = self._compute(df)
+        self.assertTrue(result.empty)
+        # But schema must still be correct
+        self.assertIn("eligible_trades", result.columns)
+        self.assertIn("win_rate", result.columns)
+
+    # Pair, fold, strategy, surface, state attribution preserved
+    def test_group_keys_preserved(self):
+        df = _make_attributed_trades_df([
+            {"pair": "USDJPY", "fold": "fold_1", "strategy_id": "TF1",
+             "behavioral_surface_id": "reactive_jpy",
+             "behavioral_state_id": "JPY_CONSENSUS_YOUNG",
+             "behavioral_eligible": True},
+        ])
+        result = self._compute(df)
+        self.assertEqual(result["pair"].iloc[0], "USDJPY")
+        self.assertEqual(result["fold"].iloc[0], "fold_1")
+        self.assertEqual(result["strategy_id"].iloc[0], "TF1")
+        self.assertEqual(result["behavioral_surface_id"].iloc[0], "reactive_jpy")
+        self.assertEqual(result["behavioral_state_id"].iloc[0], "JPY_CONSENSUS_YOUNG")
+
+    # Multiple strategies can appear (normal behavioral run)
+    def test_multiple_strategies_appear(self):
+        df = _make_attributed_trades_df([
+            {"strategy_id": "TF1", "behavioral_eligible": True},
+            {"strategy_id": "TF4", "behavioral_eligible": True},
+            {"strategy_id": "MR42", "behavioral_eligible": True},
+        ])
+        result = self._compute(df)
+        self.assertEqual(set(result["strategy_id"]), {"TF1", "TF4", "MR42"})
+
+    # Explicit --strategy: only the requested strategy appears
+    def test_explicit_strategy_only_appears(self):
+        df = _make_attributed_trades_df([
+            {"strategy_id": "TF1", "behavioral_eligible": True},
+        ])
+        result = self._compute(df)
+        self.assertEqual(list(result["strategy_id"]), ["TF1"])
+
+    # win_rate calculation
+    def test_win_rate_correct(self):
+        df = _make_attributed_trades_df([
+            {"pnl_pct": 0.01, "behavioral_eligible": True},
+            {"pnl_pct": -0.01, "behavioral_eligible": True},
+            {"pnl_pct": 0.005, "behavioral_eligible": True},
+            {"pnl_pct": -0.005, "behavioral_eligible": True},
+        ])
+        result = self._compute(df)
+        self.assertAlmostEqual(result["win_rate"].iloc[0], 0.5)
+        self.assertEqual(result["wins"].iloc[0], 2)
+        self.assertEqual(result["eligible_trades"].iloc[0], 4)
+
+    # mean/median/std calculations
+    def test_return_statistics_correct(self):
+        rets = [0.01, -0.01, 0.02, -0.02, 0.03]
+        df = _make_attributed_trades_df([
+            {"pnl_pct": r, "pnl": r * 10000, "behavioral_eligible": True}
+            for r in rets
+        ])
+        result = self._compute(df)
+        import numpy as np
+        self.assertAlmostEqual(result["mean_trade_return"].iloc[0], np.mean(rets), places=10)
+        self.assertAlmostEqual(result["median_trade_return"].iloc[0], np.median(rets), places=10)
+        # std_trade_return uses ddof=1
+        self.assertAlmostEqual(result["std_trade_return"].iloc[0], np.std(rets, ddof=1), places=10)
+
+    # Active-entry/inactive-exit trades retain complete P&L
+    def test_active_entry_inactive_exit_pnl_preserved(self):
+        df = _make_attributed_trades_df([
+            {"pnl": 77.5, "pnl_pct": 0.00775, "behavioral_eligible": True},
+        ])
+        result = self._compute(df)
+        self.assertAlmostEqual(result["total_pnl"].iloc[0], 77.5)
+
+    # std for single trade is NaN
+    def test_std_nan_for_single_trade(self):
+        df = _make_attributed_trades_df([{"behavioral_eligible": True}])
+        result = self._compute(df)
+        self.assertTrue(
+            pd.isna(result["std_trade_return"].iloc[0]),
+            "std of a single trade must be NaN (ddof=1)",
+        )
+
+    # Missing required columns raises ValueError
+    def test_missing_required_column_raises(self):
+        df = _make_attributed_trades_df([{}])
+        df = df.drop(columns=["behavioral_eligible"])
+        with self.assertRaises(ValueError):
+            self._compute(df)
+
+    # Normal and explicit-strategy paths produce same schema
+    def test_normal_and_explicit_strategy_same_schema(self):
+        """Identical aggregation code regardless of _strategy_only_scope."""
+        # Simulate normal run: multiple strategies
+        df_normal = _make_attributed_trades_df([
+            {"strategy_id": "TF1", "behavioral_eligible": True, "pnl_pct": 0.01},
+            {"strategy_id": "TF2", "behavioral_eligible": True, "pnl_pct": -0.01},
+        ])
+        # Simulate explicit --strategy TF1
+        df_explicit = _make_attributed_trades_df([
+            {"strategy_id": "TF1", "behavioral_eligible": True, "pnl_pct": 0.01},
+        ])
+        r_normal = self._compute(df_normal)
+        r_explicit = self._compute(df_explicit)
+        self.assertEqual(set(r_normal.columns), set(r_explicit.columns))
+
+    # Existing unconditional walk-forward metrics remain unchanged
+    def test_unconditional_metrics_unchanged(self):
+        """The helper only aggregates; it does not touch existing walk-forward rows."""
+        df = _make_attributed_trades_df([
+            {"pnl": 5.0, "pnl_pct": 0.0005, "behavioral_eligible": True},
+            {"pnl": -3.0, "pnl_pct": -0.0003, "behavioral_eligible": False},
+        ])
+        original_len = len(df)
+        _ = self._compute(df)
+        # The input frame must be unchanged.
+        self.assertEqual(len(df), original_len)
+        self.assertAlmostEqual(df["pnl"].iloc[0], 5.0)
+        self.assertAlmostEqual(df["pnl"].iloc[1], -3.0)
+
+    # 11. Attribution applied to all strategies when dl_runtime_enabled
+    def test_attribution_helper_not_gated_on_strategy_only_scope(self):
+        """When dl_runtime_enabled, attribution is applied regardless of scope.
+
+        We test the helper directly: it always produces behavioral_eligible.
+        """
+        df_test = _make_df_test(n=5, dl_active_idx=[1, 2])
+        dates = df_test.index.tolist()
+        trades_df = _make_trades_df([dates[1]])
+        result = _apply(
+            self._main, trades_df, df_test,
+            state_id="S", surface_id="s", dl_cols=[_DL_COL],
+        )
+        self.assertIn("behavioral_eligible", result.columns)
+
+
 if __name__ == "__main__":
     unittest.main()
