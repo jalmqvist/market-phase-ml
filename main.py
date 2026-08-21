@@ -1628,9 +1628,9 @@ def compute_behavioral_conditional_performance(
         (behavioral_surface_id, behavioral_state_id, pair, fold, strategy_id)
         combination.  Columns match :data:`_BEHAVIORAL_PERF_COLUMNS`.
 
-        Groups that have no eligible trades still appear as a row with
-        ``eligible_trades == 0`` and ``NaN`` for statistical metrics —
-        this makes empty populations explicit rather than silently dropped.
+        Only groups that contain at least one eligible trade appear in the
+        output.  If the entire input has no eligible trades, an empty
+        DataFrame with the correct schema is returned.
 
     Notes
     -----
