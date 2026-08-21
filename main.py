@@ -1506,6 +1506,78 @@ def _compute_behavioral_eligible_pairs(
     )
 
 
+def _apply_behavioral_attribution_to_trades(
+    trades_df: "pd.DataFrame",
+    df_test: "pd.DataFrame",
+    *,
+    state_id: str | None,
+    surface_id: str | None,
+    dl_cols: list[str],
+) -> "pd.DataFrame":
+    """Add behavioral performance-attribution columns to a completed-trades DataFrame.
+
+    Behavioral conditioning is applied **only for attribution**: strategy signals
+    and execution are computed on the complete fold beforehand and are not
+    modified here.
+
+    A trade is *behaviorally eligible* when its ENTRY observation is state-active,
+    where state-active is defined by the established MPML per-bar mask:
+
+        df_test[D1_FEATURE_COLS].notna().any(axis=1)
+
+    This is the same mask used throughout the rest of the MPML DL pipeline.
+
+    A trade entered on an active bar but exited on an inactive bar is fully
+    attributed to the behavioral state — its complete realized lifecycle
+    (P&L, SL/TP, exit price) is preserved unchanged.
+
+    A trade entered on an inactive bar is marked ``behavioral_eligible=False``.
+
+    Parameters
+    ----------
+    trades_df : pd.DataFrame
+        Completed trades with an ``entry_date`` column (one row per trade).
+        Produced by :func:`trades_to_dataframe`.
+    df_test : pd.DataFrame
+        Full fold test frame (the same frame passed to ``generate_signals``
+        and the backtester).  Must carry a DatetimeIndex.
+    state_id : str or None
+        Active behavioral state identifier (e.g. ``"JPY_CONSENSUS_YOUNG"``).
+    surface_id : str or None
+        Active behavioral surface identifier (e.g. ``"reactive_jpy"``).
+    dl_cols : list[str]
+        D1 feature column names present in ``df_test``; obtained from
+        :func:`get_dl_feature_columns`.  If empty, all trades receive
+        ``behavioral_eligible=False``.
+
+    Returns
+    -------
+    pd.DataFrame
+        A copy of ``trades_df`` with three additional columns appended:
+
+        ``behavioral_surface_id``
+            The surface identifier forwarded from ``surface_id``.
+        ``behavioral_state_id``
+            The state identifier forwarded from ``state_id``.
+        ``behavioral_eligible``
+            ``True`` when the trade's ``entry_date`` is a state-active bar.
+    """
+    out = trades_df.copy()
+    out["behavioral_surface_id"] = surface_id or ""
+    out["behavioral_state_id"] = state_id or ""
+
+    if dl_cols and not df_test.empty:
+        # Per-bar state-active mask — the established MPML semantic for DL coverage.
+        _state_active_mask = df_test[dl_cols].notna().any(axis=1)
+        _active_timestamps: frozenset = frozenset(df_test.index[_state_active_mask])
+        out["behavioral_eligible"] = out["entry_date"].isin(_active_timestamps)
+    else:
+        # No DL columns in this fold — no observations are state-active.
+        out["behavioral_eligible"] = False
+
+    return out
+
+
 def _walkforward_uses_composite_aggregation(strategy_specs: list[dict]) -> bool:
     """Return True when walk-forward exports should use legacy delta summaries."""
     return any(
@@ -3565,6 +3637,37 @@ def main(
 
                         trades_df["fold_test_start"] = f["test_start_dt"]
                         trades_df["fold_test_end"] = f["test_end_dt"]
+
+                        # ── Behavioral performance attribution ───────────────
+                        # When an explicit strategy is evaluated against a
+                        # behavioral surface, annotate each trade with its
+                        # behavioral eligibility.  A trade is eligible when its
+                        # ENTRY bar is state-active (D1_FEATURE_COLS non-null).
+                        # Signals and execution are unchanged; this is pure
+                        # attribution — the complete realized lifecycle of every
+                        # trade (P&L, SL/TP, exit price) is preserved.
+                        if _strategy_only_scope and dl_runtime_enabled:
+                            _fold_dl_cols = get_dl_feature_columns(df_test)
+                            trades_df = _apply_behavioral_attribution_to_trades(
+                                trades_df,
+                                df_test,
+                                state_id=_resolved_behavioral_state_id,
+                                surface_id=_resolved_behavioral_surface_id,
+                                dl_cols=_fold_dl_cols,
+                            )
+                            _n_total = len(trades_df)
+                            _n_eligible = int(
+                                trades_df["behavioral_eligible"].sum()
+                            )
+                            _n_ineligible = _n_total - _n_eligible
+                            print(
+                                f"  [BEHAVIORAL ATTRIBUTION] "
+                                f"{pair_name} fold={fold_id} {strategy_id}: "
+                                f"trades total={_n_total} "
+                                f"eligible={_n_eligible} "
+                                f"ineligible={_n_ineligible}"
+                            )
+                        # ────────────────────────────────────────────────────
 
                         strategy_trade_rows.extend(
                             trades_df.to_dict(orient="records")

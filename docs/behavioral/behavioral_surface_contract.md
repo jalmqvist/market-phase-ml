@@ -208,3 +208,84 @@ docs/behavioral/behavioral_surface_registry.md
 The registry is one possible implementation of this contract.
 
 The contract itself is implementation-independent.
+
+---
+
+# Standalone Strategy Evaluation and Behavioral Performance Attribution
+
+## Evaluation Semantics
+
+When an explicit individual strategy (e.g. `--strategy TF1`) is evaluated
+alongside a Behavioral Surface and state (e.g. `--behavioral=JPY_CONSENSUS_YOUNG`),
+MPML applies **performance-attribution conditioning**, not signal or execution
+conditioning.
+
+Specifically:
+
+1. **Signal generation is unconditional.** The strategy computes signals on
+   the complete walk-forward test fold.  Rolling indicators, technical signals,
+   and stop/target levels are not modified.
+
+2. **Execution is unconditional.** The backtester runs on the complete fold.
+   SL/TP hits, trade entries, and trade exits are resolved over the full bar
+   sequence, regardless of whether individual bars are state-active.
+
+3. **Conditioning is attribution-only.** After execution, each completed trade
+   is annotated with a `behavioral_eligible` flag.  A trade is eligible when
+   its **entry observation** falls on a state-active bar.
+
+## State-Active Bar Definition
+
+A bar is state-active if the D1 DL prediction features joined by
+`attach_dl_features()` are non-null on that bar:
+
+```
+state_active = df_test[D1_FEATURE_COLS].notna().any(axis=1)
+```
+
+This is the established per-bar behavioral availability indicator used
+throughout the MPML DL pipeline.  No new definition is introduced.
+
+## Trade Lifecycle Preservation
+
+Once a trade is classified as behaviorally eligible (entered on an active bar),
+its **complete realized lifecycle** is attributed to the behavioral state:
+
+- The exit may occur on an inactive bar.
+- The realized P&L, SL/TP outcome, and exit price are not altered.
+- The trade is not force-closed at behavioral state boundaries.
+
+A trade entered on an **inactive** bar receives `behavioral_eligible=False`
+and is excluded from conditional performance attribution, even if the trade's
+exit occurs on an active bar.
+
+## Auditable Research Artifacts
+
+The `strategy_trades__dl_enabled.csv` artifact exposes:
+
+| Column                  | Description                                          |
+| ----------------------- | ---------------------------------------------------- |
+| `behavioral_eligible`   | `True` when trade entry is state-active              |
+| `behavioral_surface_id` | Behavioral Surface identifier                        |
+| `behavioral_state_id`   | Behavioral State identifier                          |
+
+These columns are only present when `_strategy_only_scope=True` and the DL
+runtime is enabled.  Baseline runs (no behavioral surface) do not include
+these columns, preserving backward compatibility.
+
+## Causal Guarantee
+
+The state-active mask is derived from `D1_FEATURE_COLS` joined by
+`attach_dl_features()`, which enforces a minimum one-day merge lag between
+the prediction `available_timestamp` and the bar's observation date.  No
+future information is introduced by the attribution step.
+
+## Rationale
+
+This design was chosen because standalone strategies use rolling indicators
+(`rolling`, `shift`, `ffill`) that are positional with respect to the input
+DataFrame index.  Pre-filtering `df_test` to state-active bars before signal
+generation would corrupt rolling window computations and cause SL/TP hit
+detection to miss breaches during inactive gaps.  Attribution at the
+trade-entry level avoids both failure modes while preserving the ability to
+compare strategy performance across different behavioral states.
