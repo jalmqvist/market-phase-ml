@@ -4097,7 +4097,7 @@ def main(
                         strategy_trades_df
                     )
                     _beh_perf_path = _with_mode_tag(
-                        "results/strategy_behavioral_performance__dl_enabled.csv",
+                        "results/strategy_behavioral_performance.csv",
                         dl_mode_tag,
                     )
                     _beh_perf_df.to_csv(_beh_perf_path, index=False)

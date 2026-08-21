@@ -811,7 +811,7 @@ class TestBehavioralArtifactOutputPath(unittest.TestCase):
             self._setup_run_output_dir(tmp_dir)
             # Use a representative non-empty mode tag matching production usage.
             resolved = self._main._with_mode_tag(
-                "results/strategy_behavioral_performance__dl_enabled.csv",
+                "results/strategy_behavioral_performance.csv",
                 "__dl_enabled",
             )
             resolved_path = Path(resolved).resolve()
@@ -822,18 +822,18 @@ class TestBehavioralArtifactOutputPath(unittest.TestCase):
             )
 
     def test_artifact_filename_preserved(self):
-        """The externally-intended filename must be preserved regardless of the
+        """The externally-intended filename must be exactly
+        strategy_behavioral_performance__dl_enabled.csv regardless of the
         run-output directory."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             self._setup_run_output_dir(tmp_dir)
             resolved = self._main._with_mode_tag(
-                "results/strategy_behavioral_performance__dl_enabled.csv",
+                "results/strategy_behavioral_performance.csv",
                 "__dl_enabled",
             )
-            self.assertTrue(
-                Path(resolved).name.startswith(
-                    "strategy_behavioral_performance__dl_enabled"
-                ),
+            self.assertEqual(
+                Path(resolved).name,
+                "strategy_behavioral_performance__dl_enabled.csv",
                 f"Unexpected artifact filename: {Path(resolved).name}",
             )
 
