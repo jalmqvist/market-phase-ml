@@ -798,7 +798,6 @@ class TestBehavioralArtifactOutputPath(unittest.TestCase):
 
     def _setup_run_output_dir(self, tmp_dir: str) -> None:
         """Point the module's run-output machinery at a temp directory."""
-        import importlib
         # Reset global state, then set the new output dir.
         self._main._CURRENT_RUN_OUTPUT_DIR = None
         results_subdir = Path(tmp_dir) / "results"
@@ -810,9 +809,10 @@ class TestBehavioralArtifactOutputPath(unittest.TestCase):
         to the current run-output directory, not to the repo-level results/."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             self._setup_run_output_dir(tmp_dir)
+            # Use a representative non-empty mode tag matching production usage.
             resolved = self._main._with_mode_tag(
                 "results/strategy_behavioral_performance__dl_enabled.csv",
-                "",  # empty mode tag
+                "__dl_enabled",
             )
             resolved_path = Path(resolved).resolve()
             tmp_path = Path(tmp_dir).resolve()
@@ -828,7 +828,7 @@ class TestBehavioralArtifactOutputPath(unittest.TestCase):
             self._setup_run_output_dir(tmp_dir)
             resolved = self._main._with_mode_tag(
                 "results/strategy_behavioral_performance__dl_enabled.csv",
-                "",
+                "__dl_enabled",
             )
             self.assertTrue(
                 Path(resolved).name.startswith(
