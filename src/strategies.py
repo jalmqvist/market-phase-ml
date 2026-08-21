@@ -37,6 +37,51 @@ class TradeResult:
     exit_reason:     str          # 'SL', 'TP', or 'signal'
 
 
+_TRADE_COLUMNS = [
+    "entry_date", "exit_date", "entry_price", "exit_price",
+    "direction", "phase", "strategy", "size_multiplier",
+    "position_size", "stop_distance", "pnl", "pnl_pct", "exit_reason",
+]
+
+
+def trades_to_dataframe(trades: list) -> pd.DataFrame:
+    """Convert a list of :class:`TradeResult` objects to a DataFrame.
+
+    Returns an empty DataFrame with the expected schema when *trades* is empty,
+    so callers can safely check ``.empty`` without special-casing ``None``.
+
+    Parameters
+    ----------
+    trades : list
+        List of :class:`TradeResult` instances produced by :class:`Backtester`.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per trade with columns matching :class:`TradeResult` fields.
+    """
+    if not trades:
+        return pd.DataFrame(columns=_TRADE_COLUMNS)
+    return pd.DataFrame([
+        {
+            "entry_date": t.entry_date,
+            "exit_date": t.exit_date,
+            "entry_price": t.entry_price,
+            "exit_price": t.exit_price,
+            "direction": t.direction,
+            "phase": t.phase,
+            "strategy": t.strategy,
+            "size_multiplier": t.size_multiplier,
+            "position_size": t.position_size,
+            "stop_distance": t.stop_distance,
+            "pnl": t.pnl,
+            "pnl_pct": t.pnl_pct,
+            "exit_reason": t.exit_reason,
+        }
+        for t in trades
+    ])
+
+
 def instantiate_evaluated_strategy_dicts() -> tuple[dict[str, object], dict[str, object]]:
     """Instantiate the legacy standalone strategy set used by backtests."""
     strategy_registry = get_default_strategy_registry()

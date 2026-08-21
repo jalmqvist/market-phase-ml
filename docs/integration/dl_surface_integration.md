@@ -91,7 +91,84 @@ The generated `report.md` includes:
 
 See [`docs/research/analysis_framework_v2.md`](../research/analysis_framework_v2.md) for full documentation.
 
-## Infrastructure note — Behavioral Surface evaluation scope
+## Behavioral-conditional strategy performance
+
+### Overview
+
+When behavioral/DL runtime is enabled (`dl_runtime_enabled=True`), MPML
+annotates each standalone strategy trade with a `behavioral_eligible` flag
+and generates a dedicated behavioral-conditional performance artifact:
+
+    results/strategy_behavioral_performance__dl_enabled.csv
+
+This artifact is **additive** — it does not replace or modify any existing
+walk-forward or strategy artifact.
+
+### Semantic distinction
+
+| Concept | Definition |
+|---|---|
+| **Unconditional strategy performance** | Complete strategy execution on the full fold population. Reported in `walkforward_results_*.csv`. |
+| **Behavioral-conditional performance** | Subset of trades whose **ENTRY observation** was active for the selected behavioral surface/state. Reported in `strategy_behavioral_performance__dl_enabled.csv`. |
+
+### Attribution semantics
+
+A trade is *behaviorally eligible* (`behavioral_eligible == True`) when its
+**entry observation** is state-active for the selected behavioral
+surface/state.  State-active means at least one `D1_FEATURE_COLS` value is
+non-null for that bar (the established MPML DL coverage mask).
+
+An eligible trade **retains its complete realized lifecycle and P&L**, even
+if its exit occurs after the behavioral state becomes inactive.  Only the
+**entry bar** determines eligibility.  Ineligible entry trades are excluded
+from the conditional performance statistics.
+
+The strategy itself is not modified.  No signals are zeroed, no positions are
+force-closed at state boundaries, no trade is truncated.
+
+### Normal vs explicit-strategy modes
+
+The same reporting/aggregation code is used for both modes.  The schema is
+identical:
+
+| Mode | Strategy population in artifact |
+|---|---|
+| Normal behavioral run | All strategies produced by normal strategy evaluation |
+| `--strategy TF1` | TF1 only |
+| `--strategy TF1 --strategy TF4` | TF1 and TF4 only |
+
+### Artifact generation rule
+
+    behavioral/DL runtime enabled → generate behavioral-performance artifact
+    behavioral/DL runtime disabled → no behavioral-performance artifact
+
+The `--strategy` flag does **not** determine whether the artifact is generated.
+
+### Artifact schema (`strategy_behavioral_performance__dl_enabled.csv`)
+
+| Column | Type | Description |
+|---|---|---|
+| `behavioral_surface_id` | str | Active behavioral surface (e.g. `reactive_jpy`) |
+| `behavioral_state_id` | str | Active behavioral state (e.g. `JPY_CONSENSUS_YOUNG`) |
+| `pair` | str | Currency pair |
+| `fold` | str/int | Walk-forward fold identifier |
+| `strategy_id` | str | Strategy identifier (e.g. `TF1`, `MR42`) |
+| `eligible_trades` | int | Trades with `behavioral_eligible == True` |
+| `total_pnl` | float | Sum of P&L for eligible trades |
+| `mean_trade_return` | float | Mean of `pnl_pct` for eligible trades |
+| `median_trade_return` | float | Median of `pnl_pct` for eligible trades |
+| `std_trade_return` | float | Sample std (ddof=1) of `pnl_pct`; NaN for 1 trade |
+| `win_rate` | float | Fraction of eligible trades with `pnl_pct > 0` |
+| `wins` | int | Count of eligible trades with `pnl_pct > 0` |
+
+**Note on omitted metrics:** Conditional Sharpe ratio and maximum drawdown are
+intentionally excluded.  The eligible-trade sub-population does not preserve
+the temporal ordering required to derive a correct time-series drawdown, and a
+naïve Sharpe computed from eligible-trade returns is not comparable to the
+unconditional walk-forward Sharpe (which is computed over the equity curve).
+These may be added in a later iteration once a correct definition is agreed upon.
+
+
 
 > **Status: resolved (infrastructure fix, not a research result)**
 

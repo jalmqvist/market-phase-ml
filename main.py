@@ -1506,6 +1506,203 @@ def _compute_behavioral_eligible_pairs(
     )
 
 
+def _apply_behavioral_attribution_to_trades(
+    trades_df: "pd.DataFrame",
+    df_test: "pd.DataFrame",
+    *,
+    state_id: str | None,
+    surface_id: str | None,
+    dl_cols: list[str],
+) -> "pd.DataFrame":
+    """Add behavioral performance-attribution columns to a completed-trades DataFrame.
+
+    Behavioral conditioning is applied **only for attribution**: strategy signals
+    and execution are computed on the complete fold beforehand and are not
+    modified here.
+
+    A trade is *behaviorally eligible* when its ENTRY observation is state-active,
+    where state-active is defined by the established MPML per-bar mask:
+
+        df_test[D1_FEATURE_COLS].notna().any(axis=1)
+
+    This is the same mask used throughout the rest of the MPML DL pipeline.
+
+    A trade entered on an active bar but exited on an inactive bar is fully
+    attributed to the behavioral state — its complete realized lifecycle
+    (P&L, SL/TP, exit price) is preserved unchanged.
+
+    A trade entered on an inactive bar is marked ``behavioral_eligible=False``.
+
+    Parameters
+    ----------
+    trades_df : pd.DataFrame
+        Completed trades with an ``entry_date`` column (one row per trade).
+        Produced by :func:`trades_to_dataframe`.
+    df_test : pd.DataFrame
+        Full fold test frame (the same frame passed to ``generate_signals``
+        and the backtester).  Must carry a DatetimeIndex.
+    state_id : str or None
+        Active behavioral state identifier (e.g. ``"JPY_CONSENSUS_YOUNG"``).
+    surface_id : str or None
+        Active behavioral surface identifier (e.g. ``"reactive_jpy"``).
+    dl_cols : list[str]
+        D1 feature column names present in ``df_test``; obtained from
+        :func:`get_dl_feature_columns`.  If empty, all trades receive
+        ``behavioral_eligible=False``.
+
+    Returns
+    -------
+    pd.DataFrame
+        A copy of ``trades_df`` with three additional columns appended:
+
+        ``behavioral_surface_id``
+            The surface identifier forwarded from ``surface_id``.
+        ``behavioral_state_id``
+            The state identifier forwarded from ``state_id``.
+        ``behavioral_eligible``
+            ``True`` when the trade's ``entry_date`` is a state-active bar.
+    """
+    out = trades_df.copy()
+    out["behavioral_surface_id"] = surface_id or ""
+    out["behavioral_state_id"] = state_id or ""
+
+    if dl_cols and not df_test.empty:
+        # Per-bar state-active mask — the established MPML semantic for DL coverage.
+        _state_active_mask = df_test[dl_cols].notna().any(axis=1)
+        out["behavioral_eligible"] = out["entry_date"].isin(df_test.index[_state_active_mask])
+    else:
+        # No DL columns in this fold — no observations are state-active.
+        out["behavioral_eligible"] = False
+
+    return out
+
+
+_BEHAVIORAL_PERF_COLUMNS = [
+    "behavioral_surface_id",
+    "behavioral_state_id",
+    "pair",
+    "fold",
+    "strategy_id",
+    "eligible_trades",
+    "total_pnl",
+    "mean_trade_return",
+    "median_trade_return",
+    "std_trade_return",
+    "win_rate",
+    "wins",
+]
+
+
+def compute_behavioral_conditional_performance(
+    strategy_trades_df: "pd.DataFrame",
+) -> "pd.DataFrame":
+    """Aggregate strategy trades into behavioral-conditional performance statistics.
+
+    Only trades where ``behavioral_eligible == True`` contribute to the
+    conditional statistics.  The unconditional strategy metrics and existing
+    artifacts are not touched.
+
+    This function is used for **both** normal behavioral runs and explicit
+    ``--strategy`` behavioral runs.  The schema and aggregation logic are
+    identical; only the strategy population differs.
+
+    Parameters
+    ----------
+    strategy_trades_df : pd.DataFrame
+        The ``strategy_trades__dl_enabled.csv`` frame (or an equivalent
+        in-memory copy) that already contains the behavioral attribution
+        columns added by :func:`_apply_behavioral_attribution_to_trades`:
+
+        - ``behavioral_eligible`` (bool)
+        - ``behavioral_surface_id`` (str)
+        - ``behavioral_state_id`` (str)
+        - ``pair`` (str)
+        - ``fold`` (str or int)
+        - ``strategy_id`` (str)
+        - ``pnl`` (float) — absolute P&L used for ``total_pnl`` (required)
+        - ``pnl_pct`` (float) — per-trade return used for return metrics
+
+    Returns
+    -------
+    pd.DataFrame
+        Long-form table with one row per
+        (behavioral_surface_id, behavioral_state_id, pair, fold, strategy_id)
+        combination.  Columns match :data:`_BEHAVIORAL_PERF_COLUMNS`.
+
+        Only groups that contain at least one eligible trade appear in the
+        output.  If the entire input has no eligible trades, an empty
+        DataFrame with the correct schema is returned.
+
+    Notes
+    -----
+    Conditional Sharpe ratio and maximum drawdown are intentionally excluded:
+    the eligible trade sub-population does not preserve the temporal ordering
+    needed to derive a correct time-series drawdown, and a naïve Sharpe
+    computed from the eligible-trade returns is not comparable to the
+    unconditional walk-forward Sharpe (which is computed over the equity
+    curve, not trade-level returns).  Including them here would produce
+    semantically incorrect values.  They can be added in a later iteration
+    once a correct definition is agreed upon.
+    """
+    required = {
+        "behavioral_eligible",
+        "behavioral_surface_id",
+        "behavioral_state_id",
+        "pair",
+        "fold",
+        "strategy_id",
+        "pnl",
+        "pnl_pct",
+    }
+    missing = required - set(strategy_trades_df.columns)
+    if missing:
+        raise ValueError(
+            f"compute_behavioral_conditional_performance: missing columns {sorted(missing)}"
+        )
+
+    group_keys = [
+        "behavioral_surface_id",
+        "behavioral_state_id",
+        "pair",
+        "fold",
+        "strategy_id",
+    ]
+
+    eligible = strategy_trades_df[
+        strategy_trades_df["behavioral_eligible"].astype(bool)
+    ].copy()
+
+    if eligible.empty:
+        # Return a valid empty frame with the correct schema.
+        return pd.DataFrame(columns=_BEHAVIORAL_PERF_COLUMNS)
+
+    def _agg_group(grp: "pd.DataFrame") -> "pd.Series":
+        rets = grp["pnl_pct"]
+        wins = int((rets > 0).sum())
+        n = len(grp)
+        total_pnl = grp["pnl"].sum()
+        return pd.Series(
+            {
+                "eligible_trades": n,
+                "total_pnl": total_pnl,
+                "mean_trade_return": rets.mean(),
+                "median_trade_return": rets.median(),
+                "std_trade_return": rets.std(ddof=1) if n > 1 else float("nan"),
+                "win_rate": wins / n,
+                "wins": wins,
+            }
+        )
+
+    result = (
+        eligible.groupby(group_keys, sort=True)
+        .apply(_agg_group)
+        .reset_index()
+    )
+
+    # Guarantee column order.
+    return result[_BEHAVIORAL_PERF_COLUMNS]
+
+
 def _walkforward_uses_composite_aggregation(strategy_specs: list[dict]) -> bool:
     """Return True when walk-forward exports should use legacy delta summaries."""
     return any(
@@ -3566,6 +3763,37 @@ def main(
                         trades_df["fold_test_start"] = f["test_start_dt"]
                         trades_df["fold_test_end"] = f["test_end_dt"]
 
+                        # ── Behavioral performance attribution ───────────────
+                        # When an explicit strategy is evaluated against a
+                        # behavioral surface, annotate each trade with its
+                        # behavioral eligibility.  A trade is eligible when its
+                        # ENTRY bar is state-active (D1_FEATURE_COLS non-null).
+                        # Signals and execution are unchanged; this is pure
+                        # attribution — the complete realized lifecycle of every
+                        # trade (P&L, SL/TP, exit price) is preserved.
+                        if dl_runtime_enabled:
+                            _fold_dl_cols = get_dl_feature_columns(df_test)
+                            trades_df = _apply_behavioral_attribution_to_trades(
+                                trades_df,
+                                df_test,
+                                state_id=_resolved_behavioral_state_id,
+                                surface_id=_resolved_behavioral_surface_id,
+                                dl_cols=_fold_dl_cols,
+                            )
+                            _n_total = len(trades_df)
+                            _n_eligible = int(
+                                trades_df["behavioral_eligible"].sum()
+                            )
+                            _n_ineligible = _n_total - _n_eligible
+                            print(
+                                f"  [BEHAVIORAL ATTRIBUTION] "
+                                f"{pair_name} fold={fold_id} {strategy_id}: "
+                                f"trades total={_n_total} "
+                                f"eligible={_n_eligible} "
+                                f"ineligible={_n_ineligible}"
+                            )
+                        # ────────────────────────────────────────────────────
+
                         strategy_trade_rows.extend(
                             trades_df.to_dict(orient="records")
                         )
@@ -3858,6 +4086,26 @@ def main(
                     f"Saved: {strategy_trades_path} "
                     f"({len(strategy_trades_df):,} completed trades)"
                 )
+
+                # ── Behavioral-conditional performance artifact ───────────
+                # Generated whenever behavioral/DL runtime is enabled,
+                # regardless of whether --strategy was supplied.  Both normal
+                # behavioral runs and explicit --strategy behavioral runs use
+                # the SAME aggregation code and produce the SAME schema.
+                if dl_runtime_enabled and "behavioral_eligible" in strategy_trades_df.columns:
+                    _beh_perf_df = compute_behavioral_conditional_performance(
+                        strategy_trades_df
+                    )
+                    _beh_perf_path = _with_mode_tag(
+                        "results/strategy_behavioral_performance.csv",
+                        dl_mode_tag,
+                    )
+                    _beh_perf_df.to_csv(_beh_perf_path, index=False)
+                    print(
+                        f"Saved: {_beh_perf_path} "
+                        f"({len(_beh_perf_df):,} behavioral-conditional strategy rows)"
+                    )
+                # ─────────────────────────────────────────────────────────
             else:
                 print("No standalone strategy trades available for export.")
 
