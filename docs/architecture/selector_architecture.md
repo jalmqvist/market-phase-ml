@@ -189,6 +189,65 @@ The selector is trained using:
 
 ---
 
+# Selector Reference Universe
+
+## Separation of Concerns
+
+MPML maintains three distinct strategy populations that must remain separate:
+
+| Concept | Meaning |
+|---|---|
+| **Strategy Registry / Full Research Universe** | All registered strategies available for research and comparative evaluation (TF1–TF5, MR1–MR5, etc.) |
+| **Selector Reference Universe** | The concrete representative strategies whose forward performance generates the labels used to train the selector |
+| **Evaluation Scope** | The concrete strategies evaluated in a particular MPML experiment |
+
+## Current Default Selector Reference Universe
+
+For the default `phaseaware_default` policy the Selector Reference Universe is:
+
+```
+TF4
+MR42
+PhaseAware(TF4, MR42)
+```
+
+At inference, the selector's predicted strategy types map to these concrete representatives:
+
+```
+TrendFollowing → TF4
+MeanReversion  → MR42
+PhaseAware     → PhaseAware(TF4, MR42)
+```
+
+## Why the Separation Matters
+
+Selector training labels are derived from forward performance of the reference strategies. If the full research universe were used instead, an unrelated strategy (e.g. MR32) could outperform MR42 over a training horizon, causing the selector to receive a `MeanReversion` label that represents MR32's behaviour — but at inference the selector will execute MR42.
+
+This creates a **semantic mismatch** between selector training and selector inference.
+
+## Reproducibility Invariant
+
+> **Changes to strategies outside the Selector Reference Universe MUST NOT change selector training, selector routing, or the default benchmark, provided the configured selector reference strategies themselves are unchanged.**
+
+In concrete terms: changing MR32, MR1, MR2, MR5, TF1, TF2, TF3, or TF5 must not alter the default selector benchmark.
+
+## Policy-Derived Reference Universe
+
+The Selector Reference Universe is derived from the configured PhaseAware evaluation policy via `resolve_phaseaware_strategy_pair()`. It is **not** a second hardcoded list.
+
+The canonical source is `_build_selector_reference_results()`, which constructs the minimal full-history result set from the configured pair. This function is used by **both** selector-training paths:
+
+- global selector training (step 4b/5)
+- per-fold causal selector training (walk-forward)
+
+A future research change may deliberately select different representatives by updating the configured policy. Such a change represents a new selector configuration and may intentionally produce a new benchmark.
+
+## Implementation Note
+
+`_build_selector_reference_results()` accepts optional `strategy_registry` and `policy_registry` parameters. When omitted, it uses the default registry and policy. The full `hardcoded_results` / research universe must **not** be passed to selector training paths.
+
+---
+
 # Feature Pipeline
 
 The selector consumes multiple categories of features.
@@ -481,3 +540,5 @@ Current selector-related research includes:
 | Selector implementation audit | `docs/research/mpml_selector_audit.md` |
 | Regime taxonomy | `docs/regimes/` |
 | Experimental findings | `RESULTS.md` |
+| Phase G3.1 Selector Reference Universe specification | `docs/architecture/MPML_Architecture_Roadmap.md` — Phase G3.1 |
+| MR32 influence forensic audit | `docs/architecture/MPML_Forensic_Audit_MR32_Influence_on_Default_Selector_WalkForward_Benchmark.md` |
