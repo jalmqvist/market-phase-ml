@@ -1624,6 +1624,240 @@ preserving the existing runtime and artifact contracts.
 
 ---
 
+## Phase G3.1 — Selector Reference Universe
+
+### Objective
+
+Establish an explicit and reproducible boundary between the **full strategy research universe**, the **evaluation scope**, and the **strategy selector reference universe**.
+
+This phase does **not** introduce new user-facing functionality. Its purpose is to make the existing selector architecture internally consistent and prevent unrelated strategy implementations from silently changing the default selector benchmark.
+
+### Background
+
+The MPML Strategy Registry contains multiple concrete strategy implementations. This full universe is intentionally useful for strategy research and comparative evaluation.
+
+The default selector, however, was deliberately designed around a small number of concrete representative strategies in order to avoid combinatorial growth in walk-forward computation.
+
+The current default policy therefore evaluates:
+
+```
+TrendFollowing → TF4
+MeanReversion  → MR42
+```
+
+with the PhaseAware selector operating on these representatives.
+
+The choice of TF4 and MR42 was originally a practical research decision: they were selected as strong representative TrendFollowing and MeanReversion strategies while keeping selector and walk-forward computation tractable.
+
+This choice is **not intended to make TF4 and MR42 permanently privileged strategies**. A future research phase may evaluate whether different representatives are preferable.
+
+Until such a policy change is deliberately introduced, however, the selector must be trained against the same concrete representative strategies that it executes at inference.
+
+### Three distinct strategy populations
+
+These concepts MUST remain separate:
+
+| Concept                                        | Meaning                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------ |
+| **Strategy Registry / Full Research Universe** | All registered strategies available for strategy research and comparative evaluation |
+| **Selector Reference Universe**                | The concrete representative strategies whose forward performance generates the labels used to train the strategy-type selector |
+| **Evaluation Scope**                           | The concrete strategies evaluated in a particular MPML experiment |
+
+The Strategy Registry currently contains the full research universe, including strategies such as:
+
+```
+TF1, TF2, TF3, TF4, TF5
+MR1, MR2, MR32, MR42, MR5
+```
+
+The current selector reference universe is intentionally smaller:
+
+```
+TF4
+MR42
+PhaseAware(TF4, MR42)
+```
+
+The default evaluation scope remains:
+
+```
+TF4
+MR42
+```
+
+The fact that the current selector reference universe and default evaluation scope are closely related does not mean that these concepts should be collapsed into a single abstraction.
+
+### Selector reference semantics
+
+The selector predicts strategy **types**, not arbitrary concrete strategies:
+
+```
+TrendFollowing
+MeanReversion
+PhaseAware
+```
+
+At inference these types map to concrete configured representatives:
+
+```
+TrendFollowing → TF4
+MeanReversion  → MR42
+PhaseAware     → PhaseAware(TF4, MR42)
+```
+
+Consequently, a selector training label must have the same semantic meaning as the expert that will be executed at inference.
+
+For example, a `MeanReversion` label should represent the forward performance of **MR42**, rather than the performance of whichever registered MeanReversion implementation happens to perform best.
+
+Including unrelated MeanReversion strategies such as MR32 in selector label generation would therefore create a semantic mismatch:
+
+```
+Selector training:
+
+market state
+    ↓
+MR32 happens to outperform
+    ↓
+label = MeanReversion
+
+Selector inference:
+
+MeanReversion
+    ↓
+execute MR42
+```
+
+The selector would consequently be trained against an expert different from the expert it executes.
+
+### Reference universe versus research universe
+
+The full strategy universe remains available for research.
+
+In particular, this phase MUST NOT remove strategies from the Strategy Registry or prevent them from being evaluated by the research/reporting pipeline.
+
+The intended separation is:
+
+```
+Full Strategy Universe
+    │
+    ├── strategy research
+    ├── comparative evaluation
+    └── research/reporting artifacts
+             │
+             │
+             └────── independent of selector reference scope
+
+
+Selector Reference Universe
+    │
+    ├── TF4
+    ├── MR42
+    └── PhaseAware(TF4, MR42)
+             │
+             ├── selector training
+             └── causal walk-forward selector training
+```
+
+Changing an unrelated research strategy, such as MR32, therefore MUST NOT alter selector training or the default benchmark.
+
+Conversely, deliberately changing the configured selector reference representatives is a legitimate future research change and may intentionally produce a new benchmark.
+
+### Policy-driven reference selection
+
+The selector reference universe should be derived from the same policy metadata that defines the configured PhaseAware strategy pair.
+
+The existing `_build_selector_reference_results()` already provides the intended reference semantics by constructing the minimal full-history result set required for selector labels from the configured PhaseAware strategy pair.
+
+This function should become the canonical source of selector reference results for both:
+
+- global selector training; and
+- per-fold causal selector training.
+
+The full-universe strategy results must remain available independently for research and reporting.
+
+### Reproducibility invariant
+
+The following invariant is established:
+
+> **Changes to strategies outside the Selector Reference Universe MUST NOT change selector training, selector routing, or the default benchmark, provided the configured selector reference strategies themselves are unchanged.**
+
+This is an important reproducibility guarantee.
+
+For the current default configuration:
+
+```
+Selector Reference Universe
+    = TF4 + MR42 + PhaseAware(TF4, MR42)
+```
+
+Therefore, changes to MR32, MR1, MR2, MR5, TF1, TF2, TF3, or TF5 must not silently alter the default selector benchmark.
+
+A deliberate future change to the selector reference policy is different: such a change represents a new selector configuration and may intentionally produce a new benchmark.
+
+### Backward compatibility
+
+This phase preserves the current default benchmark semantics.
+
+It does not:
+
+- remove strategies from the Strategy Registry;
+- change individual strategy implementations;
+- change the default TF4/MR42 evaluation scope;
+- change walk-forward execution semantics;
+- change Behavioral Surface definitions;
+- change Recommendation semantics;
+- prevent explicit strategy research.
+
+Its purpose is to ensure that the selector's training/reference universe is consistent with the concrete experts used by the selector.
+
+### Validation requirements
+
+The implementation should establish regression coverage demonstrating that:
+
+1. the Selector Reference Universe contains exactly the configured representative strategies;
+2. global selector training uses that universe;
+3. per-fold causal selector training uses the same universe;
+4. changing an unrelated strategy implementation does not change selector labels or selector routing;
+5. the full research universe remains available to the research/reporting pipeline;
+6. changing a configured selector reference strategy is allowed to change selector training and downstream results.
+
+### Architectural principle
+
+The resulting architecture is:
+
+```
+Strategy Registry
+    ↓
+Full Research Universe
+    ├── strategy research
+    └── comparative evaluation
+
+
+Selector Reference Policy
+    ↓
+Concrete Representative Experts
+    ├── selector training
+    └── selector inference
+
+
+Evaluation Policy
+    ↓
+Concrete Evaluation Scope
+    └── walk-forward evaluation
+```
+
+These mechanisms are related but MUST NOT be conflated.
+
+The Strategy Registry describes what strategies exist.
+
+The Selector Reference Policy describes which concrete experts define the selector's training problem.
+
+The Evaluation Policy describes which strategies participate in a particular experiment.
+
+This separation allows the current TF4/MR42 selector design to remain stable while leaving the choice of representative strategies open to future research.
+
+---
+
 ### Phase G4 — Stable MPML–MRML Recommendation Interface
 
 **Objective**
