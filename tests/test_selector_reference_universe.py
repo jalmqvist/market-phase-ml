@@ -789,5 +789,304 @@ class TestPolicyDerivedBehaviour(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# H. Production call-site wiring
+# ---------------------------------------------------------------------------
+
+class TestProductionCallSiteWiring(unittest.TestCase):
+    """H. All four production selector-training paths must call
+    _build_selector_reference_results() rather than using hardcoded_results.
+
+    These tests inspect the actual source of main.py to verify the wiring
+    rather than merely testing the helper function in isolation.  They catch
+    regressions where a developer might inadvertently revert the G3.1 fix
+    by routing a path back to hardcoded_results.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._main_source = (_ROOT / "main.py").read_text(encoding="utf-8")
+
+    # Window large enough to cover the full _build_selector_reference_results()
+    # call including the policy_id= keyword argument in the causal per-fold path.
+    _CAUSAL_SECTION_WINDOW = 800
+
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
+
+    def _section(self, start_marker: str, end_marker: str | None = None) -> str:
+        """Return the text of main.py between *start_marker* and *end_marker*.
+
+        Raises ``AssertionError`` (not ``ValueError``) with an actionable
+        message when a marker cannot be found, so a renamed marker produces a
+        clear test failure instead of a confusing traceback.
+        """
+        try:
+            start = self._main_source.index(start_marker)
+        except ValueError:
+            self.fail(
+                f"start_marker not found in main.py: {start_marker!r} — "
+                "check whether a G3.1-related comment or print was renamed"
+            )
+        if end_marker is None:
+            return self._main_source[start:]
+        try:
+            end = self._main_source.index(end_marker, start + len(start_marker))
+        except ValueError:
+            self.fail(
+                f"end_marker not found in main.py after start_marker: {end_marker!r} — "
+                "check whether a G3.1-related comment or print was renamed"
+            )
+        return self._main_source[start:end]
+
+    # ------------------------------------------------------------------
+    # 1. Global selector training (4b/5)
+    # ------------------------------------------------------------------
+
+    def test_global_selector_path_calls_build_selector_reference_results(self):
+        """4b/5 global selector training section must call
+        _build_selector_reference_results(), not hardcoded_results."""
+        section = self._section(
+            "# 4b. TRAIN STRATEGY SELECTOR (ML)",
+            "# Aggregate by group for both sizing methods",
+        )
+        self.assertIn(
+            "_build_selector_reference_results",
+            section,
+            "4b/5 global selector training must call _build_selector_reference_results()",
+        )
+
+    def test_global_selector_path_does_not_use_hardcoded_results_for_pair_backtest(self):
+        """4b/5 global selector training must NOT assign pair_backtest from
+        hardcoded_results; that was the pre-G3.1 bug."""
+        section = self._section(
+            "# 4b. TRAIN STRATEGY SELECTOR (ML)",
+            "# Aggregate by group for both sizing methods",
+        )
+        self.assertNotIn(
+            "pair_backtest = hardcoded_results",
+            section,
+            "4b/5 global selector training must not assign pair_backtest from hardcoded_results",
+        )
+
+    # ------------------------------------------------------------------
+    # 2. Causal per-fold selector training
+    # ------------------------------------------------------------------
+
+    def test_causal_selector_path_calls_build_selector_reference_results(self):
+        """Causal per-fold selector training section must call
+        _build_selector_reference_results()."""
+        # Locate the G3.1 guard comment that immediately precedes the call.
+        section = self._section(
+            "G3.1: per-fold causal selector training must always use the",
+        )
+        # The call must appear within the first _CAUSAL_SECTION_WINDOW characters.
+        nearby = section[:self._CAUSAL_SECTION_WINDOW]
+        self.assertIn(
+            "_build_selector_reference_results",
+            nearby,
+            "Causal per-fold selector training must call _build_selector_reference_results()",
+        )
+
+    def test_causal_selector_path_does_not_use_hardcoded_results_for_pair_results(self):
+        """Causal per-fold selector training must NOT assign pair_results_full from
+        hardcoded_results."""
+        section = self._section(
+            "G3.1: per-fold causal selector training must always use the",
+        )
+        nearby = section[:self._CAUSAL_SECTION_WINDOW]
+        self.assertNotIn(
+            "pair_results_full = hardcoded_results",
+            nearby,
+            "Causal selector path must not assign pair_results_full from hardcoded_results",
+        )
+
+    # ------------------------------------------------------------------
+    # 3. Tau sweep (4g/5)
+    # ------------------------------------------------------------------
+
+    def test_tau_sweep_calls_build_selector_reference_results(self):
+        """4g/5 tau sweep section must call _build_selector_reference_results()."""
+        section = self._section(
+            "[4g/5] Walk-forward global tau sweep",
+            "[4h/5] Walk-forward policy sweep",
+        )
+        self.assertIn(
+            "_build_selector_reference_results",
+            section,
+            "4g/5 tau sweep must call _build_selector_reference_results()",
+        )
+
+    def test_tau_sweep_does_not_use_hardcoded_results_for_pair_results(self):
+        """4g/5 tau sweep must NOT assign pair_results_full from hardcoded_results."""
+        section = self._section(
+            "[4g/5] Walk-forward global tau sweep",
+            "[4h/5] Walk-forward policy sweep",
+        )
+        self.assertNotIn(
+            "pair_results_full = hardcoded_results",
+            section,
+            "4g/5 tau sweep must not assign pair_results_full from hardcoded_results",
+        )
+
+    # ------------------------------------------------------------------
+    # 4. Policy sweep (4h/5)
+    # ------------------------------------------------------------------
+
+    def test_policy_sweep_calls_build_selector_reference_results(self):
+        """4h/5 policy sweep section must call _build_selector_reference_results()."""
+        section = self._section(
+            "[4h/5] Walk-forward policy sweep",
+        )
+        self.assertIn(
+            "_build_selector_reference_results",
+            section,
+            "4h/5 policy sweep must call _build_selector_reference_results()",
+        )
+
+    def test_policy_sweep_does_not_use_hardcoded_results_for_pair_results(self):
+        """4h/5 policy sweep must NOT assign pair_results_full from hardcoded_results."""
+        section = self._section(
+            "[4h/5] Walk-forward policy sweep",
+        )
+        self.assertNotIn(
+            "pair_results_full = hardcoded_results",
+            section,
+            "4h/5 policy sweep must not assign pair_results_full from hardcoded_results",
+        )
+
+    # ------------------------------------------------------------------
+    # 5. All four paths: consistent policy_id usage
+    # ------------------------------------------------------------------
+
+    def test_all_four_paths_pass_default_policy_id(self):
+        """All four production paths must pass DEFAULT_PHASEAWARE_POLICY_ID to
+        _build_selector_reference_results(), ensuring a consistent reference
+        universe across global training, causal training, tau sweep and policy
+        sweep."""
+        sections = {
+            "4b/5 global": self._section(
+                "# 4b. TRAIN STRATEGY SELECTOR (ML)",
+                "# Aggregate by group for both sizing methods",
+            ),
+            "causal per-fold": self._section(
+                "G3.1: per-fold causal selector training must always use the",
+            )[:self._CAUSAL_SECTION_WINDOW],
+            "4g/5 tau sweep": self._section(
+                "[4g/5] Walk-forward global tau sweep",
+                "[4h/5] Walk-forward policy sweep",
+            ),
+            "4h/5 policy sweep": self._section(
+                "[4h/5] Walk-forward policy sweep",
+            )[:2000],
+        }
+        for label, section in sections.items():
+            self.assertIn(
+                "DEFAULT_PHASEAWARE_POLICY_ID",
+                section,
+                f"{label}: _build_selector_reference_results() must be called "
+                f"with DEFAULT_PHASEAWARE_POLICY_ID",
+            )
+
+
+# ---------------------------------------------------------------------------
+# I. MR32 isolation — PhaseAware equity curve
+# ---------------------------------------------------------------------------
+
+@unittest.skipUnless(_HAS_DEPS, f"missing deps: {_DEPS_ERR}")
+class TestMR32IsolationPhaseAware(unittest.TestCase):
+    """I. Changing MR32 must not change the PhaseAware equity curve in the
+    selector reference universe.  This closes the isolation chain:
+
+        MR32 change
+          -> reference equity curves unchanged  (TF4, MR42, PhaseAware)
+          -> selector training labels unchanged
+          -> selector routing unchanged (by E.test_mr32_change_does_not_change_selector_training_labels)
+
+    The PhaseAware composite is constructed from TF4 + MR42; neither is MR32,
+    so the composite must be identical under a modified MR32.
+    """
+
+    @staticmethod
+    def _make_modified_mr32_registry() -> "StrategyRegistry":
+        """Return a registry where MR32 always produces the maximum possible
+        signal (all buys)."""
+        from src.strategies import (
+            TF1Strategy, TF2Strategy, TF3Strategy, TF4Strategy, TF5Strategy,
+            MR1Strategy, MR2Strategy, MR3Strategy, MR42Strategy, MR5Strategy,
+        )
+        from src.strategy_registry import _definition
+
+        class _AlwaysBuyMR32:
+            def generate_signals(self, df: pd.DataFrame):
+                n = len(df)
+                return (
+                    pd.Series(np.ones(n) * 1.0, index=df.index),
+                    pd.Series(np.zeros(n), index=df.index),
+                    pd.Series(np.zeros(n), index=df.index),
+                )
+
+        trend_states = ("HVTF", "LVTF")
+        ranging_states = ("HVR", "LVR")
+        defs = [
+            _definition(strategy_id="TF1", display_name="TF1", family="TrendFollowing", implementation=TF1Strategy, states=trend_states, indicators=("lwma", "stddev"), features=("Close",)),
+            _definition(strategy_id="TF2", display_name="TF2", family="TrendFollowing", implementation=TF2Strategy, states=trend_states, indicators=("sma",), features=("Close",)),
+            _definition(strategy_id="TF3", display_name="TF3", family="TrendFollowing", implementation=TF3Strategy, states=trend_states, indicators=("stochastic",), features=("High", "Low", "Close")),
+            _definition(strategy_id="TF4", display_name="TF4", family="TrendFollowing", implementation=TF4Strategy, states=trend_states, indicators=("adx", "plus_di", "minus_di"), features=("High", "Low", "Close")),
+            _definition(strategy_id="TF5", display_name="TF5", family="TrendFollowing", implementation=TF5Strategy, states=trend_states, indicators=("adx", "plus_di", "minus_di"), features=("High", "Low", "Close")),
+            _definition(strategy_id="MR1", display_name="MR1", family="MeanReversion", implementation=MR1Strategy, states=ranging_states, indicators=("bollinger_bands",), features=("Close",)),
+            _definition(strategy_id="MR2", display_name="MR2", family="MeanReversion", implementation=MR2Strategy, states=ranging_states, indicators=("bollinger_bands", "rsi"), features=("Close",)),
+            _definition(strategy_id="MR3", display_name="MR3", family="MeanReversion", implementation=MR3Strategy, states=ranging_states, indicators=("rsi",), features=("Close",)),
+            _definition(strategy_id="MR32", display_name="MR32", family="MeanReversion", implementation=_AlwaysBuyMR32, states=("LVR",), indicators=("rsi", "adx"), features=("Close",)),
+            _definition(strategy_id="MR42", display_name="MR42", family="MeanReversion", implementation=MR42Strategy, states=("LVR",), indicators=("stochastic", "adx"), features=("High", "Low", "Close")),
+            _definition(strategy_id="MR5", display_name="MR5", family="MeanReversion", implementation=MR5Strategy, states=("HVR",), indicators=("stochastic",), features=("High", "Low", "Close")),
+        ]
+        return StrategyRegistry(defs)
+
+    def test_mr32_change_does_not_change_phaseaware_equity_curve(self):
+        """The PhaseAware(TF4,MR42) equity curve in the selector reference
+        universe must be identical regardless of whether MR32 uses the standard
+        or stub implementation.
+
+        This closes the isolation chain:
+          TF4 equity unchanged  (TestMR32Isolation)
+          MR42 equity unchanged (TestMR32Isolation)
+          PhaseAware equity unchanged  (this test)
+          => selector training labels unchanged (TestMR32Isolation)
+        """
+        df = _make_ohlcv_df()
+        standard_registry = get_default_strategy_registry()
+        modified_registry = self._make_modified_mr32_registry()
+
+        results_standard = _build_selector_reference_results(
+            df_full=df,
+            pair_name="EURUSD",
+            strategy_registry=standard_registry,
+            policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+        )
+        results_modified = _build_selector_reference_results(
+            df_full=df,
+            pair_name="EURUSD",
+            strategy_registry=modified_registry,
+            policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+        )
+
+        tf_id, mr_id = resolve_phaseaware_strategy_pair(DEFAULT_PHASEAWARE_POLICY_ID)
+        pa_key = f"PhaseAware_{tf_id}_{mr_id}"
+
+        eq_std = results_standard[pa_key]["equity_curve"]
+        eq_mod = results_modified[pa_key]["equity_curve"]
+        pd.testing.assert_series_equal(
+            eq_std,
+            eq_mod,
+            check_names=False,
+            obj=(
+                f"{pa_key} equity curve must be unaffected by MR32 change, "
+                "because PhaseAware is constructed from TF4+MR42 only"
+            ),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
