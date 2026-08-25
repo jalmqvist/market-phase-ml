@@ -367,8 +367,6 @@ class TestGlobalAndCausalConsistency(unittest.TestCase):
                 pair_name="EURUSD",
                 policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
             )
-            mr_id, _ = resolve_phaseaware_strategy_pair(DEFAULT_PHASEAWARE_POLICY_ID)
-            # Swap to get MR id
             tf_id, mr_id = resolve_phaseaware_strategy_pair(DEFAULT_PHASEAWARE_POLICY_ID)
             self.assertIn(
                 mr_id, results,
