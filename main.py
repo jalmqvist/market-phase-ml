@@ -336,6 +336,14 @@ INITIAL_CAPITAL     = 10000.0
 MIN_PHASE_SAMPLES   = 100       # Minimum samples per phase for ML
 USE_ATR_SIZING      = False     # Set True to compare ATR-based sizing
 
+# Module-level pip-value lookup derived from the imported PIP_VALUES dict.
+# This is the canonical source for _build_selector_reference_results and
+# any helper that needs to run outside of main() (e.g. in tests).
+_PIP_VALUES_BY_PAIRNAME: dict[str, float] = {
+    PAIR_NAMES.get(ticker, ticker.replace("=X", "")): pip
+    for ticker, pip in PIP_VALUES.items()
+}
+
 
 # ─────────────────────────────────────────────────────
 # HELPER FUNCTIONS
@@ -1979,10 +1987,22 @@ def _build_selector_reference_results(
     pair_name: str,
     strategy_registry=None,
     policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
+    policy_registry=None,
 ) -> dict:
-    """Build the minimal full-history results needed for selector labels."""
+    """Build the minimal full-history results needed for selector labels.
+
+    Returns a dict containing exactly three keys:
+        - the configured TrendFollowing representative (e.g. TF4)
+        - the configured MeanReversion representative (e.g. MR42)
+        - the PhaseAware composite strategy (e.g. PhaseAware_TF4_MR42)
+
+    These three strategies form the Selector Reference Universe for the given
+    policy.  The full strategy research universe (hardcoded_results) must NOT
+    be used here — only these policy-derived representatives should influence
+    selector training labels.
+    """
     strategy_registry = strategy_registry or get_default_strategy_registry()
-    pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
+    pip_value = _PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
     backtester = BT(
         initial_capital=INITIAL_CAPITAL,
         spread_pips=SPREAD_PIPS,
@@ -1991,7 +2011,11 @@ def _build_selector_reference_results(
         pip_value=pip_value,
         use_atr_sizing=False,
     )
-    baseline_tf, baseline_mr = resolve_phaseaware_strategy_pair(policy_id)
+    baseline_tf, baseline_mr = resolve_phaseaware_strategy_pair(
+        policy_id,
+        strategy_registry=strategy_registry,
+        policy_registry=policy_registry,
+    )
     results = {
         baseline_tf: _run_registry_strategy_backtest(
             df=df_full,
@@ -2008,10 +2032,11 @@ def _build_selector_reference_results(
     }
     pa = PhaseAwareStrategy(baseline_tf, baseline_mr)
     pa_signals, pa_sl, pa_tp = pa.generate_signals(df_full)
-    results[phaseaware_strategy_name(policy_id)] = backtester.run(
+    pa_name = f"PhaseAware_{baseline_tf}_{baseline_mr}"
+    results[pa_name] = backtester.run(
         df_full,
         pa_signals,
-        phaseaware_strategy_name(policy_id),
+        pa_name,
         pa_sl,
         pa_tp,
     )
@@ -3112,10 +3137,17 @@ def main(
             print(f'\n  --- {pair_name} ---')
 
             try:
-                # Get backtest results for this pair
-                pair_backtest = hardcoded_results.get(pair_name, {})
+                # Get selector reference universe results for this pair.
+                # G3.1: global selector training must use only the selector
+                # reference universe (TF4 + MR42 + PhaseAware(TF4,MR42)),
+                # NOT the full hardcoded_results / research universe.
+                pair_backtest = _build_selector_reference_results(
+                    df_full=df,
+                    pair_name=pair_name,
+                    policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                )
                 if not pair_backtest:
-                    print(f'    ✗ No backtest results available')
+                    print(f'    ✗ No selector reference results available')
                     continue
 
                 # Track which strategy won in rolling windows
@@ -3548,15 +3580,17 @@ def main(
 
             pair_results_full: dict = {}
             if _wf_run_dynamic:
-                if _run_full_universe:
-                    pair_results_full = hardcoded_results.get(pair_name, {})
-                else:
-                    pair_results_full = _build_selector_reference_results(
-                        df_full=df_full,
-                        pair_name=pair_name,
-                        strategy_registry=_wf_strategy_registry,
-                        policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
-                    )
+                # G3.1: per-fold causal selector training must always use the
+                # selector reference universe, regardless of _run_full_universe.
+                # The full hardcoded_results research universe MUST NOT be used
+                # as selector labels, as unrelated strategies (e.g. MR32) would
+                # otherwise influence selector training.
+                pair_results_full = _build_selector_reference_results(
+                    df_full=df_full,
+                    pair_name=pair_name,
+                    strategy_registry=_wf_strategy_registry,
+                    policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                )
                 if not pair_results_full:
                     print("    ✗ Missing selector reference results; skipping")
                     continue
@@ -4281,9 +4315,15 @@ def main(
             df_full = processed_data[pair_name]
             print(f"\n  --- {pair_name} ---")
 
-            pair_results_full = hardcoded_results.get(pair_name, {})
+            # G3.1: tau sweep selector training must use the selector
+            # reference universe, not the full research universe.
+            pair_results_full = _build_selector_reference_results(
+                df_full=df_full,
+                pair_name=pair_name,
+                policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+            )
             if not pair_results_full:
-                print("    ✗ Missing hardcoded_results for pair; skipping")
+                print("    ✗ Missing selector reference results for pair; skipping")
                 continue
 
             folds = generate_walkforward_folds_by_pos(
@@ -4509,9 +4549,15 @@ def main(
             df_full = processed_data[pair_name]
             print(f"\n  --- {pair_name} ---")
 
-            pair_results_full = hardcoded_results.get(pair_name, {})
+            # G3.1: policy sweep selector training must use the selector
+            # reference universe, not the full research universe.
+            pair_results_full = _build_selector_reference_results(
+                df_full=df_full,
+                pair_name=pair_name,
+                policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+            )
             if not pair_results_full:
-                print("    ✗ Missing hardcoded_results for pair; skipping")
+                print("    ✗ Missing selector reference results for pair; skipping")
                 continue
 
             folds = generate_walkforward_folds_by_pos(
