@@ -34,6 +34,7 @@ from src.evaluation_scope import (  # noqa: E402
 from src.strategy_registry import (  # noqa: E402
     get_default_policy_registry,
     get_default_strategy_registry,
+    resolve_phaseaware_configuration,
 )
 
 
@@ -442,6 +443,60 @@ class TestWalkforwardExecutionPlan(unittest.TestCase):
         self.assertEqual(
             [spec["strategy_id"] for spec in plan["strategy_specs"]],
             ["PhaseAware_TF4_MR42", "StrategySelector_Dynamic_WF"],
+        )
+
+    def test_default_scope_uses_experiment_local_phaseaware_configuration(self):
+        composition = resolve_phaseaware_configuration(
+            phaseaware_tf_strategy_id="TF2",
+            phaseaware_mr_strategy_id="MR2",
+        )
+        plan = self._main._build_walkforward_execution_plan(
+            _default_scope(),
+            strategy_registry=self._registry,
+            phaseaware_configuration=composition,
+        )
+        self.assertEqual(plan["standalone_strategy_ids"], ())
+        self.assertTrue(plan["run_phaseaware"])
+        self.assertTrue(plan["run_dynamic_selector"])
+        self.assertEqual(
+            [spec["strategy_id"] for spec in plan["strategy_specs"]],
+            ["PhaseAware_TF2_MR2", "StrategySelector_Dynamic_WF"],
+        )
+
+    def test_explicit_scope_uses_effective_phaseaware_pair_for_composite_gate(self):
+        composition = resolve_phaseaware_configuration(
+            phaseaware_tf_strategy_id="TF2",
+            phaseaware_mr_strategy_id="MR2",
+        )
+        plan = self._main._build_walkforward_execution_plan(
+            _explicit_scope("TF2", "MR2"),
+            strategy_registry=self._registry,
+            phaseaware_configuration=composition,
+        )
+        self.assertEqual(plan["standalone_strategy_ids"], ("TF2", "MR2"))
+        self.assertTrue(plan["run_phaseaware"])
+        self.assertTrue(plan["run_dynamic_selector"])
+        self.assertEqual(
+            {spec["strategy_id"] for spec in plan["strategy_specs"]},
+            {"TF2", "MR2", "PhaseAware_TF2_MR2", "StrategySelector_Dynamic_WF"},
+        )
+
+    def test_phaseaware_override_does_not_redefine_explicit_strategy_scope(self):
+        composition = resolve_phaseaware_configuration(
+            phaseaware_tf_strategy_id="TF2",
+            phaseaware_mr_strategy_id="MR2",
+        )
+        plan = self._main._build_walkforward_execution_plan(
+            _explicit_scope("TF4", "MR42"),
+            strategy_registry=self._registry,
+            phaseaware_configuration=composition,
+        )
+        self.assertEqual(plan["standalone_strategy_ids"], ("TF4", "MR42"))
+        self.assertFalse(plan["run_phaseaware"])
+        self.assertFalse(plan["run_dynamic_selector"])
+        self.assertEqual(
+            {spec["strategy_id"] for spec in plan["strategy_specs"]},
+            {"TF4", "MR42"},
         )
 
 

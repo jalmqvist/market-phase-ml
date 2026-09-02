@@ -11,8 +11,10 @@ from ta.momentum import StochasticOscillator, RSIIndicator
 from src.dl_daily_features import D1_FEATURE_COLS as _DL_D1_FEATURE_COLS
 from src.strategy_registry import (
     DEFAULT_PHASEAWARE_POLICY_ID,
+    ResolvedPhaseAwareComposition,
     get_default_strategy_registry,
     log_default_registry_summary,
+    resolve_phaseaware_configuration,
     resolve_phaseaware_strategy_pair,
 )
 
@@ -1594,6 +1596,7 @@ def run_backtests(
         tf_strategy_name: str  = 'TF3',
         mr_strategy_name: str  = 'MR3',
         evaluation_policy_id: str | None = None,
+        phaseaware_configuration: ResolvedPhaseAwareComposition | None = None,
         spread_pips: float = 1.0,
         slippage_pips: float = 0.5,
         commission_per_trade: float = 0.0,
@@ -1618,6 +1621,8 @@ def run_backtests(
         mr_strategy_name: MR strategy to use in PhaseAware (default: MR3)
         evaluation_policy_id: Optional evaluation policy that resolves the
                               PhaseAware TF/MR pair via the policy registry.
+        phaseaware_configuration: Optional experiment-local PhaseAware
+                                  composition override.
 
     Returns:
         Dictionary keyed by strategy name, each containing
@@ -1625,7 +1630,14 @@ def run_backtests(
     """
     log_default_registry_summary()
 
-    if evaluation_policy_id is not None:
+    if phaseaware_configuration is None and evaluation_policy_id is not None:
+        phaseaware_configuration = resolve_phaseaware_configuration(
+            evaluation_policy_id,
+        )
+    if phaseaware_configuration is not None:
+        tf_strategy_name = phaseaware_configuration.tf_strategy_id
+        mr_strategy_name = phaseaware_configuration.mr_strategy_id
+    elif evaluation_policy_id is not None:
         tf_strategy_name, mr_strategy_name = resolve_phaseaware_strategy_pair(
             evaluation_policy_id
         )
@@ -1741,6 +1753,7 @@ class StrategySelector_Dynamic:
             default_tf: str | None = None,
             default_mr: str | None = None,
             evaluation_policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
+            phaseaware_configuration: ResolvedPhaseAwareComposition | None = None,
             tau_enter: float = 0.55,
             tau_exit: float = 0.50,
             min_hold_bars: int = 5,
@@ -1783,7 +1796,12 @@ class StrategySelector_Dynamic:
             default_mr:       Fallback MR strategy if selector fails
         """
         if default_tf is None or default_mr is None:
-            policy_tf, policy_mr = resolve_phaseaware_strategy_pair(evaluation_policy_id)
+            if phaseaware_configuration is None:
+                phaseaware_configuration = resolve_phaseaware_configuration(
+                    evaluation_policy_id,
+                )
+            policy_tf = phaseaware_configuration.tf_strategy_id
+            policy_mr = phaseaware_configuration.mr_strategy_id
             if default_tf is None:
                 default_tf = policy_tf
             if default_mr is None:

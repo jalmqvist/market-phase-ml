@@ -54,10 +54,10 @@ from src.behavioral_artifact_resolver import resolve_behavioral_artifact_runtime
 from src.experiment_surface_runtime import build_runtime_experiment_surface
 from src.strategy_registry import (
     DEFAULT_PHASEAWARE_POLICY_ID,
+    ResolvedPhaseAwareComposition,
     get_default_policy_registry,
     get_default_strategy_registry,
-    phaseaware_strategy_name,
-    resolve_phaseaware_strategy_pair,
+    resolve_phaseaware_configuration,
 )
 from src.evaluation_scope import (
     EvaluationScope,
@@ -1338,12 +1338,20 @@ def _compute_vol_threshold(df_train_bars: pd.DataFrame) -> float | None:
     return float(s.quantile(VOL_GUARD_Q)) if len(s) > 0 else None
 
 
-def _run_baseline_bt(df_test: pd.DataFrame, pip_value: float) -> dict:
-    """Run the default PhaseAware policy baseline backtest on a test slice.
+def _run_baseline_bt(
+    df_test: pd.DataFrame,
+    pip_value: float,
+    *,
+    phaseaware_configuration: ResolvedPhaseAwareComposition | None = None,
+) -> dict:
+    """Run the effective PhaseAware baseline backtest on a test slice.
 
     Uses module globals INITIAL_CAPITAL, SPREAD_PIPS, SLIPPAGE_PIPS,
     COMMISSION_PER_TRADE.
     """
+    phaseaware_configuration = (
+        phaseaware_configuration or resolve_phaseaware_configuration()
+    )
     backtester = BT(
         initial_capital=INITIAL_CAPITAL,
         spread_pips=SPREAD_PIPS,
@@ -1352,13 +1360,14 @@ def _run_baseline_bt(df_test: pd.DataFrame, pip_value: float) -> dict:
         pip_value=pip_value,
         use_atr_sizing=False,
     )
-    baseline_tf, baseline_mr = resolve_phaseaware_strategy_pair()
+    baseline_tf = phaseaware_configuration.tf_strategy_id
+    baseline_mr = phaseaware_configuration.mr_strategy_id
     pa = PhaseAwareStrategy(baseline_tf, baseline_mr)
     pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
     return backtester.run(
         df_test,
         pa_signals,
-        f"{phaseaware_strategy_name()}_WF",
+        f"{phaseaware_configuration.strategy_id}_WF",
         pa_sl,
         pa_tp,
     )
@@ -1366,14 +1375,21 @@ def _run_baseline_bt(df_test: pd.DataFrame, pip_value: float) -> dict:
 
 def _build_walkforward_default_strategy_specs(
     *,
+    phaseaware_configuration: ResolvedPhaseAwareComposition | None = None,
     policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
 ) -> list[dict]:
     """Return the legacy composite-only benchmark spec set."""
-    scope_tf, scope_mr = resolve_phaseaware_strategy_pair(policy_id)
-    policy_scope_ids = (scope_tf, scope_mr)
+    phaseaware_configuration = (
+        phaseaware_configuration
+        or resolve_phaseaware_configuration(policy_id)
+    )
+    policy_scope_ids = (
+        phaseaware_configuration.tf_strategy_id,
+        phaseaware_configuration.mr_strategy_id,
+    )
     return [
         {
-            "strategy_id": phaseaware_strategy_name(policy_id),
+            "strategy_id": phaseaware_configuration.strategy_id,
             "scope_strategy_ids": policy_scope_ids,
             "expected_return_col": "Baseline Return (%)",
             "expected_sharpe_col": "Baseline Sharpe",
@@ -1399,11 +1415,15 @@ def _build_walkforward_strategy_specs(
     scope: EvaluationScope,
     *,
     strategy_registry=None,
+    phaseaware_configuration: ResolvedPhaseAwareComposition | None = None,
     policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
 ) -> list[dict]:
     """Return the StrategyEvaluation spec set for the active walk-forward scope."""
     strategy_registry = strategy_registry or get_default_strategy_registry()
-    default_specs = _build_walkforward_default_strategy_specs(policy_id=policy_id)
+    default_specs = _build_walkforward_default_strategy_specs(
+        policy_id=policy_id,
+        phaseaware_configuration=phaseaware_configuration,
+    )
     if scope.source == "default":
         return default_specs
 
@@ -1428,15 +1448,21 @@ def _build_walkforward_execution_plan(
     scope: EvaluationScope,
     *,
     strategy_registry=None,
+    phaseaware_configuration: ResolvedPhaseAwareComposition | None = None,
     policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
 ) -> dict:
     """Resolve which walk-forward components actually execute for this scope."""
     strategy_specs = _build_walkforward_strategy_specs(
         scope,
         strategy_registry=strategy_registry,
+        phaseaware_configuration=phaseaware_configuration,
         policy_id=policy_id,
     )
-    composite_strategy_id = phaseaware_strategy_name(policy_id)
+    phaseaware_configuration = (
+        phaseaware_configuration
+        or resolve_phaseaware_configuration(policy_id)
+    )
+    composite_strategy_id = phaseaware_configuration.strategy_id
     standalone_strategy_ids = tuple(
         spec["strategy_id"]
         for spec in strategy_specs
@@ -1986,6 +2012,7 @@ def _build_selector_reference_results(
     df_full: pd.DataFrame,
     pair_name: str,
     strategy_registry=None,
+    phaseaware_configuration: ResolvedPhaseAwareComposition | None = None,
     policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
     policy_registry=None,
 ) -> dict:
@@ -2011,11 +2038,16 @@ def _build_selector_reference_results(
         pip_value=pip_value,
         use_atr_sizing=False,
     )
-    baseline_tf, baseline_mr = resolve_phaseaware_strategy_pair(
-        policy_id,
-        strategy_registry=strategy_registry,
-        policy_registry=policy_registry,
+    phaseaware_configuration = (
+        phaseaware_configuration
+        or resolve_phaseaware_configuration(
+            policy_id,
+            strategy_registry=strategy_registry,
+            policy_registry=policy_registry,
+        )
     )
+    baseline_tf = phaseaware_configuration.tf_strategy_id
+    baseline_mr = phaseaware_configuration.mr_strategy_id
     results = {
         baseline_tf: _run_registry_strategy_backtest(
             df=df_full,
@@ -2032,7 +2064,7 @@ def _build_selector_reference_results(
     }
     pa = PhaseAwareStrategy(baseline_tf, baseline_mr)
     pa_signals, pa_sl, pa_tp = pa.generate_signals(df_full)
-    pa_name = f"PhaseAware_{baseline_tf}_{baseline_mr}"
+    pa_name = phaseaware_configuration.strategy_id
     results[pa_name] = backtester.run(
         df_full,
         pa_signals,
@@ -2223,6 +2255,8 @@ def main(
     behavioral_surface: str | None = None,
     recommendation_top_n: int | None = None,
     strategy: list[str] | None = None,
+    phaseaware_tf: str | None = None,
+    phaseaware_mr: str | None = None,
     debug: bool = False,
 ):
     # ── Debug flag: reflect current invocation on every call so state is
@@ -2293,15 +2327,30 @@ def main(
     # G3 determines which strategies are evaluated.
     # G2 determines how the resulting StrategyEvaluation objects are ranked.
     # Precedence: --strategy CLI args > default EvaluationPolicy scope.
+    _strategy_registry = get_default_strategy_registry()
+    _policy_registry = get_default_policy_registry()
+    _phaseaware_configuration = resolve_phaseaware_configuration(
+        DEFAULT_PHASEAWARE_POLICY_ID,
+        phaseaware_tf_strategy_id=phaseaware_tf,
+        phaseaware_mr_strategy_id=phaseaware_mr,
+        strategy_registry=_strategy_registry,
+        policy_registry=_policy_registry,
+    )
     _effective_scope = resolve_evaluation_scope(
         requested_strategy_ids=strategy,
-        registry=get_default_strategy_registry(),
-        policy_registry=get_default_policy_registry(),
+        registry=_strategy_registry,
+        policy_registry=_policy_registry,
         surface_id=_resolved_behavioral_surface_id,
     )
     print(
         f"[G3] Evaluation scope ({_effective_scope.source}): "
         f"{list(_effective_scope.strategy_ids)}"
+    )
+    print(
+        "[G3.2] PhaseAware composition: "
+        f"{_phaseaware_configuration.tf_strategy_id} + "
+        f"{_phaseaware_configuration.mr_strategy_id} "
+        f"({_phaseaware_configuration.strategy_id})"
     )
     # ── Whether to run the full-universe legacy pipeline ─────────────────────
     # Default runs retain the full-universe benchmark behavior.
@@ -2463,6 +2512,7 @@ def main(
         "recommendation_schema_version": RECOMMENDATION_SCHEMA_VERSION,
         "recommendation_count": 0,
         "evaluation_scope": _effective_scope.to_manifest_block(),
+        "phaseaware": _phaseaware_configuration.to_manifest_block(),
         "behavioral_surface": build_behavioral_surface_manifest_block(
             surface_id=_resolved_behavioral_surface_id,
             state_id=_resolved_behavioral_state_id,
@@ -2904,6 +2954,9 @@ def main(
             initial_capital=INITIAL_CAPITAL,
             use_atr_sizing=False,
             evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+            phaseaware_strategy_id=_phaseaware_configuration.strategy_id,
+            phaseaware_tf_strategy_id=_phaseaware_configuration.tf_strategy_id,
+            phaseaware_mr_strategy_id=_phaseaware_configuration.mr_strategy_id,
             spread_pips=SPREAD_PIPS,
             slippage_pips=SLIPPAGE_PIPS,
             commission_per_trade=COMMISSION_PER_TRADE,
@@ -2937,13 +2990,14 @@ def main(
                         initial_capital=INITIAL_CAPITAL,
                         use_atr_sizing=False,
                         evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                        phaseaware_configuration=_phaseaware_configuration,
                         spread_pips=SPREAD_PIPS,
                         slippage_pips=SLIPPAGE_PIPS,
                         commission_per_trade=COMMISSION_PER_TRADE,
                         pip_value=pip_value,
                     )
 
-                    baseline_key = phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID)
+                    baseline_key = _phaseaware_configuration.strategy_id
                     if baseline_key in result:
                         ml_backtest_results[pair_name] = result[baseline_key]
                         print(f'  ✓ {pair_name}: ML backtest complete')
@@ -2962,7 +3016,7 @@ def main(
             print('  Loaded ML backtest results from cache.')
 
         # ── Print and save ML backtest results ────────────────────────────────
-        ml_strategy_name = f"{phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID)}_ML"
+        ml_strategy_name = f"{_phaseaware_configuration.strategy_id}_ML"
         print(f'\n  ML Backtest Results Summary ({ml_strategy_name}):')
         print(f'  {"Pair":<12} {"Return %":>10} {"Sharpe":>8} '
               f'{"MaxDD %":>10} {"WinRate %":>10} {"Trades":>8}')
@@ -3005,6 +3059,10 @@ def main(
         backtest_params = dict(
             initial_capital=INITIAL_CAPITAL,
             use_atr_sizing=False,
+            evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+            phaseaware_strategy_id=_phaseaware_configuration.strategy_id,
+            phaseaware_tf_strategy_id=_phaseaware_configuration.tf_strategy_id,
+            phaseaware_mr_strategy_id=_phaseaware_configuration.mr_strategy_id,
             spread_pips=SPREAD_PIPS,
             slippage_pips=SLIPPAGE_PIPS,
             commission_per_trade=COMMISSION_PER_TRADE,
@@ -3036,6 +3094,7 @@ def main(
                         initial_capital=INITIAL_CAPITAL,
                         use_atr_sizing=False,
                         evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                        phaseaware_configuration=_phaseaware_configuration,
                         spread_pips=SPREAD_PIPS,
                         slippage_pips=SLIPPAGE_PIPS,
                         commission_per_trade=COMMISSION_PER_TRADE,
@@ -3052,6 +3111,7 @@ def main(
                         initial_capital=INITIAL_CAPITAL,
                         use_atr_sizing=True,
                         evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                        phaseaware_configuration=_phaseaware_configuration,
                         spread_pips=SPREAD_PIPS,
                         slippage_pips=SLIPPAGE_PIPS,
                         commission_per_trade=COMMISSION_PER_TRADE,
@@ -3139,11 +3199,12 @@ def main(
             try:
                 # Get selector reference universe results for this pair.
                 # G3.1: global selector training must use only the selector
-                # reference universe (TF4 + MR42 + PhaseAware(TF4,MR42)),
+                # reference universe for the effective PhaseAware composition,
                 # NOT the full hardcoded_results / research universe.
                 pair_backtest = _build_selector_reference_results(
                     df_full=df,
                     pair_name=pair_name,
+                    phaseaware_configuration=_phaseaware_configuration,
                     policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
                 )
                 if not pair_backtest:
@@ -3308,6 +3369,7 @@ def main(
                     tf_strategies=tf_strats,
                     mr_strategies=mr_strats,
                     evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                    phaseaware_configuration=_phaseaware_configuration,
                     tau_enter=WF_TAU,
                     tau_exit=max(0.0, WF_TAU - 0.05),
                     dl_debug_verbose=DL_DEBUG_VERBOSE,
@@ -3372,7 +3434,7 @@ def main(
     # 4d. COMPARE BASELINE VS DYNAMIC SELECTOR
     # ─────────────────────────────────────────
     if dynamic_results:
-        baseline_key = phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID)
+        baseline_key = _phaseaware_configuration.strategy_id
         print(f'\n[4d/5] Comparing Baseline ({baseline_key}) vs Dynamic Selector...\n')
 
         comparison = []
@@ -3432,11 +3494,17 @@ def main(
         )
 
         variants = {
-            "A0_TF4": ("hardcoded", "TF4"),
-            "A1_MR42": ("hardcoded", "MR42"),
-            f"A2_{phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID)}": (
+            f"A0_{_phaseaware_configuration.tf_strategy_id}": (
                 "hardcoded",
-                phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID),
+                _phaseaware_configuration.tf_strategy_id,
+            ),
+            f"A1_{_phaseaware_configuration.mr_strategy_id}": (
+                "hardcoded",
+                _phaseaware_configuration.mr_strategy_id,
+            ),
+            f"A2_{_phaseaware_configuration.strategy_id}": (
+                "hardcoded",
+                _phaseaware_configuration.strategy_id,
             ),
             A3_LABEL: ("dynamic", "StrategySelector_Dynamic"),  # key unused for dynamic source
         }
@@ -3509,6 +3577,7 @@ def main(
         _wf_execution_plan = _build_walkforward_execution_plan(
             _effective_scope,
             strategy_registry=_wf_strategy_registry,
+            phaseaware_configuration=_phaseaware_configuration,
             policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
         )
         _wf_run_phaseaware = bool(_wf_execution_plan["run_phaseaware"])
@@ -3589,6 +3658,7 @@ def main(
                     df_full=df_full,
                     pair_name=pair_name,
                     strategy_registry=_wf_strategy_registry,
+                    phaseaware_configuration=_phaseaware_configuration,
                     policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
                 )
                 if not pair_results_full:
@@ -3697,6 +3767,7 @@ def main(
                         tf_strategies=tf_strats,
                         mr_strategies=mr_strats,
                         evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                        phaseaware_configuration=_phaseaware_configuration,
                         tau_enter=WF_TAU,
                         tau_exit=max(0.0, WF_TAU - 0.05),
                         dl_debug_verbose=DL_DEBUG_VERBOSE,
@@ -3754,15 +3825,14 @@ def main(
 
                 base_res: dict = {}
                 if _wf_run_phaseaware:
-                    baseline_tf, baseline_mr = resolve_phaseaware_strategy_pair(
-                        DEFAULT_PHASEAWARE_POLICY_ID
-                    )
+                    baseline_tf = _phaseaware_configuration.tf_strategy_id
+                    baseline_mr = _phaseaware_configuration.mr_strategy_id
                     pa = PhaseAwareStrategy(baseline_tf, baseline_mr)
                     pa_signals, pa_sl, pa_tp = pa.generate_signals(df_test)
                     base_res = backtester.run(
                         df_test,
                         pa_signals,
-                        f"{phaseaware_strategy_name()}_WF",
+                        f"{_phaseaware_configuration.strategy_id}_WF",
                         pa_sl,
                         pa_tp,
                     )
@@ -4320,6 +4390,7 @@ def main(
             pair_results_full = _build_selector_reference_results(
                 df_full=df_full,
                 pair_name=pair_name,
+                phaseaware_configuration=_phaseaware_configuration,
                 policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
             )
             if not pair_results_full:
@@ -4400,7 +4471,11 @@ def main(
 
                 # Baseline PhaseAware (tau-independent)
                 pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
-                base_res = _run_baseline_bt(df_test, pip_value)
+                base_res = _run_baseline_bt(
+                    df_test,
+                    pip_value,
+                    phaseaware_configuration=_phaseaware_configuration,
+                )
                 backtester = BT(
                     initial_capital=INITIAL_CAPITAL,
                     spread_pips=SPREAD_PIPS,
@@ -4417,6 +4492,7 @@ def main(
                         tf_strategies=tf_strats,
                         mr_strategies=mr_strats,
                         evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                        phaseaware_configuration=_phaseaware_configuration,
                         tau_enter=tau,
                         tau_exit=max(0.0, tau - 0.05),
                         dl_debug_verbose=DL_DEBUG_VERBOSE,
@@ -4554,6 +4630,7 @@ def main(
             pair_results_full = _build_selector_reference_results(
                 df_full=df_full,
                 pair_name=pair_name,
+                phaseaware_configuration=_phaseaware_configuration,
                 policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
             )
             if not pair_results_full:
@@ -4621,7 +4698,11 @@ def main(
 
                 # baseline PhaseAware on test slice (shared across policies)
                 pip_value = PIP_VALUES_BY_PAIRNAME.get(pair_name, 0.0001)
-                base_res = _run_baseline_bt(df_test, pip_value)
+                base_res = _run_baseline_bt(
+                    df_test,
+                    pip_value,
+                    phaseaware_configuration=_phaseaware_configuration,
+                )
                 backtester = BT(
                     initial_capital=INITIAL_CAPITAL,
                     spread_pips=SPREAD_PIPS,
@@ -4640,6 +4721,7 @@ def main(
                         tf_strategies=tf_strats,
                         mr_strategies=mr_strats,
                         evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                        phaseaware_configuration=_phaseaware_configuration,
                         # policy-specific gating params (override defaults)
                         tau_enter=pol["tau_enter"],
                         tau_exit=pol["tau_exit"],
@@ -4910,6 +4992,30 @@ if __name__ == '__main__':
         ),
     )
     parser.add_argument(
+        "--phaseaware-tf",
+        action="append",
+        dest="phaseaware_tf",
+        default=None,
+        metavar="STRATEGY_ID",
+        help=(
+            "Override the TrendFollowing representative used by PhaseAware for this run. "
+            "Must be a Strategy Registry TrendFollowing ID, e.g. TF2. "
+            "May be provided at most once."
+        ),
+    )
+    parser.add_argument(
+        "--phaseaware-mr",
+        action="append",
+        dest="phaseaware_mr",
+        default=None,
+        metavar="STRATEGY_ID",
+        help=(
+            "Override the MeanReversion representative used by PhaseAware for this run. "
+            "Must be a Strategy Registry MeanReversion ID, e.g. MR2. "
+            "May be provided at most once."
+        ),
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         dest="debug",
@@ -4921,6 +5027,10 @@ if __name__ == '__main__':
         ),
     )
     args = parser.parse_args()
+    if args.phaseaware_tf and len(args.phaseaware_tf) > 1:
+        parser.error("--phaseaware-tf may be specified at most once")
+    if args.phaseaware_mr and len(args.phaseaware_mr) > 1:
+        parser.error("--phaseaware-mr may be specified at most once")
     main(
         output_dir=args.output_dir,
         experiment_generation=args.experiment_generation,
@@ -4929,5 +5039,7 @@ if __name__ == '__main__':
         behavioral_surface=args.behavioral_surface,
         recommendation_top_n=args.recommendation_top_n,
         strategy=args.strategy,
+        phaseaware_tf=args.phaseaware_tf[0] if args.phaseaware_tf else None,
+        phaseaware_mr=args.phaseaware_mr[0] if args.phaseaware_mr else None,
         debug=args.debug,
     )
