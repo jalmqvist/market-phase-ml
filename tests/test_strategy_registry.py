@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -243,6 +244,34 @@ class TestStrategyRegistryIntegration(unittest.TestCase):
         )
         _, _, _, selected = dynamic.generate_signals(df, "EURUSD", return_selected=True)
         self.assertTrue((selected == "MeanReversion").all())
+
+    def test_dynamic_selector_explicit_phaseaware_configuration_takes_precedence(self):
+        class _StaticSignalStrategy:
+            def generate_signals(self, df: pd.DataFrame):
+                z = pd.Series(np.zeros(len(df), dtype=float), index=df.index)
+                return z, z.copy(), z.copy()
+
+        composition = resolve_phaseaware_configuration(
+            DEFAULT_PHASEAWARE_POLICY_ID,
+            phaseaware_tf_strategy_id="TF2",
+            phaseaware_mr_strategy_id="MR2",
+        )
+        dynamic = StrategySelector_Dynamic(
+            selector_trained={"EURUSD": SimpleNamespace()},
+            tf_strategies={"TF2": _StaticSignalStrategy(), "TF4": _StaticSignalStrategy()},
+            mr_strategies={"MR2": _StaticSignalStrategy(), "MR42": _StaticSignalStrategy()},
+            evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+            phaseaware_configuration=composition,
+            tau_enter=0.4,
+            tau_exit=0.3,
+            use_prob_margin=False,
+            use_hysteresis=False,
+            use_min_hold=False,
+            min_hold_bars=0,
+            use_max_hold=False,
+        )
+        self.assertEqual(dynamic.default_tf, "TF2")
+        self.assertEqual(dynamic.default_mr, "MR2")
 
     def test_legacy_standalone_strategy_sets_exclude_mr3(self):
         tf_strategies, mr_strategies = instantiate_evaluated_strategy_dicts()

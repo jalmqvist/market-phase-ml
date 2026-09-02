@@ -14,9 +14,12 @@ These tests verify the requirements from problem statement section 1 & 4:
 from __future__ import annotations
 
 import io
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -671,6 +674,98 @@ class TestDebugFlagReversibility(unittest.TestCase):
         self._main._configure_debug(False)
         self.assertFalse(self._main.DL_DEBUG_VERBOSE)
         self.assertFalse(self._models._DIAGNOSTICS_VERBOSE)
+
+
+class TestMainPhaseAwareManifest(unittest.TestCase):
+    """Verify main() records the resolved experiment-local PhaseAware pair."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib
+        cls._main = importlib.import_module("main")
+
+    def test_main_records_phaseaware_override_in_manifest(self):
+        class _StopAfterManifestWrite(RuntimeError):
+            pass
+
+        captured: dict[str, object] = {}
+
+        def _capture_manifest(*, manifest, run_manifest_path, experiment_manifest_path):
+            captured["manifest"] = manifest
+            captured["run_manifest_path"] = run_manifest_path
+            captured["experiment_manifest_path"] = experiment_manifest_path
+            Path(run_manifest_path).parent.mkdir(parents=True, exist_ok=True)
+            self._main.write_manifest(run_manifest_path, manifest)
+            self._main.write_manifest(experiment_manifest_path, manifest)
+            raise _StopAfterManifestWrite
+
+        artifact_runtime = SimpleNamespace(
+            diagnostics=[],
+            enabled=False,
+            artifact_path=None,
+            surface_selector={},
+            state_id=None,
+            d1_predictions=None,
+        )
+
+        class _DummyPipeline:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "run-output"
+            with patch.object(
+                self._main,
+                "resolve_behavioral_artifact_runtime",
+                return_value=artifact_runtime,
+            ), patch.object(
+                self._main,
+                "build_runtime_experiment_surface",
+                return_value={"surface_id": "trend_vol", "surface_version": "1.0.0"},
+            ), patch.object(
+                self._main,
+                "build_experiment_id",
+                return_value="exp-test",
+            ), patch.object(
+                self._main,
+                "resolve_market_data_source",
+                return_value="yfinance",
+            ), patch.object(
+                self._main,
+                "MarketDataPipeline",
+                _DummyPipeline,
+            ), patch.object(
+                self._main,
+                "_write_manifests",
+                side_effect=_capture_manifest,
+            ):
+                with self.assertRaises(_StopAfterManifestWrite):
+                    self._main.main(
+                        output_dir=output_dir,
+                        phaseaware_tf="TF2",
+                        phaseaware_mr="MR2",
+                    )
+            with Path(captured["run_manifest_path"]).open("r", encoding="utf-8") as fh:
+                written_manifest = json.load(fh)
+
+        manifest = captured["manifest"]
+        self.assertEqual(
+            manifest["phaseaware"],
+            {
+                "policy_id": "phaseaware_default",
+                "phaseaware_tf_strategy": "TF2",
+                "phaseaware_mr_strategy": "MR2",
+                "phaseaware_strategy": "PhaseAware_TF2_MR2",
+            },
+        )
+        self.assertEqual(
+            written_manifest["phaseaware"]["phaseaware_strategy"],
+            "PhaseAware_TF2_MR2",
+        )
+        self.assertTrue(str(captured["run_manifest_path"]).endswith("run_manifest.json"))
+        self.assertTrue(
+            str(captured["experiment_manifest_path"]).endswith("experiment_manifest.json")
+        )
 
 
 class TestWalkforwardDebugOutputGates(unittest.TestCase):
