@@ -42,6 +42,25 @@ class EvaluationPolicy:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ResolvedPhaseAwareComposition:
+    policy_id: str
+    tf_strategy_id: str
+    mr_strategy_id: str
+
+    @property
+    def strategy_id(self) -> str:
+        return f"PhaseAware_{self.tf_strategy_id}_{self.mr_strategy_id}"
+
+    def to_manifest_block(self) -> dict[str, str]:
+        return {
+            "policy_id": self.policy_id,
+            "phaseaware_tf_strategy": self.tf_strategy_id,
+            "phaseaware_mr_strategy": self.mr_strategy_id,
+            "phaseaware_strategy": self.strategy_id,
+        }
+
+
 class StrategyRegistry:
     def __init__(self, definitions: Iterable[StrategyDefinition]) -> None:
         self._definitions: dict[str, StrategyDefinition] = {}
@@ -408,7 +427,7 @@ def get_default_policy_registry() -> EvaluationPolicyRegistry:
     )
 
 
-def resolve_phaseaware_strategy_pair(
+def _resolve_policy_phaseaware_strategy_pair(
     policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
     *,
     strategy_registry: StrategyRegistry | None = None,
@@ -437,9 +456,104 @@ def resolve_phaseaware_strategy_pair(
     return trend[0], mean_reversion[0]
 
 
-def phaseaware_strategy_name(policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID) -> str:
-    tf_strategy_id, mr_strategy_id = resolve_phaseaware_strategy_pair(policy_id)
-    return f"PhaseAware_{tf_strategy_id}_{mr_strategy_id}"
+def _validate_phaseaware_override(
+    *,
+    option_name: str,
+    strategy_id: str,
+    expected_family: str,
+    strategy_registry: StrategyRegistry,
+) -> str:
+    try:
+        definition = strategy_registry.get(strategy_id)
+    except KeyError as exc:
+        raise ValueError(
+            f"Configuration error: {option_name} references unknown strategy_id "
+            f"{strategy_id!r}. Available: {strategy_registry.available()}"
+        ) from exc
+    if definition.family != expected_family:
+        raise ValueError(
+            f"Configuration error: {option_name} must reference a "
+            f"{expected_family} strategy, got {strategy_id!r} "
+            f"(family={definition.family!r})."
+        )
+    return definition.strategy_id
+
+
+def resolve_phaseaware_configuration(
+    policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
+    *,
+    phaseaware_tf_strategy_id: str | None = None,
+    phaseaware_mr_strategy_id: str | None = None,
+    strategy_registry: StrategyRegistry | None = None,
+    policy_registry: EvaluationPolicyRegistry | None = None,
+) -> ResolvedPhaseAwareComposition:
+    strategy_registry = strategy_registry or get_default_strategy_registry()
+    policy_registry = policy_registry or get_default_policy_registry()
+    default_tf, default_mr = _resolve_policy_phaseaware_strategy_pair(
+        policy_id,
+        strategy_registry=strategy_registry,
+        policy_registry=policy_registry,
+    )
+    resolved_tf = (
+        _validate_phaseaware_override(
+            option_name="--phaseaware-tf",
+            strategy_id=phaseaware_tf_strategy_id,
+            expected_family="TrendFollowing",
+            strategy_registry=strategy_registry,
+        )
+        if phaseaware_tf_strategy_id is not None
+        else default_tf
+    )
+    resolved_mr = (
+        _validate_phaseaware_override(
+            option_name="--phaseaware-mr",
+            strategy_id=phaseaware_mr_strategy_id,
+            expected_family="MeanReversion",
+            strategy_registry=strategy_registry,
+        )
+        if phaseaware_mr_strategy_id is not None
+        else default_mr
+    )
+    return ResolvedPhaseAwareComposition(
+        policy_id=policy_id,
+        tf_strategy_id=resolved_tf,
+        mr_strategy_id=resolved_mr,
+    )
+
+
+def resolve_phaseaware_strategy_pair(
+    policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
+    *,
+    phaseaware_tf_strategy_id: str | None = None,
+    phaseaware_mr_strategy_id: str | None = None,
+    strategy_registry: StrategyRegistry | None = None,
+    policy_registry: EvaluationPolicyRegistry | None = None,
+) -> tuple[str, str]:
+    composition = resolve_phaseaware_configuration(
+        policy_id,
+        phaseaware_tf_strategy_id=phaseaware_tf_strategy_id,
+        phaseaware_mr_strategy_id=phaseaware_mr_strategy_id,
+        strategy_registry=strategy_registry,
+        policy_registry=policy_registry,
+    )
+    return composition.tf_strategy_id, composition.mr_strategy_id
+
+
+def phaseaware_strategy_name(
+    policy_id: str = DEFAULT_PHASEAWARE_POLICY_ID,
+    *,
+    phaseaware_tf_strategy_id: str | None = None,
+    phaseaware_mr_strategy_id: str | None = None,
+    strategy_registry: StrategyRegistry | None = None,
+    policy_registry: EvaluationPolicyRegistry | None = None,
+) -> str:
+    return resolve_phaseaware_configuration(
+        policy_id,
+        phaseaware_tf_strategy_id=phaseaware_tf_strategy_id,
+        phaseaware_mr_strategy_id=phaseaware_mr_strategy_id,
+        strategy_registry=strategy_registry,
+        policy_registry=policy_registry,
+    ).strategy_id
 
 
 _REGISTRY_SUMMARY_LOGGED = False

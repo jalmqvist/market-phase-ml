@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -21,12 +22,14 @@ from src.strategy_registry import (
     DEFAULT_PHASEAWARE_POLICY_ID,
     EvaluationPolicy,
     EvaluationPolicyRegistry,
+    ResolvedPhaseAwareComposition,
     StrategyCapabilities,
     StrategyDefinition,
     StrategyRegistry,
     get_default_policy_registry,
     get_default_strategy_registry,
     phaseaware_strategy_name,
+    resolve_phaseaware_configuration,
     resolve_phaseaware_strategy_pair,
 )
 
@@ -68,6 +71,56 @@ class TestStrategyRegistry(unittest.TestCase):
             phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID),
             "PhaseAware_TF4_MR42",
         )
+        composition = resolve_phaseaware_configuration(DEFAULT_PHASEAWARE_POLICY_ID)
+        self.assertEqual(
+            composition,
+            ResolvedPhaseAwareComposition(
+                policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+                tf_strategy_id="TF4",
+                mr_strategy_id="MR42",
+            ),
+        )
+
+    def test_phaseaware_configuration_applies_tf_override(self):
+        composition = resolve_phaseaware_configuration(
+            DEFAULT_PHASEAWARE_POLICY_ID,
+            phaseaware_tf_strategy_id="TF2",
+        )
+        self.assertEqual(composition.tf_strategy_id, "TF2")
+        self.assertEqual(composition.mr_strategy_id, "MR42")
+        self.assertEqual(composition.strategy_id, "PhaseAware_TF2_MR42")
+        self.assertEqual(
+            composition.to_manifest_block(),
+            {
+                "policy_id": DEFAULT_PHASEAWARE_POLICY_ID,
+                "phaseaware_tf_strategy": "TF2",
+                "phaseaware_mr_strategy": "MR42",
+                "phaseaware_strategy": "PhaseAware_TF2_MR42",
+            },
+        )
+
+    def test_phaseaware_configuration_applies_mr_override(self):
+        composition = resolve_phaseaware_configuration(
+            DEFAULT_PHASEAWARE_POLICY_ID,
+            phaseaware_mr_strategy_id="MR2",
+        )
+        self.assertEqual(composition.tf_strategy_id, "TF4")
+        self.assertEqual(composition.mr_strategy_id, "MR2")
+        self.assertEqual(composition.strategy_id, "PhaseAware_TF4_MR2")
+
+    def test_phaseaware_configuration_rejects_unknown_strategy_id(self):
+        with self.assertRaisesRegex(ValueError, "unknown strategy_id"):
+            resolve_phaseaware_configuration(
+                DEFAULT_PHASEAWARE_POLICY_ID,
+                phaseaware_tf_strategy_id="TF999",
+            )
+
+    def test_phaseaware_configuration_rejects_wrong_family_override(self):
+        with self.assertRaisesRegex(ValueError, "TrendFollowing strategy"):
+            resolve_phaseaware_configuration(
+                DEFAULT_PHASEAWARE_POLICY_ID,
+                phaseaware_tf_strategy_id="MR2",
+            )
 
     def test_duplicate_strategy_ids_fail_validation(self):
         duplicate = StrategyDefinition(
@@ -192,6 +245,34 @@ class TestStrategyRegistryIntegration(unittest.TestCase):
         _, _, _, selected = dynamic.generate_signals(df, "EURUSD", return_selected=True)
         self.assertTrue((selected == "MeanReversion").all())
 
+    def test_dynamic_selector_explicit_phaseaware_configuration_takes_precedence(self):
+        class _StaticSignalStrategy:
+            def generate_signals(self, df: pd.DataFrame):
+                z = pd.Series(np.zeros(len(df), dtype=float), index=df.index)
+                return z, z.copy(), z.copy()
+
+        composition = resolve_phaseaware_configuration(
+            DEFAULT_PHASEAWARE_POLICY_ID,
+            phaseaware_tf_strategy_id="TF2",
+            phaseaware_mr_strategy_id="MR2",
+        )
+        dynamic = StrategySelector_Dynamic(
+            selector_trained={"EURUSD": SimpleNamespace()},
+            tf_strategies={"TF2": _StaticSignalStrategy(), "TF4": _StaticSignalStrategy()},
+            mr_strategies={"MR2": _StaticSignalStrategy(), "MR42": _StaticSignalStrategy()},
+            evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+            phaseaware_configuration=composition,
+            tau_enter=0.4,
+            tau_exit=0.3,
+            use_prob_margin=False,
+            use_hysteresis=False,
+            use_min_hold=False,
+            min_hold_bars=0,
+            use_max_hold=False,
+        )
+        self.assertEqual(dynamic.default_tf, "TF2")
+        self.assertEqual(dynamic.default_mr, "MR2")
+
     def test_legacy_standalone_strategy_sets_exclude_mr3(self):
         tf_strategies, mr_strategies = instantiate_evaluated_strategy_dicts()
 
@@ -209,6 +290,22 @@ class TestStrategyRegistryIntegration(unittest.TestCase):
         self.assertIn("TF4", results)
         self.assertIn("MR42", results)
         self.assertIn(phaseaware_strategy_name(DEFAULT_PHASEAWARE_POLICY_ID), results)
+
+    def test_run_backtests_accepts_phaseaware_configuration_override(self):
+        composition = resolve_phaseaware_configuration(
+            DEFAULT_PHASEAWARE_POLICY_ID,
+            phaseaware_tf_strategy_id="TF2",
+            phaseaware_mr_strategy_id="MR2",
+        )
+        results = run_backtests(
+            self._make_df(),
+            initial_capital=1000.0,
+            evaluation_policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+            phaseaware_configuration=composition,
+        )
+        self.assertIn("TF2", results)
+        self.assertIn("MR2", results)
+        self.assertIn("PhaseAware_TF2_MR2", results)
 
 
 if __name__ == "__main__":

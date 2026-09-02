@@ -55,6 +55,7 @@ try:
         StrategyRegistry,
         get_default_strategy_registry,
         phaseaware_strategy_name,
+        resolve_phaseaware_configuration,
         resolve_phaseaware_strategy_pair,
     )
     from src.strategies import (
@@ -110,7 +111,7 @@ def _make_ohlcv_df(rows: int = 300) -> pd.DataFrame:
 def _reference_keys(policy_id: str = "phaseaware_default") -> frozenset[str]:
     """Return the expected key set for the given policy."""
     tf_id, mr_id = resolve_phaseaware_strategy_pair(policy_id)
-    pa_name = f"PhaseAware_{tf_id}_{mr_id}"
+    pa_name = phaseaware_strategy_name(policy_id)
     return frozenset({tf_id, mr_id, pa_name})
 
 
@@ -141,6 +142,26 @@ class TestReferenceUniverseContents(unittest.TestCase):
             policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
         )
         self.assertIn("TF4", results)
+
+    def test_experiment_local_override_changes_reference_universe(self):
+        df = _make_ohlcv_df()
+        composition = resolve_phaseaware_configuration(
+            DEFAULT_PHASEAWARE_POLICY_ID,
+            phaseaware_tf_strategy_id="TF2",
+            phaseaware_mr_strategy_id="MR2",
+        )
+        results = _build_selector_reference_results(
+            df_full=df,
+            pair_name="EURUSD",
+            phaseaware_configuration=composition,
+            policy_id=DEFAULT_PHASEAWARE_POLICY_ID,
+        )
+        self.assertEqual(
+            frozenset(results.keys()),
+            frozenset({"TF2", "MR2", "PhaseAware_TF2_MR2"}),
+        )
+        self.assertNotIn("TF4", results)
+        self.assertNotIn("MR42", results)
 
     def test_default_policy_includes_mr42(self):
         df = _make_ohlcv_df()
@@ -960,11 +981,9 @@ class TestProductionCallSiteWiring(unittest.TestCase):
     # 5. All four paths: consistent policy_id usage
     # ------------------------------------------------------------------
 
-    def test_all_four_paths_pass_default_policy_id(self):
-        """All four production paths must pass DEFAULT_PHASEAWARE_POLICY_ID to
-        _build_selector_reference_results(), ensuring a consistent reference
-        universe across global training, causal training, tau sweep and policy
-        sweep."""
+    def test_all_four_paths_pass_effective_phaseaware_configuration(self):
+        """All four production paths must pass the run-resolved PhaseAware
+        configuration into _build_selector_reference_results()."""
         sections = {
             "4b/5 global": self._section(
                 "# 4b. TRAIN STRATEGY SELECTOR (ML)",
@@ -983,10 +1002,10 @@ class TestProductionCallSiteWiring(unittest.TestCase):
         }
         for label, section in sections.items():
             self.assertIn(
-                "DEFAULT_PHASEAWARE_POLICY_ID",
+                "phaseaware_configuration=_phaseaware_configuration",
                 section,
-                f"{label}: _build_selector_reference_results() must be called "
-                f"with DEFAULT_PHASEAWARE_POLICY_ID",
+                f"{label}: _build_selector_reference_results() must receive the "
+                f"effective PhaseAware configuration",
             )
 
 

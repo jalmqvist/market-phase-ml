@@ -14,9 +14,12 @@ These tests verify the requirements from problem statement section 1 & 4:
 from __future__ import annotations
 
 import io
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -34,6 +37,7 @@ from src.evaluation_scope import (  # noqa: E402
 from src.strategy_registry import (  # noqa: E402
     get_default_policy_registry,
     get_default_strategy_registry,
+    resolve_phaseaware_configuration,
 )
 
 
@@ -444,6 +448,60 @@ class TestWalkforwardExecutionPlan(unittest.TestCase):
             ["PhaseAware_TF4_MR42", "StrategySelector_Dynamic_WF"],
         )
 
+    def test_default_scope_uses_experiment_local_phaseaware_configuration(self):
+        composition = resolve_phaseaware_configuration(
+            phaseaware_tf_strategy_id="TF2",
+            phaseaware_mr_strategy_id="MR2",
+        )
+        plan = self._main._build_walkforward_execution_plan(
+            _default_scope(),
+            strategy_registry=self._registry,
+            phaseaware_configuration=composition,
+        )
+        self.assertEqual(plan["standalone_strategy_ids"], ())
+        self.assertTrue(plan["run_phaseaware"])
+        self.assertTrue(plan["run_dynamic_selector"])
+        self.assertEqual(
+            [spec["strategy_id"] for spec in plan["strategy_specs"]],
+            ["PhaseAware_TF2_MR2", "StrategySelector_Dynamic_WF"],
+        )
+
+    def test_explicit_scope_uses_effective_phaseaware_pair_for_composite_gate(self):
+        composition = resolve_phaseaware_configuration(
+            phaseaware_tf_strategy_id="TF2",
+            phaseaware_mr_strategy_id="MR2",
+        )
+        plan = self._main._build_walkforward_execution_plan(
+            _explicit_scope("TF2", "MR2"),
+            strategy_registry=self._registry,
+            phaseaware_configuration=composition,
+        )
+        self.assertEqual(plan["standalone_strategy_ids"], ("TF2", "MR2"))
+        self.assertTrue(plan["run_phaseaware"])
+        self.assertTrue(plan["run_dynamic_selector"])
+        self.assertEqual(
+            {spec["strategy_id"] for spec in plan["strategy_specs"]},
+            {"TF2", "MR2", "PhaseAware_TF2_MR2", "StrategySelector_Dynamic_WF"},
+        )
+
+    def test_phaseaware_override_does_not_redefine_explicit_strategy_scope(self):
+        composition = resolve_phaseaware_configuration(
+            phaseaware_tf_strategy_id="TF2",
+            phaseaware_mr_strategy_id="MR2",
+        )
+        plan = self._main._build_walkforward_execution_plan(
+            _explicit_scope("TF4", "MR42"),
+            strategy_registry=self._registry,
+            phaseaware_configuration=composition,
+        )
+        self.assertEqual(plan["standalone_strategy_ids"], ("TF4", "MR42"))
+        self.assertFalse(plan["run_phaseaware"])
+        self.assertFalse(plan["run_dynamic_selector"])
+        self.assertEqual(
+            {spec["strategy_id"] for spec in plan["strategy_specs"]},
+            {"TF4", "MR42"},
+        )
+
 
 class TestWalkforwardAggregation(unittest.TestCase):
     """Verify scope-aware walk-forward aggregation uses the executed strategy specs."""
@@ -616,6 +674,98 @@ class TestDebugFlagReversibility(unittest.TestCase):
         self._main._configure_debug(False)
         self.assertFalse(self._main.DL_DEBUG_VERBOSE)
         self.assertFalse(self._models._DIAGNOSTICS_VERBOSE)
+
+
+class TestMainPhaseAwareManifest(unittest.TestCase):
+    """Verify main() records the resolved experiment-local PhaseAware pair."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib
+        cls._main = importlib.import_module("main")
+
+    def test_main_records_phaseaware_override_in_manifest(self):
+        class _StopAfterManifestWrite(RuntimeError):
+            pass
+
+        captured: dict[str, object] = {}
+
+        def _capture_manifest(*, manifest, run_manifest_path, experiment_manifest_path):
+            captured["manifest"] = manifest
+            captured["run_manifest_path"] = run_manifest_path
+            captured["experiment_manifest_path"] = experiment_manifest_path
+            Path(run_manifest_path).parent.mkdir(parents=True, exist_ok=True)
+            self._main.write_manifest(run_manifest_path, manifest)
+            self._main.write_manifest(experiment_manifest_path, manifest)
+            raise _StopAfterManifestWrite
+
+        artifact_runtime = SimpleNamespace(
+            diagnostics=[],
+            enabled=False,
+            artifact_path=None,
+            surface_selector={},
+            state_id=None,
+            d1_predictions=None,
+        )
+
+        class _DummyPipeline:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "run-output"
+            with patch.object(
+                self._main,
+                "resolve_behavioral_artifact_runtime",
+                return_value=artifact_runtime,
+            ), patch.object(
+                self._main,
+                "build_runtime_experiment_surface",
+                return_value={"surface_id": "trend_vol", "surface_version": "1.0.0"},
+            ), patch.object(
+                self._main,
+                "build_experiment_id",
+                return_value="exp-test",
+            ), patch.object(
+                self._main,
+                "resolve_market_data_source",
+                return_value="yfinance",
+            ), patch.object(
+                self._main,
+                "MarketDataPipeline",
+                _DummyPipeline,
+            ), patch.object(
+                self._main,
+                "_write_manifests",
+                side_effect=_capture_manifest,
+            ):
+                with self.assertRaises(_StopAfterManifestWrite):
+                    self._main.main(
+                        output_dir=output_dir,
+                        phaseaware_tf="TF2",
+                        phaseaware_mr="MR2",
+                    )
+            with Path(captured["run_manifest_path"]).open("r", encoding="utf-8") as fh:
+                written_manifest = json.load(fh)
+
+        manifest = captured["manifest"]
+        self.assertEqual(
+            manifest["phaseaware"],
+            {
+                "policy_id": "phaseaware_default",
+                "phaseaware_tf_strategy": "TF2",
+                "phaseaware_mr_strategy": "MR2",
+                "phaseaware_strategy": "PhaseAware_TF2_MR2",
+            },
+        )
+        self.assertEqual(
+            written_manifest["phaseaware"]["phaseaware_strategy"],
+            "PhaseAware_TF2_MR2",
+        )
+        self.assertTrue(str(captured["run_manifest_path"]).endswith("run_manifest.json"))
+        self.assertTrue(
+            str(captured["experiment_manifest_path"]).endswith("experiment_manifest.json")
+        )
 
 
 class TestWalkforwardDebugOutputGates(unittest.TestCase):

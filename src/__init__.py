@@ -18,8 +18,10 @@ from src.strategy_registry import (
     StrategyRegistry,
     EvaluationPolicy,
     EvaluationPolicyRegistry,
+    ResolvedPhaseAwareComposition,
     get_default_strategy_registry,
     get_default_policy_registry,
+    resolve_phaseaware_configuration,
 )
 
 __all__ = [
@@ -39,6 +41,8 @@ __all__ = [
     'StrategyRegistry',
     'EvaluationPolicy',
     'EvaluationPolicyRegistry',
+    'ResolvedPhaseAwareComposition',
     'get_default_strategy_registry',
     'get_default_policy_registry',
+    'resolve_phaseaware_configuration',
 ]
