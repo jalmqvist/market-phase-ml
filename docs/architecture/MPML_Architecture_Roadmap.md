@@ -1858,6 +1858,239 @@ This separation allows the current TF4/MR42 selector design to remain stable whi
 
 ---
 
+### Phase G3.2 — Experiment-Local PhaseAware Composition
+
+### Objective
+
+Provide explicit user control over the concrete TrendFollowing and MeanReversion representatives used to construct a PhaseAware strategy for a targeted research experiment, without exposing internal `EvaluationPolicy` identifiers as a user-facing configuration mechanism.
+
+The current default PhaseAware composition remains:
+
+```text
+TF4 + MR42
+```
+
+This remains the canonical MPML benchmark unless deliberately changed through future research decisions.
+
+G3.2 exists to support controlled research of alternative PhaseAware compositions, such as:
+
+```text
+TF2 + MR42
+TF4 + MR2
+TF4 + MR5
+TF2 + MR2
+TF2 + MR5
+```
+
+The purpose is to allow candidate compositions to be tested without changing the default benchmark or requiring users to maintain family-specific policy identifiers.
+
+### User-facing configuration
+
+A PhaseAware experiment may optionally specify at most one TrendFollowing and one MeanReversion representative:
+
+```text
+--phaseaware-tf TF2
+--phaseaware-mr MR2
+```
+
+Either option may be supplied independently when the runtime can resolve the resulting composition unambiguously. Invalid or incompatible strategy identifiers MUST fail validation clearly.
+
+The CLI deliberately remains small. Multiple PhaseAware candidates SHOULD be evaluated through separate invocations, typically controlled by shell scripts, rather than by introducing a multi-valued candidate-selection CLI.
+
+For example:
+
+```text
+for tf in TF4 TF2; do
+    for mr in MR42 MR2 MR5; do
+        run_mpml --phaseaware-tf "$tf" --phaseaware-mr "$mr"
+    done
+done
+```
+
+The exact shell orchestration remains external to MPML's runtime architecture.
+
+### Internal policy resolution
+
+`EvaluationPolicy` and `EvaluationPolicyRegistry` remain valid internal abstractions.
+
+User-facing PhaseAware arguments MUST NOT require users to know or maintain `policy_id` values. Instead, the runtime should resolve the requested concrete strategy pair into the existing internal policy/reference mechanisms.
+
+This preserves the separation established by G3.1:
+
+```text
+User / Experiment Configuration
+        ↓
+PhaseAware TF/MR representatives
+        ↓
+Internal policy/reference resolution
+        ↓
+Selector Reference Universe
+        ↓
+PhaseAware execution
+```
+
+The internal representation may continue to use policy metadata where useful, but policy identifiers are implementation details rather than part of the researcher's normal workflow.
+
+### Selector Reference Semantics
+
+When an experiment explicitly changes the PhaseAware representatives, the Selector Reference Universe MUST change with them.
+
+For example:
+
+```text
+--phaseaware-tf TF2
+--phaseaware-mr MR2
+```
+
+resolves to:
+
+```text
+Selector Reference Universe
+
+TF2
+MR2
+PhaseAware(TF2, MR2)
+```
+
+The selector must therefore be trained against the same concrete representatives that the corresponding PhaseAware configuration executes at inference.
+
+The full Strategy Registry remains independent:
+
+```text
+Strategy Registry / Full Research Universe
+    ├── TF1
+    ├── TF2
+    ├── TF3
+    ├── TF4
+    ├── TF5
+    ├── MR1
+    ├── MR2
+    ├── MR32
+    ├── MR42
+    └── MR5
+```
+
+Changing a PhaseAware research composition MUST NOT remove strategies from the registry or alter the standalone research universe.
+
+### Default preservation
+
+If neither PhaseAware override is supplied, runtime behavior MUST remain equivalent to the current default:
+
+```text
+PhaseAware → TF4 + MR42
+```
+
+G3.2 MUST NOT redefine `DEFAULT_PHASEAWARE_POLICY_ID` merely to test an alternative research composition.
+
+The existing default policy remains the canonical benchmark and continues to provide backward-compatible behavior.
+
+### Family independence
+
+PhaseAware representative selection is an experiment-level concern and MUST NOT require globally unique, family-specific policy identifiers.
+
+This is important because MPML is expected to evaluate multiple Behavioral Surfaces and strategy families over time. A Reactive-JPY experiment may investigate one set of PhaseAware representatives while a future Persistent-family experiment may require a different set.
+
+The user-facing interface should therefore remain expressed in terms of concrete strategy representatives:
+
+```text
+--phaseaware-tf <strategy_id>
+--phaseaware-mr <strategy_id>
+```
+
+rather than:
+
+```text
+--policy-id <family-specific-policy-id>
+```
+
+Behavioral Surface identity remains independently specified by the experiment and does not become embedded in PhaseAware policy naming.
+
+### Provenance
+
+The experiment manifest SHOULD record the effective PhaseAware composition after resolution, for example:
+
+```text
+phaseaware_tf_strategy = TF2
+phaseaware_mr_strategy = MR2
+phaseaware_strategy = PhaseAware_TF2_MR2
+```
+
+The manifest should record the resolved configuration rather than relying solely on the original CLI invocation.
+
+This makes each experiment self-describing and preserves reproducibility even when shell scripts are used to generate candidate matrices.
+
+### Architectural Constraints
+
+G3.2 MUST:
+
+- preserve the current TF4/MR42 default benchmark;
+- reuse the existing Strategy Registry;
+- reuse the existing Evaluation Policy / selector reference machinery internally where appropriate;
+- expose concrete TF/MR representatives rather than policy identifiers to the user;
+- keep the CLI limited to at most one `--phaseaware-tf` and one `--phaseaware-mr` option per invocation;
+- make the Selector Reference Universe follow the resolved PhaseAware representatives;
+- preserve the full Strategy Registry and standalone research universe;
+- record the resolved PhaseAware composition in experiment provenance.
+
+G3.2 MUST NOT introduce:
+
+- family-specific user-facing policy identifiers;
+- a second strategy registry;
+- duplicated strategy metadata;
+- a general-purpose experiment configuration framework;
+- changes to individual strategy implementations;
+- changes to StrategyEvaluation semantics;
+- changes to Recommendation semantics;
+- automatic selection of a "best" PhaseAware composition.
+
+### Validation Requirements
+
+Implementation should establish regression coverage demonstrating that:
+
+1. the default invocation still resolves to `TF4 + MR42`;
+2. `--phaseaware-tf` and `--phaseaware-mr` can define an alternative PhaseAware composition;
+3. the resolved PhaseAware strategy is named deterministically;
+4. the Selector Reference Universe follows the resolved TF/MR representatives;
+5. global selector training uses the resolved reference universe;
+6. per-fold causal selector training uses the same resolved reference universe;
+7. the full research universe remains unchanged;
+8. unrelated strategy implementations do not affect the selected PhaseAware reference universe;
+9. the experiment manifest records the resolved PhaseAware composition;
+10. running multiple candidate compositions as separate invocations does not require any change to the default benchmark.
+
+### Architectural Principle
+
+G3.2 extends the G3/G3.1 separation without turning PhaseAware composition into a new global policy-management problem:
+
+```text
+Strategy Registry
+    ↓
+Full Research Universe
+
+
+Experiment Configuration
+    ↓
+PhaseAware TF/MR Representatives
+    ↓
+Concrete PhaseAware Expert
+    ↓
+Selector Reference Universe
+    ↓
+Walk-forward Evaluation
+```
+
+The Strategy Registry describes what strategies exist.
+
+The experiment configuration describes which concrete representatives are being tested.
+
+The internal policy/reference machinery provides reproducible selector semantics.
+
+The default benchmark remains stable unless a research experiment deliberately overrides it.
+
+This keeps PhaseAware composition flexible across Behavioral Surfaces and future strategy families while keeping the user-facing MPML interface small and free of policy-ID bookkeeping.
+
+------
+
 ### Phase G4 — Stable MPML–MRML Recommendation Interface
 
 **Objective**
