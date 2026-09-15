@@ -187,6 +187,34 @@ The selector is trained using:
 - engineered contextual features
 - historical expert behavior
 
+### Routing and stability controls
+
+At inference, `StrategySelector_Dynamic` predicts probabilities for the three
+strategy types **TrendFollowing**, **MeanReversion**, and **PhaseAware** at each
+bar. The predicted type is not applied directly: the routing layer first
+requires sufficient confidence and, when enabled, a minimum probability margin
+between the top two classes.
+
+The selector uses **hysteresis** to reduce rapid switching. When currently in
+`PhaseAware`, a specialist can be entered only when the top-class probability
+reaches `tau_enter` (default `0.55`). Once in TF or MR, the selector remains
+there while confidence stays above the lower `tau_exit` threshold (default
+`0.50`); returning to `PhaseAware` therefore does not require the same
+confidence needed to enter a specialist. TF↔MR switches require the higher
+entry threshold and probability margin.
+
+A minimum hold period (default 5 bars) can further suppress rapid specialist
+switching. A maximum hold period (default 20 bars) can reset a specialist
+selection to `PhaseAware` when the system is flat, preventing indefinite
+specialist selection without interrupting an open trade. An optional
+**volatility guard** can additionally override the normal gating decision during
+extreme volatility.
+
+If no pair-specific selector is available, or required prediction features are
+temporarily unavailable, the system falls back to the configured PhaseAware
+representatives. Schema mismatches are treated as hard errors rather than
+silently falling back.
+
 ---
 
 # Selector Reference Universe
@@ -455,6 +483,8 @@ During inference:
 5. canonical feature alignment is enforced
 6. selector predicts expert suitability
 7. expert routing decision is produced
+8. the selected strategy type is mapped to its configured concrete
+   representative (TF, MR, or PhaseAware)
 
 The inference pipeline is intentionally:
 
@@ -521,7 +551,7 @@ Current selector-related research includes:
 
 - transfer-learning behavior across pair families
 - selector calibration
-- HTF vs LVTF surface transfer
+- HVTF vs LVTF surface transfer
 - online adaptation
 - alternate gating architectures
 - confidence-aware routing
