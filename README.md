@@ -266,8 +266,8 @@ and [`docs/MPML_Architecture_Roadmap.md`](docs/MPML_Architecture_Roadmap.md) for
 
 ## Strategy Registry & Evaluation Policies
 
-MPML Phase D introduces a metadata-driven **Strategy Registry** and
-**Evaluation Policy Registry** for trading behaviors.
+MPML uses a metadata-driven **Strategy Registry** and **Evaluation Policy Registry**
+for trading behaviors.
 
 ```python
 from src.strategy_registry import (
@@ -297,12 +297,14 @@ The Strategy Registry is now the single source of truth for:
 
 Evaluation Policies remain separate from compatibility metadata.
 
-For example, `phaseaware_default` preserves the legacy PhaseAware benchmark by
+For example, `phaseaware_default` preserves the canonical PhaseAware benchmark by
 expanding to `TF4 + MR42` through policy metadata rather than selector
-hardcoding.
+hardcoding. PhaseAware TF/MR composition can also be resolved explicitly through
+policy configuration without changing the underlying strategy registry.
 
-This PR does **not** change ranking, recommendation behavior, or walk-forward
-evaluation.
+The registry and policy layers therefore define *what* can be evaluated and
+*which composition* is selected, while the selector and walk-forward layers
+remain responsible for routing and evaluation.
 
 ---
 
@@ -583,7 +585,11 @@ The current implementation provides:
 - reproducible experiment manifests
 - reference benchmark infrastructure
 
-Current architectural work focuses on the MPML→MRML interface (Phase G3 and beyond).
+Recent architectural work has established the registry-driven PhaseAware
+configuration and the stable MPML → MRML recommendation boundary. Strategy
+composition studies currently retain `PhaseAware_TF4_MR42` as the canonical
+control, with `PhaseAware_TF4_MR2` as the leading candidate for further
+investigation.
 
 ---
 
