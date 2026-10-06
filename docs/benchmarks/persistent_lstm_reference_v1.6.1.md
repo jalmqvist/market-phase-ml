@@ -6,8 +6,7 @@
     **Baseline**: No-DL PhaseAware (aggregate)  
     **Target pairs**: experiment-specific; matrix columns cover the union of target populations (EURAUD, EURGBP, EURUSD, GBPUSD, NZDUSD)  
 
-    > **Sensitivity mode:** Deltas recomputed from absolute values against current baseline.  
-> Δ values are walk-forward OOS deltas vs no-DL baseline.  
+    > Δ values are walk-forward OOS deltas vs no-DL baseline.  
     > `+` = positive Sharpe uplift.  
     > For ΔDD: **smaller = better** (less drawdown).  
     > All values rounded to 3 decimals for readability.
@@ -15,23 +14,23 @@
 ## 1. Uplift Matrix — ΔRet, ΔSh, and ΔDD per State and Pair
 | Architecture | Behavioral Surface | Feature Set | State | ΔRet EURAUD | ΔRet EURGBP | ΔRet EURUSD | ΔRet GBPUSD | ΔRet NZDUSD | ΔSh EURAUD | ΔSh EURGBP | ΔSh EURUSD | ΔSh GBPUSD | ΔSh NZDUSD | ΔDD EURAUD | ΔDD EURGBP | ΔDD EURUSD | ΔDD GBPUSD | ΔDD NZDUSD | Mean ΔSh |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_LL  | 152.04  | -13.99  |  -7.80  |   6.67  | 325.86  |  0.354+  | -0.127  | -0.004  |  0.056+  |  0.565+  |   2.78  |  -8.41  |  -8.02  |  -2.52  |  22.30  |  0.169 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_LM  | 101.87  | -15.92  | -17.26  |  10.57  | 187.02  |  0.222+  | -0.139  | -0.067  |  0.076+  |  0.382+  |   3.98  |  -9.06  | -14.59  |   0.30  |  18.29  |  0.095 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_LH  | 166.67  |  -6.81  | -30.18  |   4.85  | 192.96  |  0.374+  | -0.090  | -0.173  |  0.047+  |  0.406+  |   4.66  |  -7.99  | -20.10  |  -5.66  |  10.29  |  0.113 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_ML  | 176.57  |  -3.89  | -37.06  |  21.11  | 195.75  |  0.379+  | -0.075  | -0.235  |  0.127+  |  0.405+  |   7.09  |  -7.14  | -26.41  |   0.50  |   6.81  |  0.120 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_MM  | 145.51  |  -2.12  | -25.58  |  12.30  | 278.42  |  0.359+  | -0.065  | -0.133  |  0.085+  |  0.502+  |  -0.37  |  -6.87  | -16.98  |  -0.08  |  17.34  |  0.150 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_MH  | 155.06  |  -9.76  | -18.77  |  13.57  | 136.83  |  0.337+  | -0.104  | -0.082  |  0.091+  |  0.295+  |   7.14  | -10.31  | -11.64  |  -0.56  |   7.46  |  0.108 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_HL  | 107.72  |  -1.85  | -24.94  |  13.71  | 164.83  |  0.259+  | -0.064  | -0.127  |  0.092+  |  0.337+  |   2.45  |  -9.84  | -16.42  |   0.68  |   5.02  |  0.099 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_HM  | 123.82  | -15.07  | -28.23  |   2.04  | 161.36  |  0.301+  | -0.134  | -0.155  |  0.031+  |  0.355+  |   5.33  | -10.28  | -18.94  |  -4.53  |  16.45  |  0.080 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_HH  | 154.43  |  -4.31  | -29.30  |   8.54  | 113.97  |  0.349+  | -0.075  | -0.165  |  0.066+  |  0.268+  |   3.64  |  -7.12  | -19.97  |   0.49  |  12.79  |  0.089 |
-| lstm | Trend / Volatility Surface | price_trend | LVTF  | 143.03  |  -9.76  |  -8.33  |  14.08  | 142.45  |  0.326+  | -0.103  | -0.012  |  0.094+  |  0.306+  |   5.96  |  -7.94  |  -9.52  |  -0.74  |   7.99  |  0.122 |
-| lstm | Trend / Volatility Surface | price_trend | HVTF  |  91.26  | -20.11  | -18.31  |  17.59  | 132.86  |  0.225+  | -0.162  | -0.082  |  0.111+  |  0.304+  |  -3.05  |  -8.38  | -14.50  |  -0.55  |   7.99  |  0.079 |
-| lstm | Trend / Volatility Surface | price_trend | LVR  |  94.01  | -14.08  | -19.92  |  11.98  | 235.17  |  0.228+  | -0.128  | -0.089  |  0.083+  |  0.459+  |  -3.41  |  -7.57  | -14.24  |  -0.09  |  11.60  |  0.110 |
-| lstm | Trend / Volatility Surface | price_trend | HVR  | 156.64  | -12.70  | -30.17  |   7.43  | 148.57  |  0.360+  | -0.119  | -0.173  |  0.060+  |  0.332+  |   5.05  |  -7.63  | -20.86  |  -1.71  |   5.83  |  0.092 |
-| lstm | Trend / Volatility Surface | trend_vol_only | LVTF  |  78.43  | -10.99  | -22.49  |   0.20  | 146.45  |  0.188+  | -0.111  | -0.107  |  0.022+  |  0.312+  |  -4.89  |  -8.01  | -18.84  |  -4.90  |   8.72  |  0.061 |
-| lstm | Trend / Volatility Surface | trend_vol_only | HVTF  | 106.06  | -11.82  | -29.28  |   3.36  | 152.26  |  0.258+  | -0.115  | -0.166  |  0.039+  |  0.343+  |  -4.21  |  -7.71  | -20.91  |  -1.37  |  15.05  |  0.072 |
-| lstm | Trend / Volatility Surface | trend_vol_only | LVR  | 180.35  |  -8.29  | -21.82  |   6.49  | 144.57  |  0.417+  | -0.094  | -0.106  |  0.055+  |  0.315+  |   4.48  |  -4.97  | -13.54  |  -6.03  |   9.32  |  0.118 |
-| lstm | Trend / Volatility Surface | trend_vol_only | HVR  | 200.24  |  -3.98  | -20.08  |   1.57  | 127.59  |  0.448+  | -0.077  | -0.087  |  0.029+  |  0.293+  |   4.41  |  -7.54  | -17.33  |  -2.34  |   5.12  |  0.121 |
+| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_LL  |   0.94  |  -0.32  |  -1.52  |  -0.06  |  -0.19  |  0.229+  | -0.115  | -0.427  |  0.163+  | -0.024  |  -0.58  |  -0.65  |  -1.07  |  -0.81  |  -1.27  | -0.035 |
+| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_LM  |   1.09  |  -0.35  |  -1.58  |  -0.19  |  -0.23  |  0.276+  | -0.122  | -0.399  |  0.136+  |  0.007+  |  -0.56  |  -0.69  |  -1.23  |  -0.88  |  -1.29  | -0.020 |
+| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_LH  |   0.98  |  -0.28  |  -1.41  |  -0.22  |  -0.25  |  0.251+  | -0.082  | -0.345  |  0.122+  | -0.052  |  -0.60  |  -0.63  |  -1.09  |  -0.88  |  -1.17  | -0.021 |
+| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_ML  |   0.92  |  -0.27  |  -1.76  |  -0.12  |  -0.26  |  0.231+  | -0.077  | -0.501  |  0.147+  | -0.037  |  -0.61  |  -0.65  |  -1.33  |  -0.88  |  -1.31  | -0.047 |
+| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_MM  |   0.98  |  -0.26  |  -1.35  |  -0.19  |  -0.47  |  0.251+  | -0.090  | -0.377  |  0.143+  | -0.092  |  -0.56  |  -0.68  |  -1.07  |  -0.89  |  -1.42  | -0.033 |
+| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_MH  |   1.04  |  -0.29  |  -1.54  |  -0.18  |  -0.04  |  0.275+  | -0.100  | -0.383  |  0.132+  |  0.028+  |  -0.57  |  -0.65  |  -1.14  |  -0.85  |  -1.13  | -0.009 |
+| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_HL  |   0.98  |  -0.21  |  -1.35  |  -0.19  |  -0.24  |  0.240+  | -0.063  | -0.292  |  0.132+  | -0.030  |  -0.60  |  -0.61  |  -1.06  |  -0.86  |  -1.28  | -0.002 |
+| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_HM  |   0.90  |  -0.22  |  -1.42  |  -0.14  |  -0.26  |  0.212+  | -0.065  | -0.402  |  0.140+  |  0.009+  |  -0.55  |  -0.64  |  -1.11  |  -0.82  |  -1.31  | -0.021 |
+| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_HH  |   1.08  |  -0.29  |  -1.49  |  -0.05  |  -0.27  |  0.273+  | -0.100  | -0.393  |  0.174+  |  0.019+  |  -0.60  |  -0.69  |  -1.12  |  -0.84  |  -1.16  | -0.005 |
+| lstm | Trend / Volatility Surface | price_trend | LVTF  |   0.98  |  -0.37  |  -1.60  |  -0.30  |  -0.05  |  0.222+  | -0.125  | -0.408  |  0.076+  |  0.003+  |  -0.58  |  -0.68  |  -1.22  |  -0.97  |  -1.15  | -0.046 |
+| lstm | Trend / Volatility Surface | price_trend | HVTF  |   1.02  |  -0.19  |  -1.42  |  -0.34  |  -0.39  |  0.248+  | -0.050  | -0.353  |  0.067+  | -0.105  |  -0.60  |  -0.60  |  -1.13  |  -0.93  |  -1.19  | -0.039 |
+| lstm | Trend / Volatility Surface | price_trend | LVR  |   0.94  |  -0.23  |  -1.42  |  -0.25  |  -0.23  |  0.245+  | -0.065  | -0.400  |  0.120+  | -0.034  |  -0.61  |  -0.68  |  -1.17  |  -0.92  |  -1.24  | -0.027 |
+| lstm | Trend / Volatility Surface | price_trend | HVR  |   0.97  |  -0.36  |  -1.40  |   0.04  |  -0.15  |  0.243+  | -0.142  | -0.336  |  0.218+  | -0.013  |  -0.61  |  -0.70  |  -1.07  |  -0.74  |  -1.17  | -0.006 |
+| lstm | Trend / Volatility Surface | trend_vol_only | LVTF  |   1.06  |  -0.30  |  -1.28  |  -0.13  |  -0.10  |  0.261+  | -0.101  | -0.289  |  0.143+  | -0.010  |  -0.60  |  -0.67  |  -1.02  |  -0.89  |  -1.10  |  0.001 |
+| lstm | Trend / Volatility Surface | trend_vol_only | HVTF  |   0.97  |  -0.20  |  -1.29  |  -0.11  |  -0.36  |  0.247+  | -0.052  | -0.296  |  0.158+  | -0.039  |  -0.60  |  -0.58  |  -1.04  |  -0.81  |  -1.29  |  0.004 |
+| lstm | Trend / Volatility Surface | trend_vol_only | LVR  |   0.92  |  -0.25  |  -1.35  |  -0.10  |   0.02  |  0.241+  | -0.075  | -0.288  |  0.176+  |  0.023+  |  -0.63  |  -0.66  |  -1.11  |  -0.89  |  -1.17  |  0.015 |
+| lstm | Trend / Volatility Surface | trend_vol_only | HVR  |   0.98  |  -0.36  |  -1.38  |  -0.02  |  -0.20  |  0.253+  | -0.138  | -0.317  |  0.193+  |  0.044+  |  -0.57  |  -0.71  |  -1.09  |  -0.73  |  -1.22  |  0.007 |
 
 
 ## 2. Internal MPML Improvement — Dynamic Selector
@@ -371,37 +370,37 @@
 
 | Pair | Mean ΔReturn | Mean ΔSharpe | Mean ΔDD |
 |---|---:|---:|---:|
-| AUDJPY | -15.94 | -0.038 | -14.49 |
-| AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURJPY | 164.77 |  0.607 |   9.60 |
-| GBPAUD |  15.48 |  0.211 |   6.64 |
-| GBPJPY |  26.32 |  0.222 |   5.76 |
-| USDCAD |  16.97 |  0.120 |   1.17 |
-| USDCHF |  15.47 |  0.140 |  -2.39 |
-| USDJPY |  69.15 |  0.251 |   5.31 |
+| AUDJPY |  -0.14 | -0.228 |  -0.74 |
+| AUDUSD |  -1.01 | -0.278 |  -0.91 |
+| EURCHF |   0.44 |  0.326 |  -0.30 |
+| EURJPY |   0.25 |  0.010 |  -0.18 |
+| GBPAUD |   0.57 |  0.102 |  -1.17 |
+| GBPJPY |  -0.43 | -0.139 |  -0.53 |
+| USDCAD |   0.20 |  0.094 |  -0.28 |
+| USDCHF |   0.44 |  0.212 |  -0.42 |
+| USDJPY |   0.12 | -0.018 |  -0.39 |
 
 #### Target vs negative-control separation
 > Target ΔSh = mean across 5 target pairs (EURAUD, EURGBP, EURUSD, GBPUSD, NZDUSD).  Control ΔSh = mean across 9 control pairs (AUDJPY, AUDUSD, EURCHF, EURJPY, GBPAUD, GBPJPY, USDCAD, USDCHF, USDJPY).  > Separation = target ΔSh minus control ΔSh.
 | State | Behavioral Surface | Feature Set | Target ΔSh | Control ΔSh | Separation |
 |---|---|---|---:|---:|---:|
-| PERSISTENT_HH | Persistent Commitment Lifecycle Surface | price_trend |  0.089 |  0.192 | -0.103 |
-| PERSISTENT_HL | Persistent Commitment Lifecycle Surface | price_trend |  0.099 |  0.192 | -0.093 |
-| PERSISTENT_HM | Persistent Commitment Lifecycle Surface | price_trend |  0.080 |  0.192 | -0.112 |
-| PERSISTENT_LH | Persistent Commitment Lifecycle Surface | price_trend |  0.113 |  0.192 | -0.079 |
-| PERSISTENT_LL | Persistent Commitment Lifecycle Surface | price_trend |  0.169 |  0.192 | -0.023 |
-| PERSISTENT_LM | Persistent Commitment Lifecycle Surface | price_trend |  0.095 |  0.192 | -0.097 |
-| PERSISTENT_MH | Persistent Commitment Lifecycle Surface | price_trend |  0.108 |  0.192 | -0.084 |
-| PERSISTENT_ML | Persistent Commitment Lifecycle Surface | price_trend |  0.120 |  0.192 | -0.072 |
-| PERSISTENT_MM | Persistent Commitment Lifecycle Surface | price_trend |  0.150 |  0.192 | -0.042 |
-| HVR | Trend / Volatility Surface | price_trend |  0.092 |  0.192 | -0.100 |
-| HVTF | Trend / Volatility Surface | price_trend |  0.079 |  0.192 | -0.113 |
-| LVR | Trend / Volatility Surface | price_trend |  0.110 |  0.192 | -0.082 |
-| LVTF | Trend / Volatility Surface | price_trend |  0.122 |  0.192 | -0.070 |
-| HVR | Trend / Volatility Surface | trend_vol_only |  0.121 |  0.192 | -0.071 |
-| HVTF | Trend / Volatility Surface | trend_vol_only |  0.072 |  0.192 | -0.120 |
-| LVR | Trend / Volatility Surface | trend_vol_only |  0.118 |  0.192 | -0.074 |
-| LVTF | Trend / Volatility Surface | trend_vol_only |  0.061 |  0.192 | -0.131 |
+| PERSISTENT_HH | Persistent Commitment Lifecycle Surface | price_trend | -0.005 |  0.009 | -0.014 |
+| PERSISTENT_HL | Persistent Commitment Lifecycle Surface | price_trend | -0.002 |  0.009 | -0.011 |
+| PERSISTENT_HM | Persistent Commitment Lifecycle Surface | price_trend | -0.021 |  0.009 | -0.030 |
+| PERSISTENT_LH | Persistent Commitment Lifecycle Surface | price_trend | -0.021 |  0.009 | -0.030 |
+| PERSISTENT_LL | Persistent Commitment Lifecycle Surface | price_trend | -0.035 |  0.009 | -0.044 |
+| PERSISTENT_LM | Persistent Commitment Lifecycle Surface | price_trend | -0.020 |  0.009 | -0.029 |
+| PERSISTENT_MH | Persistent Commitment Lifecycle Surface | price_trend | -0.009 |  0.009 | -0.018 |
+| PERSISTENT_ML | Persistent Commitment Lifecycle Surface | price_trend | -0.047 |  0.009 | -0.056 |
+| PERSISTENT_MM | Persistent Commitment Lifecycle Surface | price_trend | -0.033 |  0.009 | -0.042 |
+| HVR | Trend / Volatility Surface | price_trend | -0.006 |  0.009 | -0.015 |
+| HVTF | Trend / Volatility Surface | price_trend | -0.039 |  0.009 | -0.048 |
+| LVR | Trend / Volatility Surface | price_trend | -0.027 |  0.009 | -0.036 |
+| LVTF | Trend / Volatility Surface | price_trend | -0.046 |  0.009 | -0.055 |
+| HVR | Trend / Volatility Surface | trend_vol_only |  0.007 |  0.009 | -0.002 |
+| HVTF | Trend / Volatility Surface | trend_vol_only |  0.004 |  0.009 | -0.005 |
+| LVR | Trend / Volatility Surface | trend_vol_only |  0.015 |  0.009 |  0.006 |
+| LVTF | Trend / Volatility Surface | trend_vol_only |  0.001 |  0.009 | -0.008 |
 
 
 ## 4. Behavioral Surface Comparison
@@ -413,30 +412,30 @@
 ### Persistent
 | Surface / Feature Set | EURAUD | EURGBP | EURUSD | GBPUSD | NZDUSD | Mean |
 |---|---|---|---|---|---|---|
-| Persistent Commitment Lifecycle  [price_trend]  |  0.326  | -0.097  | -0.127  |  0.075  |  0.391  |  0.113 |
-| Trend / Volatility  [price_trend]  |  0.285  | -0.128  | -0.089  |  0.087  |  0.350  |  0.101 |
-| Trend / Volatility  [trend_vol_only]  |  0.328  | -0.099  | -0.117  |  0.036  |  0.316  |  0.093 |
+| Persistent Commitment Lifecycle  [price_trend]  |  0.249  | -0.090  | -0.391  |  0.143  | -0.019  | -0.022 |
+| Trend / Volatility  [price_trend]  |  0.239  | -0.095  | -0.374  |  0.120  | -0.037  | -0.029 |
+| Trend / Volatility  [trend_vol_only]  |  0.251  | -0.091  | -0.298  |  0.168  |  0.005  |  0.007 |
 
 #### Per-experiment breakdown
 | Surface | State | Feature Set | EURAUD | EURGBP | EURUSD | GBPUSD | NZDUSD | Mean |
 |---|---|---|---|---|---|---|---|---|
-| pLife | PERSISTENT_LL | price_trend  |  0.354  | -0.127  | **-0.004**  |  0.056  | **0.565**  | **0.169** |
-| pLife | PERSISTENT_LM | price_trend  |  0.222  | -0.139  | -0.067  |  0.076  |  0.382  |  0.095 |
-| pLife | PERSISTENT_LH | price_trend  |  0.374  | -0.090  | -0.173  |  0.047  |  0.406  |  0.113 |
-| pLife | PERSISTENT_ML | price_trend  |  0.379  | -0.075  | -0.235  | **0.127**  |  0.405  |  0.120 |
-| pLife | PERSISTENT_MM | price_trend  |  0.359  | -0.065  | -0.133  |  0.085  |  0.502  |  0.150 |
-| pLife | PERSISTENT_MH | price_trend  |  0.337  | -0.104  | -0.082  |  0.091  |  0.295  |  0.108 |
-| pLife | PERSISTENT_HL | price_trend  |  0.259  | **-0.064**  | -0.127  |  0.092  |  0.337  |  0.099 |
-| pLife | PERSISTENT_HM | price_trend  |  0.301  | -0.134  | -0.155  |  0.031  |  0.355  |  0.080 |
-| pLife | PERSISTENT_HH | price_trend  |  0.349  | -0.075  | -0.165  |  0.066  |  0.268  |  0.089 |
-| tVol | LVTF | price_trend  |  0.326  | -0.103  | -0.012  |  0.094  |  0.306  |  0.122 |
-| tVol | HVTF | price_trend  |  0.225  | -0.162  | -0.082  |  0.111  |  0.304  |  0.079 |
-| tVol | LVR | price_trend  |  0.228  | -0.128  | -0.089  |  0.083  |  0.459  |  0.110 |
-| tVol | HVR | price_trend  |  0.360  | -0.119  | -0.173  |  0.060  |  0.332  |  0.092 |
-| tVol | LVTF | trend_vol_only  |  0.188  | -0.111  | -0.107  |  0.022  |  0.312  |  0.061 |
-| tVol | HVTF | trend_vol_only  |  0.258  | -0.115  | -0.166  |  0.039  |  0.343  |  0.072 |
-| tVol | LVR | trend_vol_only  |  0.417  | -0.094  | -0.106  |  0.055  |  0.315  |  0.118 |
-| tVol | HVR | trend_vol_only  | **0.448**  | -0.077  | -0.087  |  0.029  |  0.293  |  0.121 |
+| pLife | PERSISTENT_LL | price_trend  |  0.229  | -0.115  | -0.427  |  0.163  | -0.024  | -0.035 |
+| pLife | PERSISTENT_LM | price_trend  | **0.276**  | -0.122  | -0.399  |  0.136  |  0.007  | -0.020 |
+| pLife | PERSISTENT_LH | price_trend  |  0.251  | -0.082  | -0.345  |  0.122  | -0.052  | -0.021 |
+| pLife | PERSISTENT_ML | price_trend  |  0.231  | -0.077  | -0.501  |  0.147  | -0.037  | -0.047 |
+| pLife | PERSISTENT_MM | price_trend  |  0.251  | -0.090  | -0.377  |  0.143  | -0.092  | -0.033 |
+| pLife | PERSISTENT_MH | price_trend  |  0.275  | -0.100  | -0.383  |  0.132  |  0.028  | -0.009 |
+| pLife | PERSISTENT_HL | price_trend  |  0.240  | -0.063  | -0.292  |  0.132  | -0.030  | -0.002 |
+| pLife | PERSISTENT_HM | price_trend  |  0.212  | -0.065  | -0.402  |  0.140  |  0.009  | -0.021 |
+| pLife | PERSISTENT_HH | price_trend  |  0.273  | -0.100  | -0.393  |  0.174  |  0.019  | -0.005 |
+| tVol | LVTF | price_trend  |  0.222  | -0.125  | -0.408  |  0.076  |  0.003  | -0.046 |
+| tVol | HVTF | price_trend  |  0.248  | **-0.050**  | -0.353  |  0.067  | -0.105  | -0.039 |
+| tVol | LVR | price_trend  |  0.245  | -0.065  | -0.400  |  0.120  | -0.034  | -0.027 |
+| tVol | HVR | price_trend  |  0.243  | -0.142  | -0.336  | **0.218**  | -0.013  | -0.006 |
+| tVol | LVTF | trend_vol_only  |  0.261  | -0.101  | -0.289  |  0.143  | -0.010  |  0.001 |
+| tVol | HVTF | trend_vol_only  |  0.247  | -0.052  | -0.296  |  0.158  | -0.039  |  0.004 |
+| tVol | LVR | trend_vol_only  |  0.241  | -0.075  | **-0.288**  |  0.176  |  0.023  | **0.015** |
+| tVol | HVR | trend_vol_only  |  0.253  | -0.138  | -0.317  |  0.193  | **0.044**  |  0.007 |
 > **Bold** = highest ΔSharpe in that numerical column across the per-experiment rows.
 
 
