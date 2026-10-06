@@ -42,14 +42,17 @@ PHASEAWARE_PREFIX = "PhaseAware"
 #
 # Evaluation populations
 #
-# Both 'reactive_jpy' and 'trend_vol' target the same three JPY pairs.
-# The distinction is the Behavioral Surface representation, not the
-# pair universe.
+# These are experiment-specific target populations.  The common no-DL
+# baseline is intentionally broader and is populated from the actual pairs
+# present in its results_per_pair__baseline.csv.
 #
+# Evaluation populations are properties of FX pair families, not Behavioral Surfaces.
+# The same Behavioral Surface (e.g. Trend / Volatility) may be evaluated
+# for multiple pair families.
 
-EVALUATION_POPULATIONS: dict[str, list[str]] = {
+PAIR_FAMILY_POPULATIONS: dict[str, list[str]] = {
     "reactive_jpy": ["EURJPY", "GBPJPY", "USDJPY"],
-    "trend_vol":    ["EURJPY", "GBPJPY", "USDJPY"],
+    "persistent":   ["EURUSD", "GBPUSD", "NZDUSD", "EURGBP", "EURAUD"],
 }
 
 
@@ -164,24 +167,74 @@ def extract_phaseaware(
 
 
 # ---------------------------------------------------------------------
-# Representation mapping
+# Pair-family mapping
 # ---------------------------------------------------------------------
 
-def evaluation_population(representation: str) -> list[str]:
+def infer_legacy_pair_family(manifest: dict) -> str:
     """
-    Convert a Behavioral Surface representation string into the
-    FX pair evaluation population.
+    Infer the pair family for legacy archives whose manifests contain
+    ``training_pair_family: "unknown"``.
+
+    Legacy benchmark archives evaluated a broad common pair universe, so
+    the walk-forward pair list cannot identify the target family. Instead,
+    inspect which pairs actually contain DL signal features in the manifest.
     """
-    key = representation.strip().lower()
-    try:
-        return EVALUATION_POPULATIONS[key]
-    except KeyError:
-        known = list(EVALUATION_POPULATIONS.keys())
+    phase_predictors = (
+        manifest.get("feature_ordering", {})
+        .get("phase_predictor_by_pair", {})
+    )
+
+    if not phase_predictors:
         raise RuntimeError(
-            f"Unknown Behavioral Surface: '{representation}'\n\n"
-            f"Known surfaces: {known}"
+            "Cannot infer pair family for legacy experiment: "
+            "feature_ordering.phase_predictor_by_pair is missing."
         )
 
+    dl_pairs = {
+        str(pair).strip().upper()
+        for pair, features in phase_predictors.items()
+        if any(
+            str(feature).startswith("dl_signal_")
+            for feature in features
+        )
+    }
+
+    for family, population in PAIR_FAMILY_POPULATIONS.items():
+        if dl_pairs == set(population):
+            return family
+
+    raise RuntimeError(
+        "Cannot infer pair family for legacy experiment.\n\n"
+        f"Pairs with DL signal features: {sorted(dl_pairs)}\n"
+        f"Known populations: {PAIR_FAMILY_POPULATIONS}"
+    )
+
+
+def evaluation_population_for_family(pair_family: str) -> list[str]:
+    """
+    Return the evaluation population for an FX pair family.
+
+    Pair-family membership, not Behavioral Surface identity, determines
+    which FX pairs are evaluated. A Behavioral Surface such as Trend /
+    Volatility may therefore be evaluated for multiple pair families.
+
+    Legacy compatibility:
+        "reactive" → "reactive_jpy"
+    """
+    key = pair_family.strip().lower()
+
+    # Legacy benchmark manifests used "reactive".
+    if key == "reactive":
+        key = "reactive_jpy"
+
+    try:
+        return PAIR_FAMILY_POPULATIONS[key]
+    except KeyError:
+        known = list(PAIR_FAMILY_POPULATIONS.keys())
+        raise RuntimeError(
+            f"Unknown FX pair family: '{pair_family}'\n\n"
+            f"Known pair families: {known}"
+        )
 
 # ---------------------------------------------------------------------
 # Baseline loader
@@ -215,7 +268,9 @@ def load_baseline(folder: Path) -> ExperimentResult:
     feature_set       = surface.get("feature_surface", "unknown")
     sentiment_surface = surface.get("sentiment_surface", "unknown")
 
-    population = evaluation_population(representation)
+    # The baseline is a common control population, not an experiment-specific
+    # behavioral population.  Derive its population from the actual baseline
+    # result rows after PhaseAware extraction.
 
     # ------------------------------------------------------------------
     # Aggregate PhaseAware results
@@ -223,6 +278,7 @@ def load_baseline(folder: Path) -> ExperimentResult:
 
     results = load_csv(folder, "results_per_pair", suffix)
     results = extract_phaseaware(results, folder)
+    population = sorted(results["Pair"].dropna().astype(str).unique())
 
     experiment = ExperimentResult(
         name                  = folder.name,
@@ -305,7 +361,7 @@ def load_experiment(folder: Path) -> ExperimentResult:
 
     architecture   = surface["artifact_model"]
     representation = surface["behavioral_surface"]
-    pair_family    = surface.get("training_pair_family", "unknown")
+    pair_family    = surface.get("training_pair_family")
 
     state = (
         surface.get("behavioral_state")
@@ -315,7 +371,20 @@ def load_experiment(folder: Path) -> ExperimentResult:
     feature_set       = surface.get("feature_surface", "unknown")
     sentiment_surface = surface.get("sentiment_surface", "unknown")
 
-    population = evaluation_population(representation)
+    # Load walk-forward OOS results before resolving the evaluation
+    # population. This allows legacy archives, whose manifests contain
+    # training_pair_family="unknown", to be identified from their actual
+    # pair population without modifying the historical manifests.
+    wf = load_csv(folder, "walkforward_results_per_pair", suffix)
+
+    if pair_family == "reactive":
+        # Legacy manifests may use the pre-refactor family identifier.
+        pair_family = "reactive_jpy"
+
+    if not pair_family or pair_family == "unknown":
+        pair_family = infer_legacy_pair_family(manifest)
+
+    population = evaluation_population_for_family(pair_family)
 
     experiment = ExperimentResult(
         name                  = folder.name,
@@ -333,7 +402,8 @@ def load_experiment(folder: Path) -> ExperimentResult:
     # Walk-forward OOS results  ← the correct source for Section 1
     # ------------------------------------------------------------------
 
-    wf = load_csv(folder, "walkforward_results_per_pair", suffix)
+    # `wf` was loaded above because legacy pair-family inference may need
+    # the actual OOS pair population.
 
     # Load absolute experiment values for sensitivity mode
     # These are loaded once here and stored on each WalkforwardPairResult
@@ -564,17 +634,22 @@ def validate_benchmark(benchmark: Benchmark) -> None:
         )
 
     # ------------------------------------------------------------------
-    # 3. Evaluation population must be consistent
+    # 3. Evaluation population must be covered by the common baseline
     # ------------------------------------------------------------------
 
-    baseline_population = set(benchmark.baseline.evaluation_population)
+    # The baseline is deliberately broader than any one behavioral family.
+    # An experiment's target population must be a subset of the baseline
+    # pairs, but it must not be required to equal the baseline population.
+    baseline_population = set(benchmark.baseline.pair_names)
     for exp in benchmark.experiments:
-        if set(exp.evaluation_population) != baseline_population:
+        missing = set(exp.evaluation_population) - baseline_population
+        if missing:
             raise RuntimeError(
-                f"\nEvaluation population mismatch\n\n"
+                f"\nEvaluation population not covered by baseline\n\n"
                 f"{exp.name}\n\n"
-                f"Baseline:   {sorted(baseline_population)}\n"
-                f"Experiment: {sorted(exp.evaluation_population)}"
+                f"Baseline pairs:   {sorted(baseline_population)}\n"
+                f"Experiment pairs: {sorted(exp.evaluation_population)}\n"
+                f"Missing:          {sorted(missing)}"
             )
 
     # ------------------------------------------------------------------
@@ -591,10 +666,10 @@ def validate_benchmark(benchmark: Benchmark) -> None:
                 )
 
     # ------------------------------------------------------------------
-    # 5. Baseline must have aggregate results for all target pairs
+    # 5. Baseline must have aggregate results for every baseline pair
     # ------------------------------------------------------------------
 
-    for pair in benchmark.baseline.evaluation_population:
+    for pair in benchmark.baseline.pair_names:
         if pair not in benchmark.baseline.pairs:
             raise RuntimeError(
                 f"\nBaseline missing aggregate pair\n\n"

@@ -140,9 +140,5 @@ def main():
 
 
 # ------------------------------------------------------------
-
 if __name__ == "__main__":
-    args = parse_args()
-    benchmark = load_benchmark(args.archive)
-    print_report(benchmark, sensitivity_mode=args.sensitivity_mode)
     sys.exit(main())
