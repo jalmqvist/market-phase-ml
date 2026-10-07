@@ -37,7 +37,9 @@ def build_strategy_evaluation_id(
     state_id: str,
     strategy_id: str,
     experiment_id: str,
+    pair: str | None = None,
 ) -> str:
+    """Build a deterministic identity for aggregate or pair-scoped evidence."""
     payload = {
         "schema_version": EVALUATION_SCHEMA_VERSION,
         "surface_id": surface_id,
@@ -46,6 +48,8 @@ def build_strategy_evaluation_id(
         "strategy_id": strategy_id,
         "experiment_id": experiment_id,
     }
+    if pair is not None:
+        payload["pair"] = pair
     digest = hashlib.sha256(_stable_json(payload).encode("utf-8")).hexdigest()
     return f"eval_{digest[:24]}"
 
@@ -158,7 +162,9 @@ def build_strategy_evaluations(
     experiment_id: str,
     mode_tag: str,
     strategy_specs: Iterable[Mapping[str, Any]],
+    pair: str | None = None,
 ) -> list[StrategyEvaluation]:
+    """Build evaluations from existing walk-forward rows, optionally for one pair."""
     if wf_df.empty:
         return []
 
@@ -189,6 +195,7 @@ def build_strategy_evaluations(
             state_id=state_id,
             strategy_id=strategy_id,
             experiment_id=experiment_id,
+            pair=pair,
         )
         metadata = {
             "experiment_id": experiment_id,
@@ -198,6 +205,8 @@ def build_strategy_evaluations(
             "pair_count": pair_count,
             "fold_count": fold_count,
         }
+        if pair is not None:
+            metadata["pair"] = pair
         evaluations.append(
             StrategyEvaluation(
                 evaluation_id=evaluation_id,
