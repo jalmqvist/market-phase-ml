@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 import pandas as pd
 
@@ -90,7 +91,7 @@ class StrategyEvaluation:
         }
 
     @classmethod
-    def from_record(cls, record: Mapping[str, Any]) -> "StrategyEvaluation":
+    def from_record(cls, record: Mapping[str, Any]) -> StrategyEvaluation:
         metadata_value = record.get("metadata", {})
         if isinstance(metadata_value, str):
             metadata = json.loads(metadata_value) if metadata_value else {}
@@ -170,7 +171,7 @@ def build_strategy_evaluations(
 
     evaluations: list[StrategyEvaluation] = []
     pair_count = int(wf_df["Pair"].nunique()) if "Pair" in wf_df.columns else 0
-    fold_count = int(len(wf_df))
+    fold_count = len(wf_df)
 
     for spec in strategy_specs:
         expected_return = float(pd.to_numeric(wf_df[spec["expected_return_col"]], errors="coerce").mean())

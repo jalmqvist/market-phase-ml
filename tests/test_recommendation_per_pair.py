@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -9,15 +8,12 @@ import pandas as pd
 import pytest
 from pandas.api.types import is_integer_dtype, is_string_dtype
 
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-from src.evaluation import (  # noqa: E402
+from src.evaluation import (
+    StrategyEvaluation,
     build_strategy_evaluation_id,
     build_strategy_evaluations,
 )
-from src.recommendation import (  # noqa: E402
+from src.recommendation import (
     DEFAULT_RECOMMENDATION_POLICY,
     RECOMMENDATION_PER_PAIR_SCHEMA_VERSION,
     RecommendationPerPair,
@@ -53,10 +49,8 @@ def _evaluation(
     sharpe: float = 1.0,
     expected_return: float = 1.0,
     pair_count: int = 1,
-) -> object:
-    from src.evaluation import StrategyEvaluation
-
-    metadata = {"pair_count": pair_count}
+) -> StrategyEvaluation:
+    metadata: dict[str, int | str] = {"pair_count": pair_count}
     if pair is not None:
         metadata["pair"] = pair
     return StrategyEvaluation(
@@ -77,8 +71,10 @@ def _evaluation(
     )
 
 
-def _groups(recommendations: list[RecommendationPerPair]) -> dict[tuple[str, str, str], list]:
-    result: dict[tuple[str, str, str], list] = {}
+def _groups(
+    recommendations: list[RecommendationPerPair],
+) -> dict[tuple[str, str, str], list[RecommendationPerPair]]:
+    result: dict[tuple[str, str, str], list[RecommendationPerPair]] = {}
     for recommendation in recommendations:
         key = (
             recommendation.pair,
@@ -109,10 +105,10 @@ def test_groups_and_ranks_independently_by_pair_surface_and_state() -> None:
         ("EURUSD", "surface_b", "state_a"),
         ("EURUSD", "surface_a", "state_b"),
     }
-    assert [item.evaluation_id for item in groups[("EURUSD", "surface_a", "state_a")]] == [
-        "b",
-        "a",
-    ]
+    assert [
+        item.evaluation_id
+        for item in groups[("EURUSD", "surface_a", "state_a")]
+    ] == ["b", "a"]
     assert [item.rank for item in groups[("EURUSD", "surface_a", "state_a")]] == [1, 2]
     assert groups[("USDJPY", "surface_a", "state_a")][0].rank == 1
     assert groups[("USDJPY", "surface_a", "state_a")][0].evaluation_id == "c"
@@ -194,9 +190,9 @@ def test_strategy_evaluation_pair_identity_only_changes_pair_scoped_ids() -> Non
     }
     aggregate_id = build_strategy_evaluation_id(**identity_args)
     assert aggregate_id == build_strategy_evaluation_id(**identity_args, pair=None)
-    assert build_strategy_evaluation_id(**identity_args, pair="EURUSD") != build_strategy_evaluation_id(
-        **identity_args, pair="USDJPY"
-    )
+    assert build_strategy_evaluation_id(
+        **identity_args, pair="EURUSD"
+    ) != build_strategy_evaluation_id(**identity_args, pair="USDJPY")
 
 
 def test_pair_scoped_evaluations_use_existing_walkforward_rows() -> None:
@@ -232,7 +228,7 @@ def test_pair_scoped_evaluations_use_existing_walkforward_rows() -> None:
 
     assert pair_eval.metadata["pair"] == "EURUSD"
     assert pair_eval.expected_return == 2.0
-    assert pair_eval.expected_sharpe == 0.3
+    assert pair_eval.expected_sharpe == pytest.approx(0.3)
     assert pair_eval.n_trades == 6
 
 
@@ -270,7 +266,6 @@ def test_validation_checks_scope_rank_ids_and_referential_integrity() -> None:
             recommendations, known_evaluation_ids={"a"}
         )
 
-    duplicate = recommendations[1]
     duplicate_rank = RecommendationPerPair(
         recommendation_id=build_per_pair_recommendation_id(
             evaluation_id="a",
@@ -320,12 +315,18 @@ def test_parquet_roundtrip_has_exact_schema_and_contents() -> None:
             loaded, known_evaluation_ids=known_ids
         )
         restored = [
-            RecommendationPerPair.from_record(row)
+            RecommendationPerPair.from_record(
+                {str(key): value for key, value in row.items()}
+            )
             for row in loaded.to_dict(orient="records")
         ]
 
     assert loaded.columns.tolist() == EXPECTED_COLUMNS
-    assert all(is_string_dtype(loaded[column].dtype) for column in EXPECTED_COLUMNS if column != "rank")
+    assert all(
+        is_string_dtype(loaded[column].dtype)
+        for column in EXPECTED_COLUMNS
+        if column != "rank"
+    )
     assert is_integer_dtype(loaded["rank"].dtype)
     assert restored == recommendations
     assert all(
@@ -340,7 +341,28 @@ def test_empty_frame_has_the_artifact_schema() -> None:
 
     assert frame.columns.tolist() == EXPECTED_COLUMNS
     assert is_integer_dtype(frame["rank"].dtype)
-    assert all(is_string_dtype(frame[column].dtype) for column in EXPECTED_COLUMNS if column != "rank")
+    assert all(
+        is_string_dtype(frame[column].dtype)
+        for column in EXPECTED_COLUMNS
+        if column != "rank"
+    )
+    with TemporaryDirectory() as temp_dir:
+        path = Path(temp_dir) / "recommendations_per_pair.parquet"
+        write_recommendations_per_pair_parquet(
+            recommendations=[], output_path=path
+        )
+        loaded = pd.read_parquet(path)
+    assert loaded.columns.tolist() == EXPECTED_COLUMNS
+    assert is_integer_dtype(loaded["rank"].dtype)
+    assert all(
+        is_string_dtype(loaded[column].dtype)
+        for column in EXPECTED_COLUMNS
+        if column != "rank"
+    )
+
+
+def test_recommendation_per_pair_does_not_duplicate_strategy_identity() -> None:
+    assert "strategy_id" not in RecommendationPerPair.__dataclass_fields__
 
 
 def test_global_parquet_is_unchanged_when_pair_evaluations_are_added() -> None:

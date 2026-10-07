@@ -6,9 +6,10 @@ import json
 import logging
 import math
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 import pandas as pd
 from pandas.api.types import is_integer_dtype, is_string_dtype
@@ -135,7 +136,7 @@ class Recommendation:
         }
 
     @classmethod
-    def from_record(cls, record: Mapping[str, Any]) -> "Recommendation":
+    def from_record(cls, record: Mapping[str, Any]) -> Recommendation:
         metadata_value = record.get("metadata", {})
         if isinstance(metadata_value, str):
             metadata = json.loads(metadata_value) if metadata_value else {}
@@ -182,7 +183,7 @@ class RecommendationPerPair:
         }
 
     @classmethod
-    def from_record(cls, record: Mapping[str, Any]) -> "RecommendationPerPair":
+    def from_record(cls, record: Mapping[str, Any]) -> RecommendationPerPair:
         """Restore a per-pair recommendation from a serialized record."""
         metadata_value = record.get("metadata", {})
         if isinstance(metadata_value, str):
@@ -317,7 +318,7 @@ def recommendations_per_pair_to_frame(
     if not rows:
         return pd.DataFrame(
             {
-                column: pd.Series(dtype="int64" if column == "rank" else "object")
+                column: pd.Series(dtype="int64" if column == "rank" else "string")
                 for column in _PER_PAIR_RECOMMENDATION_COLUMNS
             }
         )
@@ -365,12 +366,16 @@ def validate_per_pair_recommendation_frame(
             raise RecommendationValidationError(
                 f"Per-pair recommendation column {column!r} contains null values."
             )
-        if column != "rank" and not frame[column].map(lambda value: isinstance(value, str)).all():
+        if column != "rank" and not all(
+            isinstance(value, str) for value in frame[column]
+        ):
             raise RecommendationValidationError(
                 f"Per-pair recommendation column {column!r} must contain only strings."
             )
     recommendations = [
-        RecommendationPerPair.from_record(record)
+        RecommendationPerPair.from_record(
+            {str(key): value for key, value in record.items()}
+        )
         for record in frame[_PER_PAIR_RECOMMENDATION_COLUMNS].to_dict(orient="records")
     ]
     # Avoid recursive frame validation while applying record-level constraints.
