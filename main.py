@@ -72,10 +72,15 @@ from src.evaluation import (
     write_strategy_evaluations_parquet,
 )
 from src.recommendation import (
+    DEFAULT_RECOMMENDATION_POLICY,
     RECOMMENDATION_SCHEMA_VERSION,
+    RECOMMENDATION_PER_PAIR_SCHEMA_VERSION,
     RecommendationValidationError,
+    generate_per_pair_recommendations,
     recommendations_from_evaluations,
+    validate_per_pair_recommendation_set,
     validate_recommendation_set,
+    write_recommendations_per_pair_parquet,
     write_recommendations_parquet,
 )
 from mpml.behavioral import registry as behavioral_registry
@@ -2254,6 +2259,7 @@ def main(
     experiment_seed: int | None = None,
     behavioral_surface: str | None = None,
     recommendation_top_n: int | None = None,
+    recommendations_per_pair: bool = False,
     strategy: list[str] | None = None,
     phaseaware_tf: str | None = None,
     phaseaware_mr: str | None = None,
@@ -2511,6 +2517,9 @@ def main(
         "strategy_evaluation_count": 0,
         "recommendation_schema_version": RECOMMENDATION_SCHEMA_VERSION,
         "recommendation_count": 0,
+        "recommendations_per_pair_enabled": recommendations_per_pair,
+        "recommendation_per_pair_schema_version": RECOMMENDATION_PER_PAIR_SCHEMA_VERSION,
+        "recommendation_per_pair_count": 0,
         "evaluation_scope": _effective_scope.to_manifest_block(),
         "phaseaware": _phaseaware_configuration.to_manifest_block(),
         "behavioral_surface": build_behavioral_surface_manifest_block(
@@ -4344,6 +4353,22 @@ def main(
             mode_tag=dl_mode_tag,
             strategy_specs=strategy_specs,
         )
+        if recommendations_per_pair and "Pair" in wf_df.columns:
+            for pair, pair_wf_df in wf_df.groupby("Pair", sort=True):
+                if not isinstance(pair, str):
+                    continue
+                strategy_evaluations.extend(
+                    build_strategy_evaluations(
+                        wf_df=pair_wf_df,
+                        surface_id=_resolved_behavioral_surface_id,
+                        surface_version=_resolved_behavioral_surface.surface_version,
+                        state_id=str(_resolved_behavioral_state_id or "unknown"),
+                        experiment_id=experiment_id,
+                        mode_tag=dl_mode_tag,
+                        strategy_specs=strategy_specs,
+                        pair=pair,
+                    )
+                )
         strategy_evaluations_path = _run_output_dir() / "strategy_evaluations.parquet"
         write_strategy_evaluations_parquet(
             evaluations=strategy_evaluations,
@@ -4353,8 +4378,13 @@ def main(
         print(f"Generated {len(strategy_evaluations)} StrategyEvaluation objects.")
         print(f"Saved: {strategy_evaluations_path}")
 
+        aggregate_evaluations = [
+            evaluation
+            for evaluation in strategy_evaluations
+            if "pair" not in evaluation.metadata
+        ]
         recommendations = recommendations_from_evaluations(
-            strategy_evaluations,
+            aggregate_evaluations,
             top_n=recommendation_top_n,
         )
         known_evaluation_ids = frozenset(e.evaluation_id for e in strategy_evaluations)
@@ -4365,6 +4395,25 @@ def main(
             output_path=recommendations_path,
         )
         manifest["recommendation_count"] = len(recommendations)
+        if recommendations_per_pair:
+            per_pair_recommendations = generate_per_pair_recommendations(
+                strategy_evaluations,
+                policy=DEFAULT_RECOMMENDATION_POLICY,
+                top_n=recommendation_top_n,
+            )
+            validate_per_pair_recommendation_set(
+                per_pair_recommendations,
+                known_evaluation_ids=known_evaluation_ids,
+            )
+            per_pair_recommendations_path = (
+                _run_output_dir() / "recommendations_per_pair.parquet"
+            )
+            write_recommendations_per_pair_parquet(
+                recommendations=per_pair_recommendations,
+                output_path=per_pair_recommendations_path,
+                known_evaluation_ids=known_evaluation_ids,
+            )
+            manifest["recommendation_per_pair_count"] = len(per_pair_recommendations)
         _write_manifests(
             manifest=manifest,
             run_manifest_path=manifest_path,
@@ -4372,6 +4421,12 @@ def main(
         )
         print(f"Generated {len(recommendations)} Recommendation objects.")
         print(f"Saved: {recommendations_path}")
+        if recommendations_per_pair:
+            print(
+                "Generated "
+                f"{len(per_pair_recommendations)} per-pair Recommendation objects."
+            )
+            print(f"Saved: {per_pair_recommendations_path}")
 
     # ─────────────────────────────────────────
     if RUN_TAU_SWEEP:
@@ -4967,6 +5022,12 @@ if __name__ == '__main__':
         ),
     )
     parser.add_argument(
+        "--recommendations-per-pair",
+        action="store_true",
+        default=False,
+        help="Generate recommendations_per_pair.parquet from pair-scoped walk-forward evidence.",
+    )
+    parser.add_argument(
         "--recommendation-top-n",
         type=int,
         default=None,
@@ -5038,6 +5099,7 @@ if __name__ == '__main__':
         experiment_seed=args.experiment_seed,
         behavioral_surface=args.behavioral_surface,
         recommendation_top_n=args.recommendation_top_n,
+        recommendations_per_pair=args.recommendations_per_pair,
         strategy=args.strategy,
         phaseaware_tf=args.phaseaware_tf[0] if args.phaseaware_tf else None,
         phaseaware_mr=args.phaseaware_mr[0] if args.phaseaware_mr else None,

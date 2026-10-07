@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 import pandas as pd
 
@@ -37,7 +38,9 @@ def build_strategy_evaluation_id(
     state_id: str,
     strategy_id: str,
     experiment_id: str,
+    pair: str | None = None,
 ) -> str:
+    """Build a deterministic identity for aggregate or pair-scoped evidence."""
     payload = {
         "schema_version": EVALUATION_SCHEMA_VERSION,
         "surface_id": surface_id,
@@ -46,6 +49,8 @@ def build_strategy_evaluation_id(
         "strategy_id": strategy_id,
         "experiment_id": experiment_id,
     }
+    if pair is not None:
+        payload["pair"] = pair
     digest = hashlib.sha256(_stable_json(payload).encode("utf-8")).hexdigest()
     return f"eval_{digest[:24]}"
 
@@ -86,7 +91,7 @@ class StrategyEvaluation:
         }
 
     @classmethod
-    def from_record(cls, record: Mapping[str, Any]) -> "StrategyEvaluation":
+    def from_record(cls, record: Mapping[str, Any]) -> StrategyEvaluation:
         metadata_value = record.get("metadata", {})
         if isinstance(metadata_value, str):
             metadata = json.loads(metadata_value) if metadata_value else {}
@@ -158,13 +163,15 @@ def build_strategy_evaluations(
     experiment_id: str,
     mode_tag: str,
     strategy_specs: Iterable[Mapping[str, Any]],
+    pair: str | None = None,
 ) -> list[StrategyEvaluation]:
+    """Build evaluations from existing walk-forward rows, optionally for one pair."""
     if wf_df.empty:
         return []
 
     evaluations: list[StrategyEvaluation] = []
     pair_count = int(wf_df["Pair"].nunique()) if "Pair" in wf_df.columns else 0
-    fold_count = int(len(wf_df))
+    fold_count = len(wf_df)
 
     for spec in strategy_specs:
         expected_return = float(pd.to_numeric(wf_df[spec["expected_return_col"]], errors="coerce").mean())
@@ -189,6 +196,7 @@ def build_strategy_evaluations(
             state_id=state_id,
             strategy_id=strategy_id,
             experiment_id=experiment_id,
+            pair=pair,
         )
         metadata = {
             "experiment_id": experiment_id,
@@ -198,6 +206,8 @@ def build_strategy_evaluations(
             "pair_count": pair_count,
             "fold_count": fold_count,
         }
+        if pair is not None:
+            metadata["pair"] = pair
         evaluations.append(
             StrategyEvaluation(
                 evaluation_id=evaluation_id,
