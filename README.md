@@ -421,13 +421,39 @@ Canonical artifacts produced by every experiment:
 
 ### Recommendations
 
-MPML converts `StrategyEvaluation` objects into deterministically ranked `Recommendation` objects using the default `sharpe_rank_v1` policy. Recommendations are ranked by expected Sharpe ratio (descending), with deterministic tie-breaking on expected return and then evaluation ID.
+MPML converts `StrategyEvaluation` objects into deterministically ranked
+`Recommendation` objects using the default `sharpe_rank_v1` policy.
+Recommendations are ranked by expected Sharpe ratio (descending), with
+deterministic tie-breaking on expected return and then evaluation ID.
 
 By default all recommendations are returned. Use `--recommendation-top-n N` to limit the output to the top N:
 
 ```bash
 python main.py --recommendation-top-n 5
 ```
+
+For pair-specific recommendation generation, use:
+
+```
+python main.py --recommendations-per-pair
+```
+
+This additionally produces `recommendations_per_pair.parquet`, with
+recommendations ranked independently within each concrete
+`(pair, surface_id, state_id)` group. The existing `recommendations.parquet`
+artifact remains unchanged.
+
+The two options can be combined to limit the number of recommendations
+returned within each pair/surface/state group:
+
+```
+python main.py \
+    --recommendations-per-pair \
+    --recommendation-top-n 3
+```
+
+Use `--recommendations-per-pair` for experiments where downstream analysis
+or MRML consumption requires pair-specific strategy recommendations.
 
 ---
 
