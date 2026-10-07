@@ -2223,6 +2223,135 @@ Portfolio Decision
 
 ---
 
+## Phase G5 — Per-Pair Recommendation Generation
+
+**Status:** Planned (October 2026)
+
+**Objective**
+
+Extend the Recommendation Engine to produce per-pair, per-surface, per-state
+recommendations as the canonical MRML consumption format.
+
+The current `recommendations.parquet` contains global rankings across all
+pairs. MRML requires scoped recommendations: for a given pair, surface, and
+state, which strategy is ranked first?
+
+This phase introduces a new artifact `recommendations_per_pair.parquet` while
+preserving backward compatibility with the existing global recommendation
+format.
+
+**Motivation**
+
+- MRML's daily execution loop resolves state per pair and needs a
+  corresponding recommendation per (pair, surface, state).
+- Global rankings conflate heterogeneous pair populations (e.g., EURJPY vs
+  USDJPY under Reactive-JPY may warrant different strategies).
+- The existing `StrategyEvaluation` already contains per-pair evidence; the
+  Recommendation layer should expose this granularity.
+
+**New Artifact: `recommendations_per_pair.parquet`**
+
+Schema (parquet):
+
+| Column                  | Type   | Description                                       |
+| ----------------------- | ------ | ------------------------------------------------- |
+| `recommendation_id`     | string | Deterministic ID (prefix `rec_`)                  |
+| `evaluation_id`         | string | FK to `strategy_evaluations.parquet`              |
+| `pair`                  | string | FX pair, e.g., "EURJPY"                           |
+| `surface_id`            | string | Behavioral surface, e.g., "reactive_jpy"          |
+| `state_id`              | string | State within surface, e.g., "JPY_CONSENSUS_YOUNG" |
+| `rank`                  | int    | Rank within (pair, surface, state), starting at 1 |
+| `recommendation_policy` | string | Policy that produced ranking                      |
+| `metadata`              | JSON   | Contains `schema_version` (e.g., "1.0.0")         |
+
+Constraints:
+- `rank` is unique and positive within each (pair, surface, state) group
+- `evaluation_id` references a valid `StrategyEvaluation`
+- `recommendation_id` is deterministic: derived from schema version,
+  evaluation_id, pair, surface_id, state_id, policy, and rank
+- No duplicate (pair, surface, state, rank) combinations
+
+**Generation Logic**
+
+For each experiment:
+1. Load all `StrategyEvaluation` objects from walk-forward output
+2. Group evaluations by (pair, surface_id, state_id)
+3. Within each group, rank by the active policy (default: `sharpe_rank_v1`)
+4. Emit top-N recommendations per group (default: all, or limit via
+   `--recommendation-top-n`)
+5. Serialize to `recommendations_per_pair.parquet`
+
+The existing global `recommendations.parquet` continues to be produced
+unchanged for backward compatibility.
+
+**CLI Interface**
+
+Add optional flag:
+```
+--recommendations-per-pair    Emit per-pair recommendations (default: false)
+--recommendation-top-n N      Limit to top N per (pair, surface, state)
+                              (default: all)
+```
+
+When `--recommendations-per-pair` is absent, behavior is unchanged from G4.
+
+**Validation Requirements**
+
+- Schema validation: all required columns present, correct dtypes
+- Referential integrity: every `evaluation_id` exists in
+  `strategy_evaluations.parquet`
+- Rank uniqueness: no duplicate ranks within (pair, surface, state)
+- Determinism: identical inputs produce identical `recommendation_id` values
+- Consistency: for experiments with a single pair or uniform surface/state,
+  per-pair recommendations should align with global rankings
+
+**Backward Compatibility**
+
+- Global `recommendations.parquet` is always produced
+- Per-pair file is produced only when explicitly requested
+- No changes to `StrategyEvaluation` schema
+- No changes to existing recommendation policies
+- MRML can adopt per-pair format independently; global format remains valid
+
+**MRML Interface Contract**
+
+MRML v0 will consume `recommendations_per_pair.parquet` as follows:
+
+```
+Input: (pair, surface_id, state_id) from live state resolution
+Lookup: rank == 1 for that (pair, surface_id, state_id)
+Output: strategy_id via joined StrategyEvaluation
+```
+
+This replaces the current global lookup that ignores pair identity.
+
+**Open Questions (to resolve during implementation)**
+
+1. Should `pair` be extracted from `StrategyEvaluation.metadata` or added as
+   a first-class column to `StrategyEvaluation`? (Current: metadata only)
+2. How should multi-pair evaluations (e.g., 14-pair aggregate) be handled?
+   Proposal: skip for per-pair output, or emit with `pair="ALL"` if needed
+   for cross-pair strategies.
+3. Should the per-pair file include a "default" entry for unknown states,
+   or should MRML fall back to global recommendations?
+
+**Non-Goals**
+
+- No changes to walk-forward evaluation logic
+- No changes to strategy ranking criteria (policies remain unchanged)
+- No live/online recommendation generation (remains offline)
+- No portfolio or execution logic (remains in MRML)
+
+**Definition of Done**
+
+- `recommendations_per_pair.parquet` is produced when requested
+- All validation tests pass
+- Backward compatibility verified: global recommendations unchanged
+- MRML can perform successful lookup against new format
+- Documentation updated with new artifact specification
+
+---
+
 # 18. Future Extensions
 
 Possible future work
@@ -2268,7 +2397,7 @@ LVR
 HVR
 ```
 
-ReactiveJPYSurface
+ReactiveJPYSurface (Consensus Lifecycle)
 
 States
 
@@ -2283,9 +2412,21 @@ ReactiveCHFSurface
 
 Reserved
 
-PersistentSurface
+PersistentSurface (Commitment Lifecycle)
 
-Reserved
+States
+
+```
+PERSISTENT_HH
+PERSISTENT_HM
+PERSISTENT_HL
+PERSISTENT_MH
+PERSISTENT_MM
+PERSISTENT_ML
+PERSISTENT_LH
+PERSISTENT_LM
+PERSISTENT_LL
+```
 
 This appendix documents only the public metadata exposed by each Behavioral
 Surface.
