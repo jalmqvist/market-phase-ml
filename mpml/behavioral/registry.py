@@ -170,10 +170,12 @@ def _build_default_registry() -> BehavioralSurfaceRegistry:
     # Import here to avoid circular imports at module load time.
     from mpml.behavioral.trend_vol import TrendVolSurface
     from mpml.behavioral.reactive_jpy import ReactiveJPYSurface
+    from mpml.behavioral.persistent import PersistentSurface
 
     reg = BehavioralSurfaceRegistry()
     reg.register(TrendVolSurface())
     reg.register(ReactiveJPYSurface())
+    reg.register(PersistentSurface())
     return reg
 
 
