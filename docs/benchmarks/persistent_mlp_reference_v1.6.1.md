@@ -1,7 +1,7 @@
 
     # MPML REFERENCE BENCHMARK
 
-    **Architecture**: lstm  
+    **Architecture**: mlp  
     **Experiments**: 17  
     **Baseline**: No-DL PhaseAware (aggregate)  
     **Target pairs**: experiment-specific; matrix columns cover the union of target populations (EURAUD, EURGBP, EURUSD, GBPUSD, NZDUSD)  
@@ -14,23 +14,23 @@
 ## 1. Uplift Matrix — ΔRet, ΔSh, and ΔDD per State and Pair
 | Architecture | Behavioral Surface | Feature Set | State | ΔRet EURAUD | ΔRet EURGBP | ΔRet EURUSD | ΔRet GBPUSD | ΔRet NZDUSD | ΔSh EURAUD | ΔSh EURGBP | ΔSh EURUSD | ΔSh GBPUSD | ΔSh NZDUSD | ΔDD EURAUD | ΔDD EURGBP | ΔDD EURUSD | ΔDD GBPUSD | ΔDD NZDUSD | Mean ΔSh |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_LL  |   0.94  |  -0.32  |  -1.52  |  -0.06  |  -0.19  |  0.229+  | -0.115  | -0.427  |  0.163+  | -0.024  |  -0.58  |  -0.65  |  -1.07  |  -0.81  |  -1.27  | -0.035 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_LM  |   1.09  |  -0.35  |  -1.58  |  -0.19  |  -0.23  |  0.276+  | -0.122  | -0.399  |  0.136+  |  0.007+  |  -0.56  |  -0.69  |  -1.23  |  -0.88  |  -1.29  | -0.020 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_LH  |   0.98  |  -0.28  |  -1.41  |  -0.22  |  -0.25  |  0.251+  | -0.082  | -0.345  |  0.122+  | -0.052  |  -0.60  |  -0.63  |  -1.09  |  -0.88  |  -1.17  | -0.021 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_ML  |   0.92  |  -0.27  |  -1.76  |  -0.12  |  -0.26  |  0.231+  | -0.077  | -0.501  |  0.147+  | -0.037  |  -0.61  |  -0.65  |  -1.33  |  -0.88  |  -1.31  | -0.047 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_MM  |   0.98  |  -0.26  |  -1.35  |  -0.19  |  -0.47  |  0.251+  | -0.090  | -0.377  |  0.143+  | -0.092  |  -0.56  |  -0.68  |  -1.07  |  -0.89  |  -1.42  | -0.033 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_MH  |   1.04  |  -0.29  |  -1.54  |  -0.18  |  -0.04  |  0.275+  | -0.100  | -0.383  |  0.132+  |  0.028+  |  -0.57  |  -0.65  |  -1.14  |  -0.85  |  -1.13  | -0.009 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_HL  |   0.98  |  -0.21  |  -1.35  |  -0.19  |  -0.24  |  0.240+  | -0.063  | -0.292  |  0.132+  | -0.030  |  -0.60  |  -0.61  |  -1.06  |  -0.86  |  -1.28  | -0.002 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_HM  |   0.90  |  -0.22  |  -1.42  |  -0.14  |  -0.26  |  0.212+  | -0.065  | -0.402  |  0.140+  |  0.009+  |  -0.55  |  -0.64  |  -1.11  |  -0.82  |  -1.31  | -0.021 |
-| lstm | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_HH  |   1.08  |  -0.29  |  -1.49  |  -0.05  |  -0.27  |  0.273+  | -0.100  | -0.393  |  0.174+  |  0.019+  |  -0.60  |  -0.69  |  -1.12  |  -0.84  |  -1.16  | -0.005 |
-| lstm | Trend / Volatility Surface | price_trend | LVTF  |   0.98  |  -0.37  |  -1.60  |  -0.30  |  -0.05  |  0.222+  | -0.125  | -0.408  |  0.076+  |  0.003+  |  -0.58  |  -0.68  |  -1.22  |  -0.97  |  -1.15  | -0.046 |
-| lstm | Trend / Volatility Surface | price_trend | HVTF  |   1.02  |  -0.19  |  -1.42  |  -0.34  |  -0.39  |  0.248+  | -0.050  | -0.353  |  0.067+  | -0.105  |  -0.60  |  -0.60  |  -1.13  |  -0.93  |  -1.19  | -0.039 |
-| lstm | Trend / Volatility Surface | price_trend | LVR  |   0.94  |  -0.23  |  -1.42  |  -0.25  |  -0.23  |  0.245+  | -0.065  | -0.400  |  0.120+  | -0.034  |  -0.61  |  -0.68  |  -1.17  |  -0.92  |  -1.24  | -0.027 |
-| lstm | Trend / Volatility Surface | price_trend | HVR  |   0.97  |  -0.36  |  -1.40  |   0.04  |  -0.15  |  0.243+  | -0.142  | -0.336  |  0.218+  | -0.013  |  -0.61  |  -0.70  |  -1.07  |  -0.74  |  -1.17  | -0.006 |
-| lstm | Trend / Volatility Surface | trend_vol_only | LVTF  |   1.06  |  -0.30  |  -1.28  |  -0.13  |  -0.10  |  0.261+  | -0.101  | -0.289  |  0.143+  | -0.010  |  -0.60  |  -0.67  |  -1.02  |  -0.89  |  -1.10  |  0.001 |
-| lstm | Trend / Volatility Surface | trend_vol_only | HVTF  |   0.97  |  -0.20  |  -1.29  |  -0.11  |  -0.36  |  0.247+  | -0.052  | -0.296  |  0.158+  | -0.039  |  -0.60  |  -0.58  |  -1.04  |  -0.81  |  -1.29  |  0.004 |
-| lstm | Trend / Volatility Surface | trend_vol_only | LVR  |   0.92  |  -0.25  |  -1.35  |  -0.10  |   0.02  |  0.241+  | -0.075  | -0.288  |  0.176+  |  0.023+  |  -0.63  |  -0.66  |  -1.11  |  -0.89  |  -1.17  |  0.015 |
-| lstm | Trend / Volatility Surface | trend_vol_only | HVR  |   0.98  |  -0.36  |  -1.38  |  -0.02  |  -0.20  |  0.253+  | -0.138  | -0.317  |  0.193+  |  0.044+  |  -0.57  |  -0.71  |  -1.09  |  -0.73  |  -1.22  |  0.007 |
+| mlp | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_LL  |   0.98  |  -0.29  |  -1.36  |  -0.12  |  -0.26  |  0.248+  | -0.099  | -0.357  |  0.146+  | -0.045  |  -0.58  |  -0.66  |  -1.06  |  -0.81  |  -1.09  | -0.021 |
+| mlp | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_LM  |   0.99  |  -0.33  |  -1.54  |  -0.18  |  -0.42  |  0.249+  | -0.125  | -0.425  |  0.134+  | -0.095  |  -0.57  |  -0.68  |  -1.08  |  -0.86  |  -1.32  | -0.052 |
+| mlp | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_LH  |   0.95  |  -0.27  |  -1.46  |  -0.20  |  -0.38  |  0.236+  | -0.083  | -0.352  |  0.098+  | -0.057  |  -0.57  |  -0.64  |  -1.13  |  -0.86  |  -1.24  | -0.032 |
+| mlp | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_ML  |   1.10  |  -0.19  |  -1.25  |  -0.15  |  -0.37  |  0.278+  | -0.035  | -0.298  |  0.161+  | -0.049  |  -0.55  |  -0.57  |  -1.02  |  -0.90  |  -1.25  |  0.011 |
+| mlp | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_MM  |   1.01  |  -0.30  |  -1.44  |  -0.11  |  -0.24  |  0.244+  | -0.098  | -0.379  |  0.177+  | -0.039  |  -0.56  |  -0.64  |  -1.12  |  -0.89  |  -1.26  | -0.019 |
+| mlp | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_MH  |   0.99  |  -0.23  |  -1.67  |  -0.10  |  -0.18  |  0.236+  | -0.069  | -0.455  |  0.180+  | -0.032  |  -0.60  |  -0.66  |  -1.28  |  -0.92  |  -1.19  | -0.028 |
+| mlp | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_HL  |   0.90  |  -0.26  |  -1.44  |  -0.33  |   0.02  |  0.220+  | -0.081  | -0.373  |  0.050+  |  0.061+  |  -0.64  |  -0.60  |  -1.10  |  -1.02  |  -1.21  | -0.025 |
+| mlp | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_HM  |   0.98  |  -0.26  |  -1.39  |  -0.10  |  -0.01  |  0.251+  | -0.078  | -0.309  |  0.141+  | -0.025  |  -0.56  |  -0.64  |  -1.05  |  -0.92  |  -1.04  | -0.004 |
+| mlp | Persistent Commitment Lifecycle Surface | price_trend | PERSISTENT_HH  |   1.07  |  -0.31  |  -1.52  |  -0.10  |  -0.38  |  0.281+  | -0.100  | -0.366  |  0.165+  | -0.062  |  -0.53  |  -0.68  |  -1.25  |  -0.88  |  -1.34  | -0.016 |
+| mlp | Trend / Volatility Surface | price_trend | LVTF  |   0.96  |  -0.28  |  -1.20  |   0.03  |  -0.32  |  0.236+  | -0.074  | -0.243  |  0.178+  | -0.076  |  -0.57  |  -0.62  |  -0.90  |  -0.73  |  -1.38  |  0.004 |
+| mlp | Trend / Volatility Surface | price_trend | HVTF  |   1.04  |  -0.26  |  -1.26  |  -0.41  |  -0.31  |  0.252+  | -0.082  | -0.295  |  0.063+  | -0.043  |  -0.56  |  -0.58  |  -0.97  |  -1.00  |  -1.31  | -0.021 |
+| mlp | Trend / Volatility Surface | price_trend | LVR  |   0.88  |  -0.24  |  -1.44  |  -0.41  |  -0.23  |  0.216+  | -0.062  | -0.367  |  0.056+  | -0.031  |  -0.60  |  -0.64  |  -1.07  |  -1.05  |  -1.22  | -0.037 |
+| mlp | Trend / Volatility Surface | price_trend | HVR  |   1.05  |  -0.29  |  -1.39  |  -0.14  |  -0.38  |  0.276+  | -0.104  | -0.331  |  0.157+  | -0.060  |  -0.60  |  -0.66  |  -1.08  |  -0.87  |  -1.33  | -0.012 |
+| mlp | Trend / Volatility Surface | trend_vol_only | LVTF  |   1.20  |  -0.24  |  -1.26  |  -0.15  |  -0.13  |  0.300+  | -0.083  | -0.316  |  0.145+  | -0.022  |  -0.49  |  -0.60  |  -1.04  |  -0.93  |  -1.20  |  0.005 |
+| mlp | Trend / Volatility Surface | trend_vol_only | HVTF  |   1.07  |  -0.24  |  -1.43  |  -0.22  |  -0.20  |  0.256+  | -0.074  | -0.362  |  0.102+  | -0.031  |  -0.56  |  -0.64  |  -1.14  |  -0.90  |  -1.16  | -0.022 |
+| mlp | Trend / Volatility Surface | trend_vol_only | LVR  |   0.98  |  -0.33  |  -1.31  |  -0.20  |  -0.22  |  0.246+  | -0.112  | -0.317  |  0.102+  | -0.043  |  -0.59  |  -0.68  |  -1.02  |  -0.83  |  -1.29  | -0.025 |
+| mlp | Trend / Volatility Surface | trend_vol_only | HVR  |   0.97  |  -0.29  |  -1.48  |   0.03  |  -0.17  |  0.236+  | -0.109  | -0.309  |  0.215+  | -0.020  |  -0.60  |  -0.68  |  -1.19  |  -0.77  |  -1.25  |  0.002 |
 
 
 ## 2. Internal MPML Improvement — Dynamic Selector
@@ -42,15 +42,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * | 152.04 |  0.354 |   2.78 |
+| EURAUD * | 117.64 |  0.281 |   3.64 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * | -13.99 | -0.127 |  -8.41 |
+| EURGBP * |  -8.97 | -0.099 |  -8.45 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * |  -7.80 | -0.004 |  -8.02 |
+| EURUSD * | -20.31 | -0.089 | -16.00 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |   6.67 |  0.056 |  -2.52 |
-| NZDUSD * | 325.86 |  0.565 |  22.30 |
+| GBPUSD * |  15.50 |  0.101 |  -1.14 |
+| NZDUSD * |  92.86 |  0.213 |   6.85 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -61,15 +61,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * | 101.87 |  0.222 |   3.98 |
+| EURAUD * |  98.33 |  0.237 |  -2.65 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * | -15.92 | -0.139 |  -9.06 |
+| EURGBP * | -19.68 | -0.160 |  -9.96 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -17.26 | -0.067 | -14.59 |
+| EURUSD * | -28.10 | -0.154 | -20.29 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |  10.57 |  0.076 |   0.30 |
-| NZDUSD * | 187.02 |  0.382 |  18.29 |
+| GBPUSD * |  14.79 |  0.097 |   0.92 |
+| NZDUSD * | 165.47 |  0.358 |  17.26 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -80,15 +80,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * | 166.67 |  0.374 |   4.66 |
+| EURAUD * | 118.20 |  0.278 |   5.43 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * |  -6.81 | -0.090 |  -7.99 |
+| EURGBP * |  -8.91 | -0.099 |  -7.99 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -30.18 | -0.173 | -20.10 |
+| EURUSD * |  -4.04 |  0.016 |   0.88 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |   4.85 |  0.047 |  -5.66 |
-| NZDUSD * | 192.96 |  0.406 |  10.29 |
+| GBPUSD * |  10.29 |  0.075 |  -1.10 |
+| NZDUSD * | 178.20 |  0.379 |   9.28 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -99,15 +99,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * | 176.57 |  0.379 |   7.09 |
+| EURAUD * | 115.57 |  0.284 |   4.37 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * |  -3.89 | -0.075 |  -7.14 |
+| EURGBP * | -15.12 | -0.133 |  -8.73 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -37.06 | -0.235 | -26.41 |
+| EURUSD * | -31.22 | -0.184 | -23.13 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |  21.11 |  0.127 |   0.50 |
-| NZDUSD * | 195.75 |  0.405 |   6.81 |
+| GBPUSD * |   2.27 |  0.033 |  -2.94 |
+| NZDUSD * | 212.22 |  0.413 |  12.20 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -118,15 +118,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * | 145.51 |  0.359 |  -0.37 |
+| EURAUD * | 147.04 |  0.332 |   7.21 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * |  -2.12 | -0.065 |  -6.87 |
+| EURGBP * |  -5.52 | -0.082 |  -7.85 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -25.58 | -0.133 | -16.98 |
+| EURUSD * | -29.86 | -0.168 | -22.00 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |  12.30 |  0.085 |  -0.08 |
-| NZDUSD * | 278.42 |  0.502 |  17.34 |
+| GBPUSD * |   7.83 |  0.062 |  -0.80 |
+| NZDUSD * | 272.01 |  0.497 |  11.63 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -137,15 +137,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * | 155.06 |  0.337 |   7.14 |
+| EURAUD * | 120.53 |  0.289 |  -0.24 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * |  -9.76 | -0.104 | -10.31 |
+| EURGBP * | -10.65 | -0.108 |  -8.29 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -18.77 | -0.082 | -11.64 |
+| EURUSD * | -25.69 | -0.133 | -20.00 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |  13.57 |  0.091 |  -0.56 |
-| NZDUSD * | 136.83 |  0.295 |   7.46 |
+| GBPUSD * |  16.29 |  0.104 |  -0.20 |
+| NZDUSD * | 101.97 |  0.239 |   1.19 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -156,15 +156,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * | 107.72 |  0.259 |   2.45 |
+| EURAUD * | 144.10 |  0.351 |  -4.47 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * |  -1.85 | -0.064 |  -9.84 |
+| EURGBP * |  -4.99 | -0.080 |  -7.92 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -24.94 | -0.127 | -16.42 |
+| EURUSD * | -18.19 | -0.077 | -16.81 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |  13.71 |  0.092 |   0.68 |
-| NZDUSD * | 164.83 |  0.337 |   5.02 |
+| GBPUSD * |  10.23 |  0.075 |  -2.77 |
+| NZDUSD * | 194.51 |  0.397 |  10.54 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -175,15 +175,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * | 123.82 |  0.301 |   5.33 |
+| EURAUD * | 176.61 |  0.387 |   4.07 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * | -15.07 | -0.134 | -10.28 |
+| EURGBP * | -16.43 | -0.141 |  -7.81 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -28.23 | -0.155 | -18.94 |
+| EURUSD * | -16.06 | -0.063 | -11.11 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |   2.04 |  0.031 |  -4.53 |
-| NZDUSD * | 161.36 |  0.355 |  16.45 |
+| GBPUSD * |  10.45 |  0.076 |  -0.79 |
+| NZDUSD * | 330.73 |  0.561 |  13.71 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -194,15 +194,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * | 154.43 |  0.349 |   3.64 |
+| EURAUD * | 128.89 |  0.306 |  -0.76 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * |  -4.31 | -0.075 |  -7.12 |
+| EURGBP * | -18.23 | -0.151 |  -9.25 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -29.30 | -0.165 | -19.97 |
+| EURUSD * | -23.29 | -0.112 | -14.41 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |   8.54 |  0.066 |   0.49 |
-| NZDUSD * | 113.97 |  0.268 |  12.79 |
+| GBPUSD * |  13.19 |  0.089 |  -1.34 |
+| NZDUSD * | 134.73 |  0.293 |   5.39 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -213,15 +213,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * | 143.03 |  0.326 |   5.96 |
+| EURAUD * | 154.83 |  0.349 |   5.20 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * |  -9.76 | -0.103 |  -7.94 |
+| EURGBP * |  -2.32 | -0.064 |  -5.69 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * |  -8.33 | -0.012 |  -9.52 |
+| EURUSD * | -28.19 | -0.152 | -24.43 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |  14.08 |  0.094 |  -0.74 |
-| NZDUSD * | 142.45 |  0.306 |   7.99 |
+| GBPUSD * |  16.84 |  0.107 |  -0.15 |
+| NZDUSD * | 158.29 |  0.329 |   1.88 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -232,15 +232,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * |  78.43 |  0.188 |  -4.89 |
+| EURAUD * | 230.10 |  0.474 |   6.95 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * | -10.99 | -0.111 |  -8.01 |
+| EURGBP * |  -0.31 | -0.056 |  -6.74 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -22.49 | -0.107 | -18.84 |
+| EURUSD * | -27.31 | -0.146 | -17.24 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |   0.20 |  0.022 |  -4.90 |
-| NZDUSD * | 146.45 |  0.312 |   8.72 |
+| GBPUSD * |  14.70 |  0.097 |   0.16 |
+| NZDUSD * | 122.10 |  0.278 |   4.67 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -251,15 +251,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * |  91.26 |  0.225 |  -3.05 |
+| EURAUD * | 211.66 |  0.448 |   5.74 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * | -20.11 | -0.162 |  -8.38 |
+| EURGBP * | -12.83 | -0.120 |  -7.90 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -18.31 | -0.082 | -14.50 |
+| EURUSD * | -27.01 | -0.145 | -20.51 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |  17.59 |  0.111 |  -0.55 |
-| NZDUSD * | 132.86 |  0.304 |   7.99 |
+| GBPUSD * |   4.87 |  0.046 |  -1.05 |
+| NZDUSD * | 146.71 |  0.312 |   8.82 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -270,15 +270,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * | 106.06 |  0.258 |  -4.21 |
+| EURAUD * | 141.51 |  0.326 |   3.23 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * | -11.82 | -0.115 |  -7.71 |
+| EURGBP * |  -7.00 | -0.091 |  -8.21 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -29.28 | -0.166 | -20.91 |
+| EURUSD * | -32.22 | -0.190 | -21.82 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |   3.36 |  0.039 |  -1.37 |
-| NZDUSD * | 152.26 |  0.343 |  15.05 |
+| GBPUSD * |  11.28 |  0.080 |   0.06 |
+| NZDUSD * | 177.63 |  0.376 |  -0.05 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -289,15 +289,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * |  94.01 |  0.228 |  -3.41 |
+| EURAUD * | 167.31 |  0.377 |   5.98 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * | -14.08 | -0.128 |  -7.57 |
+| EURGBP * | -11.70 | -0.117 |  -9.35 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -19.92 | -0.089 | -14.24 |
+| EURUSD * | -28.88 | -0.159 | -19.60 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |  11.98 |  0.083 |  -0.09 |
-| NZDUSD * | 235.17 |  0.459 |  11.60 |
+| GBPUSD * |  14.07 |  0.094 |  -2.07 |
+| NZDUSD * | 123.72 |  0.289 |  10.95 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -308,15 +308,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * | 180.35 |  0.417 |   4.48 |
+| EURAUD * | 162.12 |  0.386 |  -0.93 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * |  -8.29 | -0.094 |  -4.97 |
+| EURGBP * | -17.34 | -0.145 |  -9.76 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -21.82 | -0.106 | -13.54 |
+| EURUSD * |  -8.61 | -0.016 |  -6.12 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |   6.49 |  0.055 |  -6.03 |
-| NZDUSD * | 144.57 |  0.315 |   9.32 |
+| GBPUSD * |   3.55 |  0.040 |  -1.23 |
+| NZDUSD * |  73.72 |  0.186 |  -5.13 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -327,15 +327,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * | 156.64 |  0.360 |   5.05 |
+| EURAUD * | 161.16 |  0.340 |   2.54 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * | -12.70 | -0.119 |  -7.63 |
+| EURGBP * | -11.77 | -0.114 |  -8.73 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -30.17 | -0.173 | -20.86 |
+| EURUSD * | -19.79 | -0.088 | -14.31 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |   7.43 |  0.060 |  -1.71 |
-| NZDUSD * | 148.57 |  0.332 |   5.83 |
+| GBPUSD * |   9.58 |  0.071 |  -0.70 |
+| NZDUSD * | 144.96 |  0.305 |  13.18 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -346,15 +346,15 @@
 |---|---|---|---|
 | AUDJPY | -15.94 | -0.038 | -14.49 |
 | AUDUSD |  41.75 |  0.126 |  -2.64 |
-| EURAUD * | 200.24 |  0.448 |   4.41 |
+| EURAUD * | 143.23 |  0.325 |   3.76 |
 | EURCHF |  16.90 |  0.087 |  -2.08 |
-| EURGBP * |  -3.98 | -0.077 |  -7.54 |
+| EURGBP * | -12.58 | -0.120 |  -8.19 |
 | EURJPY | 164.77 |  0.607 |   9.60 |
-| EURUSD * | -20.08 | -0.087 | -17.33 |
+| EURUSD * | -18.06 | -0.074 | -10.25 |
 | GBPAUD |  15.48 |  0.211 |   6.64 |
 | GBPJPY |  26.32 |  0.222 |   5.76 |
-| GBPUSD * |   1.57 |  0.029 |  -2.34 |
-| NZDUSD * | 127.59 |  0.293 |   5.12 |
+| GBPUSD * |  17.92 |  0.112 |  -0.88 |
+| NZDUSD * | 113.27 |  0.255 |   5.06 |
 | USDCAD |  16.97 |  0.120 |   1.17 |
 | USDCHF |  15.47 |  0.140 |  -2.39 |
 | USDJPY |  69.15 |  0.251 |   5.31 |
@@ -384,23 +384,23 @@
 > Target ΔSh = mean across 5 target pairs (EURAUD, EURGBP, EURUSD, GBPUSD, NZDUSD).  Control ΔSh = mean across 9 control pairs (AUDJPY, AUDUSD, EURCHF, EURJPY, GBPAUD, GBPJPY, USDCAD, USDCHF, USDJPY).  > Separation = target ΔSh minus control ΔSh.
 | State | Behavioral Surface | Feature Set | Target ΔSh | Control ΔSh | Separation |
 |---|---|---|---:|---:|---:|
-| PERSISTENT_HH | Persistent Commitment Lifecycle Surface | price_trend | -0.005 |  0.009 | -0.014 |
-| PERSISTENT_HL | Persistent Commitment Lifecycle Surface | price_trend | -0.002 |  0.009 | -0.011 |
-| PERSISTENT_HM | Persistent Commitment Lifecycle Surface | price_trend | -0.021 |  0.009 | -0.030 |
-| PERSISTENT_LH | Persistent Commitment Lifecycle Surface | price_trend | -0.021 |  0.009 | -0.030 |
-| PERSISTENT_LL | Persistent Commitment Lifecycle Surface | price_trend | -0.035 |  0.009 | -0.044 |
-| PERSISTENT_LM | Persistent Commitment Lifecycle Surface | price_trend | -0.020 |  0.009 | -0.029 |
-| PERSISTENT_MH | Persistent Commitment Lifecycle Surface | price_trend | -0.009 |  0.009 | -0.018 |
-| PERSISTENT_ML | Persistent Commitment Lifecycle Surface | price_trend | -0.047 |  0.009 | -0.056 |
-| PERSISTENT_MM | Persistent Commitment Lifecycle Surface | price_trend | -0.033 |  0.009 | -0.042 |
-| HVR | Trend / Volatility Surface | price_trend | -0.006 |  0.009 | -0.015 |
-| HVTF | Trend / Volatility Surface | price_trend | -0.039 |  0.009 | -0.048 |
-| LVR | Trend / Volatility Surface | price_trend | -0.027 |  0.009 | -0.036 |
-| LVTF | Trend / Volatility Surface | price_trend | -0.046 |  0.009 | -0.055 |
-| HVR | Trend / Volatility Surface | trend_vol_only |  0.007 |  0.009 | -0.002 |
-| HVTF | Trend / Volatility Surface | trend_vol_only |  0.004 |  0.009 | -0.005 |
-| LVR | Trend / Volatility Surface | trend_vol_only |  0.015 |  0.009 |  0.006 |
-| LVTF | Trend / Volatility Surface | trend_vol_only |  0.001 |  0.009 | -0.008 |
+| PERSISTENT_HH | Persistent Commitment Lifecycle Surface | price_trend | -0.016 |  0.009 | -0.025 |
+| PERSISTENT_HL | Persistent Commitment Lifecycle Surface | price_trend | -0.025 |  0.009 | -0.034 |
+| PERSISTENT_HM | Persistent Commitment Lifecycle Surface | price_trend | -0.004 |  0.009 | -0.013 |
+| PERSISTENT_LH | Persistent Commitment Lifecycle Surface | price_trend | -0.032 |  0.009 | -0.041 |
+| PERSISTENT_LL | Persistent Commitment Lifecycle Surface | price_trend | -0.021 |  0.009 | -0.030 |
+| PERSISTENT_LM | Persistent Commitment Lifecycle Surface | price_trend | -0.052 |  0.009 | -0.061 |
+| PERSISTENT_MH | Persistent Commitment Lifecycle Surface | price_trend | -0.028 |  0.009 | -0.037 |
+| PERSISTENT_ML | Persistent Commitment Lifecycle Surface | price_trend |  0.011 |  0.009 |  0.002 |
+| PERSISTENT_MM | Persistent Commitment Lifecycle Surface | price_trend | -0.019 |  0.009 | -0.028 |
+| HVR | Trend / Volatility Surface | price_trend | -0.012 |  0.009 | -0.021 |
+| HVTF | Trend / Volatility Surface | price_trend | -0.021 |  0.009 | -0.030 |
+| LVR | Trend / Volatility Surface | price_trend | -0.037 |  0.009 | -0.046 |
+| LVTF | Trend / Volatility Surface | price_trend |  0.004 |  0.009 | -0.005 |
+| HVR | Trend / Volatility Surface | trend_vol_only |  0.002 |  0.009 | -0.006 |
+| HVTF | Trend / Volatility Surface | trend_vol_only | -0.022 |  0.009 | -0.031 |
+| LVR | Trend / Volatility Surface | trend_vol_only | -0.025 |  0.009 | -0.034 |
+| LVTF | Trend / Volatility Surface | trend_vol_only |  0.005 |  0.009 | -0.004 |
 
 
 ## 4. Behavioral Surface Comparison
@@ -412,30 +412,30 @@
 ### Persistent
 | Surface / Feature Set | EURAUD | EURGBP | EURUSD | GBPUSD | NZDUSD | Mean |
 |---|---|---|---|---|---|---|
-| Persistent Commitment Lifecycle  [price_trend]  |  0.249  | -0.090  | -0.391  |  0.143  | -0.019  | -0.022 |
-| Trend / Volatility  [price_trend]  |  0.239  | -0.095  | -0.374  |  0.120  | -0.037  | -0.029 |
-| Trend / Volatility  [trend_vol_only]  |  0.251  | -0.091  | -0.298  |  0.168  |  0.005  |  0.007 |
+| Persistent Commitment Lifecycle  [price_trend]  |  0.249  | -0.085  | -0.368  |  0.139  | -0.038  | -0.021 |
+| Trend / Volatility  [price_trend]  |  0.245  | -0.081  | -0.309  |  0.114  | -0.052  | -0.017 |
+| Trend / Volatility  [trend_vol_only]  |  0.259  | -0.094  | -0.326  |  0.141  | -0.029  | -0.010 |
 
 #### Per-experiment breakdown
 | Surface | State | Feature Set | EURAUD | EURGBP | EURUSD | GBPUSD | NZDUSD | Mean |
 |---|---|---|---|---|---|---|---|---|
-| pLife | PERSISTENT_LL | price_trend  |  0.229  | -0.115  | -0.427  |  0.163  | -0.024  | -0.035 |
-| pLife | PERSISTENT_LM | price_trend  | **0.276**  | -0.122  | -0.399  |  0.136  |  0.007  | -0.020 |
-| pLife | PERSISTENT_LH | price_trend  |  0.251  | -0.082  | -0.345  |  0.122  | -0.052  | -0.021 |
-| pLife | PERSISTENT_ML | price_trend  |  0.231  | -0.077  | -0.501  |  0.147  | -0.037  | -0.047 |
-| pLife | PERSISTENT_MM | price_trend  |  0.251  | -0.090  | -0.377  |  0.143  | -0.092  | -0.033 |
-| pLife | PERSISTENT_MH | price_trend  |  0.275  | -0.100  | -0.383  |  0.132  |  0.028  | -0.009 |
-| pLife | PERSISTENT_HL | price_trend  |  0.240  | -0.063  | -0.292  |  0.132  | -0.030  | -0.002 |
-| pLife | PERSISTENT_HM | price_trend  |  0.212  | -0.065  | -0.402  |  0.140  |  0.009  | -0.021 |
-| pLife | PERSISTENT_HH | price_trend  |  0.273  | -0.100  | -0.393  |  0.174  |  0.019  | -0.005 |
-| tVol | LVTF | price_trend  |  0.222  | -0.125  | -0.408  |  0.076  |  0.003  | -0.046 |
-| tVol | HVTF | price_trend  |  0.248  | **-0.050**  | -0.353  |  0.067  | -0.105  | -0.039 |
-| tVol | LVR | price_trend  |  0.245  | -0.065  | -0.400  |  0.120  | -0.034  | -0.027 |
-| tVol | HVR | price_trend  |  0.243  | -0.142  | -0.336  | **0.218**  | -0.013  | -0.006 |
-| tVol | LVTF | trend_vol_only  |  0.261  | -0.101  | -0.289  |  0.143  | -0.010  |  0.001 |
-| tVol | HVTF | trend_vol_only  |  0.247  | -0.052  | -0.296  |  0.158  | -0.039  |  0.004 |
-| tVol | LVR | trend_vol_only  |  0.241  | -0.075  | **-0.288**  |  0.176  |  0.023  | **0.015** |
-| tVol | HVR | trend_vol_only  |  0.253  | -0.138  | -0.317  |  0.193  | **0.044**  |  0.007 |
+| pLife | PERSISTENT_LL | price_trend  |  0.248  | -0.099  | -0.357  |  0.146  | -0.045  | -0.021 |
+| pLife | PERSISTENT_LM | price_trend  |  0.249  | -0.125  | -0.425  |  0.134  | -0.095  | -0.052 |
+| pLife | PERSISTENT_LH | price_trend  |  0.236  | -0.083  | -0.352  |  0.098  | -0.057  | -0.032 |
+| pLife | PERSISTENT_ML | price_trend  |  0.278  | **-0.035**  | -0.298  |  0.161  | -0.049  | **0.011** |
+| pLife | PERSISTENT_MM | price_trend  |  0.244  | -0.098  | -0.379  |  0.177  | -0.039  | -0.019 |
+| pLife | PERSISTENT_MH | price_trend  |  0.236  | -0.069  | -0.455  |  0.180  | -0.032  | -0.028 |
+| pLife | PERSISTENT_HL | price_trend  |  0.220  | -0.081  | -0.373  |  0.050  | **0.061**  | -0.025 |
+| pLife | PERSISTENT_HM | price_trend  |  0.251  | -0.078  | -0.309  |  0.141  | -0.025  | -0.004 |
+| pLife | PERSISTENT_HH | price_trend  |  0.281  | -0.100  | -0.366  |  0.165  | -0.062  | -0.016 |
+| tVol | LVTF | price_trend  |  0.236  | -0.074  | **-0.243**  |  0.178  | -0.076  |  0.004 |
+| tVol | HVTF | price_trend  |  0.252  | -0.082  | -0.295  |  0.063  | -0.043  | -0.021 |
+| tVol | LVR | price_trend  |  0.216  | -0.062  | -0.367  |  0.056  | -0.031  | -0.037 |
+| tVol | HVR | price_trend  |  0.276  | -0.104  | -0.331  |  0.157  | -0.060  | -0.012 |
+| tVol | LVTF | trend_vol_only  | **0.300**  | -0.083  | -0.316  |  0.145  | -0.022  |  0.005 |
+| tVol | HVTF | trend_vol_only  |  0.256  | -0.074  | -0.362  |  0.102  | -0.031  | -0.022 |
+| tVol | LVR | trend_vol_only  |  0.246  | -0.112  | -0.317  |  0.102  | -0.043  | -0.025 |
+| tVol | HVR | trend_vol_only  |  0.236  | -0.109  | -0.309  | **0.215**  | -0.020  |  0.002 |
 > **Bold** = highest ΔSharpe in that numerical column across the per-experiment rows.
 
 
