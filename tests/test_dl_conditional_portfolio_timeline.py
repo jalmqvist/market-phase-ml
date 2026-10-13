@@ -24,7 +24,9 @@ def _fixture_df(n=12, start="2020-01-01"):
 
 def _run(df, signals):
     bt = Backtester(initial_capital=10_000.0, spread_pips=1.0, slippage_pips=0.5)
-    return bt, bt.run(df, pd.Series(signals, index=df.index), "T")
+    return bt, bt.run(
+        df, pd.Series(signals, index=df.index), "T", include_mtm=True
+    )
 
 
 SIGNALS = [0, 1, 1, 1, 0, 0, -1, -1, 0, 0, 0, 0]
@@ -86,6 +88,7 @@ def test_dl_available_matches_existing_definition_and_keeps_unavailable_bars():
 
 def test_no_dl_columns_gives_all_false_but_rows_kept():
     df = _fixture_df()
+    df[sorted(mpml_main.D1_FEATURE_COLS)[0]] = np.nan
     bt, res = _run(df, SIGNALS)
     out = pd.DataFrame(_rows(df, res, bt))
     assert len(out) == len(df) and not out["dl_available"].any()
@@ -105,9 +108,11 @@ def test_missing_equity_preserved_not_zero():
 
 def test_no_equity_returns_no_rows():
     df = _fixture_df()
-    assert mpml_main._build_dl_conditional_portfolio_rows(
-        pair_name="X", fold_id=0, df_test=df, selected_s=pd.Series(["a"] * len(df)),
-        dyn_res={}, initial_capital=1.0) == []
+    with pytest.raises(ValueError, match="requires dynamic backtest results"):
+        mpml_main._build_dl_conditional_portfolio_rows(
+            pair_name="X", fold_id=0, df_test=df,
+            selected_s=pd.Series(["a"] * len(df), index=df.index),
+            dyn_res={}, initial_capital=1.0)
 
 
 def test_writer_schema_ordering_and_duplicate_timestamps_across_folds(tmp_path, monkeypatch):
@@ -140,7 +145,246 @@ def test_writer_empty_writes_nothing(tmp_path, monkeypatch):
     assert not (tmp_path / "dl_conditional_portfolio_timeline.csv").exists()
 
 
+def test_writer_rejects_duplicate_pair_fold_timestamp_keys(tmp_path, monkeypatch):
+    monkeypatch.setattr(mpml_main, "_CURRENT_RUN_OUTPUT_DIR", tmp_path)
+    df = _fixture_df()
+    bt, res = _run(df, SIGNALS)
+    rows = _rows(df, res, bt)
+    with pytest.raises(ValueError, match="duplicate pair/fold/timestamp"):
+        mpml_main._write_dl_conditional_portfolio_timeline(rows + rows)
+
+
 def test_default_path_has_no_export_hook():
     src = inspect.getsource(mpml_main.main)
-    assert "if _wf_run_dynamic and export_dl_conditional_portfolio_timeline" in src
+    assert "_run_dynamic_selector_backtest(" in src
     assert "if export_dl_conditional_portfolio_timeline:" in src
+
+
+def test_opt_in_dynamic_fold_path_writes_complete_artifact(tmp_path, monkeypatch):
+    monkeypatch.setattr(mpml_main, "_CURRENT_RUN_OUTPUT_DIR", tmp_path)
+    df = _fixture_df()
+    signals = pd.Series(SIGNALS, index=df.index)
+    selected = pd.Series(["TF"] * len(df), index=df.index)
+
+    default_bt = Backtester()
+    default_result, default_rows = mpml_main._run_dynamic_selector_backtest(
+        backtester=default_bt,
+        df_test=df,
+        signals=signals,
+        strategy_name="Dynamic",
+        sl_pct_series=pd.Series(0.0, index=df.index),
+        tp_pct_series=pd.Series(0.0, index=df.index),
+        export_timeline=False,
+        pair_name="EURUSD",
+        fold_id=0,
+        selected_s=selected,
+    )
+    assert "equity_curve_mtm" not in default_result
+    assert default_rows == []
+    assert mpml_main._write_dl_conditional_portfolio_timeline(default_rows) is None
+    assert not (tmp_path / "dl_conditional_portfolio_timeline.csv").exists()
+
+    opt_in_result, opt_in_rows = mpml_main._run_dynamic_selector_backtest(
+        backtester=Backtester(),
+        df_test=df,
+        signals=signals,
+        strategy_name="Dynamic",
+        sl_pct_series=pd.Series(0.0, index=df.index),
+        tp_pct_series=pd.Series(0.0, index=df.index),
+        export_timeline=True,
+        pair_name="EURUSD",
+        fold_id=0,
+        selected_s=selected,
+    )
+    path = mpml_main._write_dl_conditional_portfolio_timeline(opt_in_rows)
+    assert path is not None
+    written = pd.read_csv(path)
+    assert len(written) == len(df)
+    assert list(written.columns) == mpml_main.DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS
+    assert "equity_curve_mtm" in opt_in_result
+    assert mpml_main.DL_CONDITIONAL_PORTFOLIO_TIMELINE_SCHEMA_VERSION == "1.1.0"
+
+    repeated, repeated_rows = mpml_main._run_dynamic_selector_backtest(
+        backtester=Backtester(),
+        df_test=df,
+        signals=signals,
+        strategy_name="Dynamic",
+        sl_pct_series=pd.Series(0.0, index=df.index),
+        tp_pct_series=pd.Series(0.0, index=df.index),
+        export_timeline=True,
+        pair_name="EURUSD",
+        fold_id=0,
+        selected_s=selected,
+    )
+    pd.testing.assert_series_equal(
+        opt_in_result["equity_curve_mtm"], repeated["equity_curve_mtm"]
+    )
+    assert opt_in_rows == repeated_rows
+
+
+@pytest.mark.parametrize("use_atr_sizing", [False, True])
+def test_mtm_is_opt_in_and_preserves_all_legacy_results(use_atr_sizing):
+    df = _fixture_df()
+    signals = pd.Series(SIGNALS, index=df.index)
+    bt = Backtester(use_atr_sizing=use_atr_sizing)
+    realized = bt.run(df, signals, "T")
+    marked = bt.run(df, signals, "T", include_mtm=True)
+
+    assert "equity_curve_mtm" not in realized
+    assert set(marked) == set(realized) | {"equity_curve_mtm"}
+    for key in realized:
+        left, right = realized[key], marked[key]
+        if isinstance(left, pd.Series):
+            pd.testing.assert_series_equal(left, right)
+        elif isinstance(left, pd.DataFrame):
+            pd.testing.assert_frame_equal(left, right)
+        elif key == "trades":
+            assert left == right
+        else:
+            np.testing.assert_equal(left, right)
+
+
+@pytest.mark.parametrize("direction,valuation", [
+    (1, 1.12),
+    (1, 1.08),
+    (-1, 1.12),
+    (-1, 1.08),
+])
+@pytest.mark.parametrize("use_atr_sizing", [False, True])
+def test_open_position_mtm_matches_mode_costs_and_direction(
+    direction, valuation, use_atr_sizing
+):
+    df = _fixture_df(n=4)
+    df["Close"] = [1.10, 1.10, valuation, 1.11]
+    df["Open"] = df["Close"]
+    df["High"] = df["Close"] + 0.001
+    df["Low"] = df["Close"] - 0.001
+    bt = Backtester(
+        initial_capital=10_000.0,
+        spread_pips=2.0,
+        slippage_pips=1.0,
+        commission_per_trade=4.0,
+        use_atr_sizing=use_atr_sizing,
+        risk_pct=0.02,
+    )
+    result = bt.run(
+        df, pd.Series([direction] * len(df), index=df.index), "T",
+        include_mtm=True,
+    )
+
+    entry_cost = bt._calculate_trade_cost(1.10)
+    exit_cost = bt._calculate_trade_cost(valuation)
+    after_entry_cost = bt.initial_capital * (1 - entry_cost)
+    if use_atr_sizing:
+        size = after_entry_cost * bt.risk_pct / (2.0 * 0.01)
+        open_pnl = (
+            size * direction * (valuation - 1.10)
+            - size * 1.10 * exit_cost
+        )
+    else:
+        open_pnl = after_entry_cost * (
+            direction * (valuation - 1.10) / 1.10 - exit_cost
+        )
+
+    assert result["equity_curve"].iloc[1] == pytest.approx(after_entry_cost)
+    assert result["equity_curve_mtm"].iloc[1] < result["equity_curve"].iloc[1]
+    assert result["equity_curve"].iloc[2] == result["equity_curve"].iloc[1]
+    assert result["equity_curve_mtm"].iloc[2] == pytest.approx(
+        after_entry_cost + open_pnl
+    )
+    assert result["equity_curve_mtm"].iloc[2] != pytest.approx(
+        result["equity_curve"].iloc[2]
+    )
+    assert result["equity_curve_mtm"].iloc[-1] == result["equity_curve"].iloc[-1]
+
+
+@pytest.mark.parametrize("exit_kind", ["signal", "SL", "TP"])
+def test_flat_and_exit_bars_reconcile_realized_and_mtm(exit_kind):
+    df = _fixture_df(n=5)
+    df["Close"] = 1.10
+    df["Open"] = df["Close"]
+    df["High"] = df["Close"] + 0.001
+    df["Low"] = df["Close"] - 0.001
+    signals = [1, 0, 0, 0, 0]
+    sl = pd.Series(0.0, index=df.index)
+    tp = pd.Series(0.0, index=df.index)
+    if exit_kind == "signal":
+        df.loc[df.index[2], "Close"] = 1.12
+    elif exit_kind == "SL":
+        sl.iloc[1] = 0.005
+        df.loc[df.index[2], "Low"] = 1.08
+    else:
+        tp.iloc[1] = 0.005
+        df.loc[df.index[2], "High"] = 1.12
+
+    bt = Backtester()
+    result = bt.run(
+        df, pd.Series(signals, index=df.index), "T", sl, tp, include_mtm=True
+    )
+    flat = result["execution_timeline"]["position"].to_numpy() == 0
+    np.testing.assert_allclose(
+        result["equity_curve_mtm"].to_numpy()[flat],
+        result["equity_curve"].to_numpy()[flat],
+    )
+    assert result["trades"][0].exit_reason == (
+        "signal" if exit_kind == "signal" else exit_kind
+    )
+    assert result["equity_curve_mtm"].iloc[-1] == result["equity_curve"].iloc[-1]
+
+
+def test_invalid_open_position_valuation_is_nan_without_fabricating_price():
+    df = _fixture_df(n=5)
+    df.loc[df.index[2], "Close"] = np.nan
+    signals = pd.Series([1, 1, 1, 1, 1], index=df.index)
+    result = Backtester().run(df, signals, "T", include_mtm=True)
+
+    assert np.isnan(result["equity_curve_mtm"].iloc[2])
+    assert result["equity_curve_mtm"].iloc[1] < result["equity_curve"].iloc[1]
+    assert result["equity_curve_mtm"].iloc[-1] == result["equity_curve"].iloc[-1]
+
+
+def test_timeline_mtm_differences_ignore_dl_availability_transitions():
+    df = _fixture_df()
+    df[sorted(mpml_main.D1_FEATURE_COLS)[0]] = [
+        np.nan if i % 2 else 1.0 for i in range(len(df))
+    ]
+    bt, result = _run(df, SIGNALS)
+    out = pd.DataFrame(_rows(df, result, bt))
+
+    expected = result["equity_curve_mtm"]
+    np.testing.assert_allclose(out["portfolio_equity_mtm"], expected)
+    expected_pnl = expected.diff()
+    expected_pnl.iloc[0] = expected.iloc[0] - bt.initial_capital
+    np.testing.assert_allclose(out["portfolio_pnl_mtm"], expected_pnl)
+    expected_return = expected_pnl / expected.shift(1)
+    expected_return.iloc[0] = expected_pnl.iloc[0] / bt.initial_capital
+    np.testing.assert_allclose(out["portfolio_return_mtm"], expected_return)
+    assert (~out["dl_available"]).any() and out["portfolio_pnl_mtm"].notna().any()
+
+
+def test_timeline_rejects_missing_mtm_or_misaligned_required_series():
+    df = _fixture_df()
+    bt, result = _run(df, SIGNALS)
+    missing = dict(result)
+    missing.pop("equity_curve_mtm")
+    with pytest.raises(ValueError, match="requires equity_curve_mtm"):
+        _rows(df, missing, bt)
+
+    misaligned = dict(result)
+    misaligned["equity_curve_mtm"] = result["equity_curve_mtm"].iloc[:-1]
+    with pytest.raises(ValueError, match="timestamps do not match test bars"):
+        _rows(df, misaligned, bt)
+
+
+def test_mtm_return_is_nan_when_previous_equity_is_zero_or_invalid():
+    df = _fixture_df()
+    bt, result = _run(df, SIGNALS)
+    result = dict(result)
+    mtm = result["equity_curve_mtm"].copy()
+    mtm.iloc[0] = 0.0
+    mtm.iloc[2] = np.nan
+    result["equity_curve_mtm"] = mtm
+    out = pd.DataFrame(_rows(df, result, bt))
+
+    assert np.isnan(out["portfolio_return_mtm"].iloc[1])
+    assert np.isnan(out["portfolio_return_mtm"].iloc[3])

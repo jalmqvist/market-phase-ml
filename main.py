@@ -592,7 +592,7 @@ def _dl_surface_string(surface: dict) -> str:
 
 
 DL_CONDITIONAL_PORTFOLIO_TIMELINE_FILENAME = "dl_conditional_portfolio_timeline.csv"
-DL_CONDITIONAL_PORTFOLIO_TIMELINE_SCHEMA_VERSION = "1.0.0"
+DL_CONDITIONAL_PORTFOLIO_TIMELINE_SCHEMA_VERSION = "1.1.0"
 DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS = [
     "timestamp",
     "pair",
@@ -603,6 +603,9 @@ DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS = [
     "portfolio_equity",
     "portfolio_pnl",
     "portfolio_return",
+    "portfolio_equity_mtm",
+    "portfolio_pnl_mtm",
+    "portfolio_return_mtm",
 ]
 
 
@@ -615,26 +618,43 @@ def _build_dl_conditional_portfolio_rows(
     dyn_res: dict,
     initial_capital: float,
 ) -> list[dict]:
-    """Per-bar realized dynamic-selector portfolio rows for one test fold.
+    """Build aligned realized and liquidation-value outcome rows for one fold."""
+    if not df_test.index.is_unique:
+        raise ValueError("DL-conditional timeline test-bar timestamps must be unique.")
 
-    Values come from the already-computed ``dyn_res`` (no second backtest).
-    ``portfolio_equity`` is the backtester's end-of-bar realized capital.
-    The backtester books capital changes only at entry (cost) and exit
-    (realized PnL net of cost); it does not mark open positions to market.
-    ``portfolio_pnl`` is therefore equity[t] - equity[t-1] (the realized cash
-    flow booked on bar t) and ``portfolio_return`` is that PnL divided by
-    equity[t-1]. The pre-first-bar equity is ``initial_capital`` (each fold
-    is an independent backtest starting from it). Missing values stay NaN.
-    """
-    eq = dyn_res.get("equity_curve", None) if dyn_res else None
-    if eq is None:
-        return []
-    eq = pd.Series(eq).reindex(df_test.index).astype(float)
+    def _align_series(value, name: str, *, numeric: bool = True) -> pd.Series:
+        if value is None:
+            raise ValueError(f"DL-conditional timeline requires {name}.")
+        series = pd.Series(value)
+        if not series.index.is_unique:
+            raise ValueError(f"DL-conditional timeline {name} index contains duplicates.")
+        if (
+            len(series.index.difference(df_test.index))
+            or len(df_test.index.difference(series.index))
+        ):
+            raise ValueError(
+                f"DL-conditional timeline {name} timestamps do not match test bars."
+            )
+        aligned = series.reindex(df_test.index)
+        return aligned.astype(float) if numeric else aligned
+
+    if not dyn_res:
+        raise ValueError("DL-conditional timeline requires dynamic backtest results.")
+    eq = _align_series(dyn_res.get("equity_curve"), "equity_curve")
+    eq_mtm = _align_series(dyn_res.get("equity_curve_mtm"), "equity_curve_mtm")
     prev_eq = eq.shift(1)
     if len(prev_eq):
         prev_eq.iloc[0] = float(initial_capital)
     pnl = eq - prev_eq
     ret = pnl / prev_eq.where(prev_eq != 0)
+
+    prev_eq_mtm = eq_mtm.shift(1)
+    if len(prev_eq_mtm):
+        prev_eq_mtm.iloc[0] = float(initial_capital)
+    pnl_mtm = eq_mtm - prev_eq_mtm
+    ret_mtm = pnl_mtm / prev_eq_mtm.where(
+        np.isfinite(prev_eq_mtm) & prev_eq_mtm.ne(0)
+    )
 
     dl_cols = get_dl_feature_columns(df_test)
     if dl_cols:
@@ -642,10 +662,18 @@ def _build_dl_conditional_portfolio_rows(
     else:
         dl_avail = pd.Series(False, index=df_test.index)
 
-    exec_pos = pd.Series(np.nan, index=df_test.index, dtype=float)
     tl = dyn_res.get("execution_timeline", None)
-    if isinstance(tl, pd.DataFrame) and len(tl) == len(df_test) and "position" in tl:
-        exec_pos = pd.Series(tl["position"].astype(float).values, index=df_test.index)
+    if not isinstance(tl, pd.DataFrame) or not {"timestamp", "position"}.issubset(tl.columns):
+        raise ValueError(
+            "DL-conditional timeline requires execution_timeline timestamp and position."
+        )
+    exec_pos = _align_series(
+        pd.Series(tl["position"].to_numpy(), index=pd.Index(tl["timestamp"])),
+        "execution_timeline",
+    )
+    selected_aligned = _align_series(
+        selected_s, "selected strategy state", numeric=False
+    )
 
     rows = []
     for i, ts in enumerate(df_test.index):
@@ -653,21 +681,75 @@ def _build_dl_conditional_portfolio_rows(
             "timestamp": ts.isoformat(),
             "pair": pair_name,
             "fold": fold_id,
-            "selected_strategy": selected_s.iloc[i] if i < len(selected_s) else np.nan,
+            "selected_strategy": selected_aligned.iloc[i],
             "dl_available": bool(dl_avail.iloc[i]),
             "executed_position": exec_pos.iloc[i],
             "portfolio_equity": eq.iloc[i],
             "portfolio_pnl": pnl.iloc[i],
             "portfolio_return": ret.iloc[i],
+            "portfolio_equity_mtm": eq_mtm.iloc[i],
+            "portfolio_pnl_mtm": pnl_mtm.iloc[i],
+            "portfolio_return_mtm": ret_mtm.iloc[i],
         })
     return rows
+
+
+def _run_dynamic_selector_backtest(
+    *,
+    backtester,
+    df_test: pd.DataFrame,
+    signals: pd.Series,
+    strategy_name: str,
+    sl_pct_series: pd.Series,
+    tp_pct_series: pd.Series,
+    export_timeline: bool,
+    pair_name: str,
+    fold_id,
+    selected_s: pd.Series,
+) -> tuple[dict, list[dict]]:
+    """Run one dynamic fold, instrumenting and exporting only on opt-in."""
+    result = backtester.run(
+        df_test,
+        signals,
+        strategy_name,
+        sl_pct_series,
+        tp_pct_series,
+        **({"include_mtm": True} if export_timeline else {}),
+    )
+    rows = (
+        _build_dl_conditional_portfolio_rows(
+            pair_name=pair_name,
+            fold_id=fold_id,
+            df_test=df_test,
+            selected_s=selected_s,
+            dyn_res=result,
+            initial_capital=backtester.initial_capital,
+        )
+        if export_timeline
+        else []
+    )
+    return result, rows
 
 
 def _write_dl_conditional_portfolio_timeline(rows: list[dict]) -> Path | None:
     """Write the artifact to the run output dir; returns the path or None if empty."""
     if not rows:
         return None
+    missing_columns = set(DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS).difference(rows[0])
+    if missing_columns or any(
+        set(DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS).difference(row)
+        for row in rows
+    ):
+        raise ValueError(
+            "DL-conditional timeline rows are missing required columns: "
+            f"{sorted(missing_columns or set().union(*(
+                set(DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS).difference(row)
+                for row in rows
+            )))}"
+        )
     df = pd.DataFrame(rows, columns=DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS)
+    if df.duplicated(["pair", "fold", "timestamp"]).any():
+        raise ValueError("DL-conditional timeline contains duplicate pair/fold/timestamp keys.")
     df = df.sort_values(["pair", "fold", "timestamp"], kind="mergesort").reset_index(drop=True)
     out = _resolve_output_path(f"results/{DL_CONDITIONAL_PORTFOLIO_TIMELINE_FILENAME}")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -3875,13 +3957,19 @@ def main(
                     dyn_signals, dyn_sl, dyn_tp, selected_s = dynamic_strategy.generate_signals(
                         df_test, pair_name, return_selected=True
                     )
-                    dyn_res = backtester.run(
-                        df_test,
-                        dyn_signals,
-                        'StrategySelector_Dynamic_WF',
-                        dyn_sl,
-                        dyn_tp,
+                    dyn_res, _fold_dl_cond_rows = _run_dynamic_selector_backtest(
+                        backtester=backtester,
+                        df_test=df_test,
+                        signals=dyn_signals,
+                        strategy_name='StrategySelector_Dynamic_WF',
+                        sl_pct_series=dyn_sl,
+                        tp_pct_series=dyn_tp,
+                        export_timeline=export_dl_conditional_portfolio_timeline,
+                        pair_name=pair_name,
+                        fold_id=fold_id,
+                        selected_s=selected_s,
                     )
+                    _dl_cond_portfolio_rows.extend(_fold_dl_cond_rows)
 
                 # --- Optional: save selected strategy series for plotting (small whitelist) ---
                 if _wf_run_dynamic and DEBUG_SAVE_SELECTED_SERIES and (pair_name in DEBUG_SELECTED_PAIRS):
@@ -4107,18 +4195,6 @@ def main(
                 _dl_overlap_window = (
                     f"{_test_start_date.date().isoformat()}/{_test_end_date.date().isoformat()}"
                 )
-
-                if _wf_run_dynamic and export_dl_conditional_portfolio_timeline:
-                    _dl_cond_portfolio_rows.extend(
-                        _build_dl_conditional_portfolio_rows(
-                            pair_name=pair_name,
-                            fold_id=fold_id,
-                            df_test=df_test,
-                            selected_s=selected_s,
-                            dyn_res=dyn_res,
-                            initial_capital=backtester.initial_capital,
-                        )
-                    )
 
                 if _wf_run_dynamic:
                     vol_diag = compute_vol_guard_diagnostics(
@@ -4451,6 +4527,10 @@ def main(
                         "enabled": True,
                         "filename": DL_CONDITIONAL_PORTFOLIO_TIMELINE_FILENAME,
                         "schema_version": DL_CONDITIONAL_PORTFOLIO_TIMELINE_SCHEMA_VERSION,
+                        "mtm_definition": (
+                            "realized capital plus unrealized PnL after estimated "
+                            "exit costs at the current bar close"
+                        ),
                         "rows": 0,
                         "written": False,
                     }
@@ -4460,6 +4540,10 @@ def main(
                         "enabled": True,
                         "filename": DL_CONDITIONAL_PORTFOLIO_TIMELINE_FILENAME,
                         "schema_version": DL_CONDITIONAL_PORTFOLIO_TIMELINE_SCHEMA_VERSION,
+                        "mtm_definition": (
+                            "realized capital plus unrealized PnL after estimated "
+                            "exit costs at the current bar close"
+                        ),
                         "rows": len(_dl_cond_portfolio_rows),
                         "written": True,
                     }

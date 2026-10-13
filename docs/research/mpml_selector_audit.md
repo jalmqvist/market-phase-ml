@@ -65,7 +65,7 @@ Focused audit of the MPML selector stack covering feature-schema integrity, runt
 ### 6) Selector-state observability exists for diagnostics
 
 - `main.py` can export per-bar selector timeline (`selector_state_timeline.csv`) when `EXPORT_SELECTOR_STATE_TIMELINE=true`.
-- `main.py --export-dl-conditional-portfolio-timeline` (opt-in, default off) writes `dl_conditional_portfolio_timeline.csv` with realized dynamic-selector portfolio outcomes; see `analysis_framework_v2.md`.
+- `main.py --export-dl-conditional-portfolio-timeline` (opt-in, default off) writes schema 1.1.0 `dl_conditional_portfolio_timeline.csv` with realized and hypothetical liquidation-value outcomes; see `analysis_framework_v2.md`.
 - This supports downstream conditional diagnostics in the analysis framework.
 
 ## Validation evidence
@@ -88,3 +88,4 @@ Focused audit of the MPML selector stack covering feature-schema integrity, runt
 - Keep both aware and blind selector variants in comparative experiments where DL overlap is sparse.
 - Track selector-state metrics (switch density, confidence collapse, transition windows) alongside aggregate uplift.
 - Treat schema mismatch exceptions as integrity incidents and investigate immediately (do not downgrade to warnings).
+- DL-availability-conditioned MTM describes observed outcomes, not causal treatment effects; selector choices, timing, positions, and market conditions remain potential confounders.
