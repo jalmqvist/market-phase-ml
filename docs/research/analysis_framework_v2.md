@@ -690,8 +690,8 @@ results_archive/fp_gen1_A/
 
 ### dl_conditional_portfolio_timeline.csv (dynamic-selector portfolio outcomes)
 
-A dedicated, opt-in per-bar export of the **realized dynamic-selector
-portfolio outcome** from walk-forward test execution. It is separate from
+A dedicated, opt-in per-bar export of the realized and mark-to-market
+dynamic-selector portfolio outcomes from walk-forward test execution. It is separate from
 `selector_state_timeline.csv`, the debug equity-series export
 (`DEBUG_SAVE_EQUITY_SERIES`) and the legacy behavioral-performance reports,
 none of which are changed or replaced.
@@ -706,10 +706,11 @@ python main.py --export-dl-conditional-portfolio-timeline \
 ```
 
 Run both the DL-enabled experiment and its no-DL control with the flag. The
-file is written as `dl_conditional_portfolio_timeline.csv` (no mode-tag suffix)
-in each run's output directory, and recorded in `run_manifest.json` /
+file is written as `results/dl_conditional_portfolio_timeline.csv` (no mode-tag
+suffix) in each run's output directory, and recorded in `run_manifest.json` /
 `experiment_manifest.json` under `dl_conditional_portfolio_timeline`
-(`filename`, `schema_version`, `rows`, `written`). Without the flag nothing is
+(`filename`, `schema_version`, `mtm_definition`, `rows`, `written`). Schema
+version is **1.1.0**. Without the flag nothing is
 written and the manifest is unchanged. Requires the dynamic selector to be
 active (otherwise the run fails with an explicit error). If no fold completes,
 no file is written and a warning is logged (manifest: `rows: 0`, `written: false`).
@@ -730,6 +731,9 @@ folds keep their repeated timestamps, distinguished by `fold`.
 | `portfolio_equity` | End-of-bar realized capital from the backtester's equity curve |
 | `portfolio_pnl` | `equity[t] - equity[t-1]`; for the first bar of a fold, `equity[t] - initial_capital` |
 | `portfolio_return` | `portfolio_pnl / equity[t-1]` (same denominator convention) |
+| `portfolio_equity_mtm` | Backtester's end-of-bar hypothetical liquidation-value equity |
+| `portfolio_pnl_mtm` | MTM equity change from the preceding test bar; first bar uses initial capital as baseline |
+| `portfolio_return_mtm` | MTM PnL divided by preceding MTM equity; first bar uses initial capital |
 
 Accounting notes (verified against `src/strategies.py::Backtester.run`):
 
@@ -738,9 +742,23 @@ Accounting notes (verified against `src/strategies.py::Backtester.run`):
   bar of the fold). Open positions are not marked to market, so
   `portfolio_pnl` is the realized cash flow booked on that bar (zero while a
   position is held), not mark-to-market PnL, and `portfolio_return` is not a
-  daily mark-to-market return. Per-bar mark-to-market would need additional
-  backtester instrumentation.
+  daily mark-to-market return. These legacy columns retain this meaning in
+  schema 1.1.0.
 - Costs are included (entry cost on the entry bar, exit cost in exit PnL).
+- MTM is calculated inside the backtest loop after current-bar stop/target,
+  signal-exit, and entry events. While flat it equals realized capital; while
+  open it is realized capital plus hypothetical unrealized PnL at that bar's
+  close, net of the existing estimated exit cost. The entry cost is already
+  included in realized capital and is not charged a second time. No hypothetical
+  exit cost is booked to realized capital. The existing sizing modes use
+  different realized-PnL formulas, and MTM mirrors the matching mode rather
+  than changing that accounting.
+- Each pair/fold is an independent equity series. The first MTM PnL/return
+  baseline is the backtest's `initial_capital`; a zero or non-finite previous
+  equity produces an undefined (`NaN`/empty CSV) return. Invalid/non-positive
+  valuation closes produce undefined MTM equity while a position is open;
+  no price is fabricated. PnL and returns are calculated across the complete
+  test timeline before any downstream availability filter.
 - Each fold is an independent backtest starting from `initial_capital`;
   equity is not chained across folds. The final-bar equity includes the forced
   end-of-fold close.
@@ -752,6 +770,12 @@ Treatment/control alignment: join the DL-enabled and no-DL runs on
 **DL-enabled run's** `dl_available` mask to both runs; the no-DL run's own
 `dl_available` must not be used as the comparison mask. Coverage and sample
 counts are computed downstream from the exported rows.
+
+Filtering MTM returns to DL-available bars describes outcomes observed on those
+bars; it does **not** isolate a causal effect of DL-enabled selector decisions.
+Strategy selection, overlapping positions, signal timing, and market conditions
+can confound treatment/control comparisons. This artifact alone does not
+establish a treatment effect.
 
 ### Aggregate table columns
 

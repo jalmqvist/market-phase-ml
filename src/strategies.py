@@ -1193,7 +1193,9 @@ class Backtester:
             signals: pd.Series,
             strategy_name: str,
             sl_pct_series: Optional[pd.Series] = None,
-            tp_pct_series: Optional[pd.Series] = None) -> dict:
+            tp_pct_series: Optional[pd.Series] = None,
+            *,
+            include_mtm: bool = False) -> dict:
         """
         Run backtest for a given signal series.
 
@@ -1203,6 +1205,8 @@ class Backtester:
             strategy_name: Name for reporting
             sl_pct_series: Series of per-bar SL % (0.0 = no SL)
             tp_pct_series: Series of per-bar TP % (0.0 = no TP)
+            include_mtm: Include a separate hypothetical liquidation-value
+                         equity curve without changing realized accounting.
 
         Returns:
             Dictionary with performance metrics, trade list, equity curve
@@ -1229,6 +1233,7 @@ class Backtester:
         trades = []
 
         equity_curve = []
+        equity_curve_mtm = [] if include_mtm else None
         execution_timeline = []
 
         try:
@@ -1427,6 +1432,33 @@ class Backtester:
                     'equity': capital,
                 })
                 equity_curve.append(capital)
+                if include_mtm:
+                    if position == 0:
+                        mtm_equity = capital
+                    elif (
+                        not np.isfinite(current_close)
+                        or current_close <= 0
+                        or not np.isfinite(entry_price)
+                        or entry_price <= 0
+                    ):
+                        mtm_equity = np.nan
+                    else:
+                        exit_cost = self._calculate_trade_cost(current_close)
+                        direction = 1.0 if position == 1 else -1.0
+                        pnl_pct = (
+                            direction * (current_close - entry_price) / entry_price
+                            - exit_cost
+                        )
+                        if self.use_atr_sizing:
+                            unrealized_pnl = (
+                                entry_position_size * direction
+                                * (current_close - entry_price)
+                                - entry_position_size * entry_price * exit_cost
+                            )
+                        else:
+                            unrealized_pnl = capital * pnl_pct * entry_size_mult
+                        mtm_equity = capital + unrealized_pnl
+                    equity_curve_mtm.append(mtm_equity)
         except Exception:
             import traceback
             traceback.print_exc()
@@ -1469,6 +1501,8 @@ class Backtester:
             # update the last bar equity to reflect final close
             if equity_curve:
                 equity_curve[-1] = capital
+            if equity_curve_mtm:
+                equity_curve_mtm[-1] = capital
 
             if execution_timeline:
                 execution_timeline[-1]['equity'] = capital
@@ -1480,6 +1514,8 @@ class Backtester:
         metrics['trades']       = trades
         metrics['equity_curve'] = pd.Series(equity_curve, index=df.index)
         metrics['execution_timeline'] = pd.DataFrame(execution_timeline)
+        if include_mtm:
+            metrics['equity_curve_mtm'] = pd.Series(equity_curve_mtm, index=df.index)
         """
         metrics['equity_curve'] = pd.Series(
             equity_curve[1:],  # drop the initial capital entry
