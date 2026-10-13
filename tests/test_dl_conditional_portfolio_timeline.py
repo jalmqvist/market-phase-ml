@@ -203,6 +203,13 @@ def test_opt_in_dynamic_fold_path_writes_complete_artifact(tmp_path, monkeypatch
     assert list(written.columns) == mpml_main.DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS
     assert "equity_curve_mtm" in opt_in_result
     assert mpml_main.DL_CONDITIONAL_PORTFOLIO_TIMELINE_SCHEMA_VERSION == "1.1.0"
+    manifest_entry = mpml_main._dl_conditional_portfolio_timeline_manifest(
+        opt_in_rows, written=True
+    )
+    assert manifest_entry["filename"] == "dl_conditional_portfolio_timeline.csv"
+    assert manifest_entry["schema_version"] == "1.1.0"
+    assert "realized capital plus unrealized PnL" in manifest_entry["mtm_definition"]
+    assert manifest_entry["rows"] == len(df) and manifest_entry["written"] is True
 
     repeated, repeated_rows = mpml_main._run_dynamic_selector_backtest(
         backtester=Backtester(),

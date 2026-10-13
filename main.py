@@ -757,6 +757,22 @@ def _write_dl_conditional_portfolio_timeline(rows: list[dict]) -> Path | None:
     return out
 
 
+def _dl_conditional_portfolio_timeline_manifest(
+    rows: list[dict], *, written: bool
+) -> dict[str, object]:
+    return {
+        "enabled": True,
+        "filename": DL_CONDITIONAL_PORTFOLIO_TIMELINE_FILENAME,
+        "schema_version": DL_CONDITIONAL_PORTFOLIO_TIMELINE_SCHEMA_VERSION,
+        "mtm_definition": (
+            "realized capital plus unrealized PnL after estimated "
+            "exit costs at the current bar close"
+        ),
+        "rows": len(rows),
+        "written": written,
+    }
+
+
 def _with_mode_tag(path: str, mode_tag: str) -> str:
     target = _resolve_output_path(path)
     stem = target.stem
@@ -4523,30 +4539,13 @@ def main(
                         "  ⚠  dl_conditional_portfolio_timeline: no walk-forward test bars "
                         "collected (no folds completed); artifact not written."
                     )
-                    manifest["dl_conditional_portfolio_timeline"] = {
-                        "enabled": True,
-                        "filename": DL_CONDITIONAL_PORTFOLIO_TIMELINE_FILENAME,
-                        "schema_version": DL_CONDITIONAL_PORTFOLIO_TIMELINE_SCHEMA_VERSION,
-                        "mtm_definition": (
-                            "realized capital plus unrealized PnL after estimated "
-                            "exit costs at the current bar close"
-                        ),
-                        "rows": 0,
-                        "written": False,
-                    }
                 else:
                     print(f"Saved: {_dlc_path} ({len(_dl_cond_portfolio_rows)} bars)")
-                    manifest["dl_conditional_portfolio_timeline"] = {
-                        "enabled": True,
-                        "filename": DL_CONDITIONAL_PORTFOLIO_TIMELINE_FILENAME,
-                        "schema_version": DL_CONDITIONAL_PORTFOLIO_TIMELINE_SCHEMA_VERSION,
-                        "mtm_definition": (
-                            "realized capital plus unrealized PnL after estimated "
-                            "exit costs at the current bar close"
-                        ),
-                        "rows": len(_dl_cond_portfolio_rows),
-                        "written": True,
-                    }
+                manifest["dl_conditional_portfolio_timeline"] = (
+                    _dl_conditional_portfolio_timeline_manifest(
+                        _dl_cond_portfolio_rows, written=_dlc_path is not None
+                    )
+                )
                 _write_manifests(
                     manifest=manifest,
                     run_manifest_path=manifest_path,
