@@ -591,6 +591,90 @@ def _dl_surface_string(surface: dict) -> str:
     )
 
 
+DL_CONDITIONAL_PORTFOLIO_TIMELINE_FILENAME = "dl_conditional_portfolio_timeline.csv"
+DL_CONDITIONAL_PORTFOLIO_TIMELINE_SCHEMA_VERSION = "1.0.0"
+DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS = [
+    "timestamp",
+    "pair",
+    "fold",
+    "selected_strategy",
+    "dl_available",
+    "executed_position",
+    "portfolio_equity",
+    "portfolio_pnl",
+    "portfolio_return",
+]
+
+
+def _build_dl_conditional_portfolio_rows(
+    *,
+    pair_name: str,
+    fold_id,
+    df_test: pd.DataFrame,
+    selected_s: pd.Series,
+    dyn_res: dict,
+    initial_capital: float,
+) -> list[dict]:
+    """Per-bar realized dynamic-selector portfolio rows for one test fold.
+
+    Values come from the already-computed ``dyn_res`` (no second backtest).
+    ``portfolio_equity`` is the backtester's end-of-bar realized capital.
+    The backtester books capital changes only at entry (cost) and exit
+    (realized PnL net of cost); it does not mark open positions to market.
+    ``portfolio_pnl`` is therefore equity[t] - equity[t-1] (the realized cash
+    flow booked on bar t) and ``portfolio_return`` is that PnL divided by
+    equity[t-1]. The pre-first-bar equity is ``initial_capital`` (each fold
+    is an independent backtest starting from it). Missing values stay NaN.
+    """
+    eq = dyn_res.get("equity_curve", None) if dyn_res else None
+    if eq is None:
+        return []
+    eq = pd.Series(eq).reindex(df_test.index).astype(float)
+    prev_eq = eq.shift(1)
+    if len(prev_eq):
+        prev_eq.iloc[0] = float(initial_capital)
+    pnl = eq - prev_eq
+    ret = pnl / prev_eq.where(prev_eq != 0)
+
+    dl_cols = get_dl_feature_columns(df_test)
+    if dl_cols:
+        dl_avail = df_test[dl_cols].notna().any(axis=1)
+    else:
+        dl_avail = pd.Series(False, index=df_test.index)
+
+    exec_pos = pd.Series(np.nan, index=df_test.index, dtype=float)
+    tl = dyn_res.get("execution_timeline", None)
+    if isinstance(tl, pd.DataFrame) and len(tl) == len(df_test) and "position" in tl:
+        exec_pos = pd.Series(tl["position"].astype(float).values, index=df_test.index)
+
+    rows = []
+    for i, ts in enumerate(df_test.index):
+        rows.append({
+            "timestamp": ts.isoformat(),
+            "pair": pair_name,
+            "fold": fold_id,
+            "selected_strategy": selected_s.iloc[i] if i < len(selected_s) else np.nan,
+            "dl_available": bool(dl_avail.iloc[i]),
+            "executed_position": exec_pos.iloc[i],
+            "portfolio_equity": eq.iloc[i],
+            "portfolio_pnl": pnl.iloc[i],
+            "portfolio_return": ret.iloc[i],
+        })
+    return rows
+
+
+def _write_dl_conditional_portfolio_timeline(rows: list[dict]) -> Path | None:
+    """Write the artifact to the run output dir; returns the path or None if empty."""
+    if not rows:
+        return None
+    df = pd.DataFrame(rows, columns=DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS)
+    df = df.sort_values(["pair", "fold", "timestamp"], kind="mergesort").reset_index(drop=True)
+    out = _resolve_output_path(f"results/{DL_CONDITIONAL_PORTFOLIO_TIMELINE_FILENAME}")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out, index=False)
+    return out
+
+
 def _with_mode_tag(path: str, mode_tag: str) -> str:
     target = _resolve_output_path(path)
     stem = target.stem
@@ -2264,6 +2348,7 @@ def main(
     phaseaware_tf: str | None = None,
     phaseaware_mr: str | None = None,
     debug: bool = False,
+    export_dl_conditional_portfolio_timeline: bool = False,
 ):
     # ── Debug flag: reflect current invocation on every call so state is
     #    reversible — a subsequent main(debug=False) restores quiet mode.
@@ -3596,6 +3681,7 @@ def main(
         walkforward_rows = []
         vol_diag_rows = []
         _timeline_rows: list[dict] = []  # accumulates per-bar selector state (if enabled)
+        _dl_cond_portfolio_rows: list[dict] = []  # opt-in portfolio outcome timeline
         _strategy_signal_timeline_rows: list[dict] = []
         saved_selected_folds: dict[str, int] = {}
         saved_equity_folds: dict[str, int] = {}
@@ -4022,6 +4108,18 @@ def main(
                     f"{_test_start_date.date().isoformat()}/{_test_end_date.date().isoformat()}"
                 )
 
+                if _wf_run_dynamic and export_dl_conditional_portfolio_timeline:
+                    _dl_cond_portfolio_rows.extend(
+                        _build_dl_conditional_portfolio_rows(
+                            pair_name=pair_name,
+                            fold_id=fold_id,
+                            df_test=df_test,
+                            selected_s=selected_s,
+                            dyn_res=dyn_res,
+                            initial_capital=backtester.initial_capital,
+                        )
+                    )
+
                 if _wf_run_dynamic:
                     vol_diag = compute_vol_guard_diagnostics(
                         pair_name=pair_name,
@@ -4334,6 +4432,42 @@ def main(
                     )
                 else:
                     print("  ⚠  selector_state_timeline: no bars collected (no folds completed).")
+
+            # --- Optional dynamic-selector portfolio timeline export (opt-in) ---
+            if export_dl_conditional_portfolio_timeline:
+                if not _wf_run_dynamic:
+                    raise RuntimeError(
+                        "--export-dl-conditional-portfolio-timeline requires the dynamic "
+                        "selector, which is inactive for this evaluation scope "
+                        f"{list(_effective_scope.strategy_ids)}."
+                    )
+                _dlc_path = _write_dl_conditional_portfolio_timeline(_dl_cond_portfolio_rows)
+                if _dlc_path is None:
+                    print(
+                        "  ⚠  dl_conditional_portfolio_timeline: no walk-forward test bars "
+                        "collected (no folds completed); artifact not written."
+                    )
+                    manifest["dl_conditional_portfolio_timeline"] = {
+                        "enabled": True,
+                        "filename": DL_CONDITIONAL_PORTFOLIO_TIMELINE_FILENAME,
+                        "schema_version": DL_CONDITIONAL_PORTFOLIO_TIMELINE_SCHEMA_VERSION,
+                        "rows": 0,
+                        "written": False,
+                    }
+                else:
+                    print(f"Saved: {_dlc_path} ({len(_dl_cond_portfolio_rows)} bars)")
+                    manifest["dl_conditional_portfolio_timeline"] = {
+                        "enabled": True,
+                        "filename": DL_CONDITIONAL_PORTFOLIO_TIMELINE_FILENAME,
+                        "schema_version": DL_CONDITIONAL_PORTFOLIO_TIMELINE_SCHEMA_VERSION,
+                        "rows": len(_dl_cond_portfolio_rows),
+                        "written": True,
+                    }
+                _write_manifests(
+                    manifest=manifest,
+                    run_manifest_path=manifest_path,
+                    experiment_manifest_path=experiment_manifest_path,
+                )
 
         strategy_specs = list(_wf_execution_plan["strategy_specs"])
         if not strategy_specs:
@@ -5087,6 +5221,17 @@ if __name__ == '__main__':
             "suppressed by default for concise normal output."
         ),
     )
+    parser.add_argument(
+        "--export-dl-conditional-portfolio-timeline",
+        action="store_true",
+        dest="export_dl_conditional_portfolio_timeline",
+        default=False,
+        help=(
+            "Opt-in: write dl_conditional_portfolio_timeline.csv (per pair/fold/test-bar "
+            "realized dynamic-selector portfolio outcomes with dl_available) to the run "
+            "output directory. Disabled by default; does not change strategy behavior."
+        ),
+    )
     args = parser.parse_args()
     if args.phaseaware_tf and len(args.phaseaware_tf) > 1:
         parser.error("--phaseaware-tf may be specified at most once")
@@ -5104,4 +5249,5 @@ if __name__ == '__main__':
         phaseaware_tf=args.phaseaware_tf[0] if args.phaseaware_tf else None,
         phaseaware_mr=args.phaseaware_mr[0] if args.phaseaware_mr else None,
         debug=args.debug,
+        export_dl_conditional_portfolio_timeline=args.export_dl_conditional_portfolio_timeline,
     )

@@ -688,6 +688,71 @@ results_archive/fp_gen1_A/
 └── selector_state_timeline.csv     ← optional Tier 2 input (EXPORT_SELECTOR_STATE_TIMELINE=true)
 ```
 
+### dl_conditional_portfolio_timeline.csv (dynamic-selector portfolio outcomes)
+
+A dedicated, opt-in per-bar export of the **realized dynamic-selector
+portfolio outcome** from walk-forward test execution. It is separate from
+`selector_state_timeline.csv`, the debug equity-series export
+(`DEBUG_SAVE_EQUITY_SERIES`) and the legacy behavioral-performance reports,
+none of which are changed or replaced.
+
+Enable with the CLI flag (disabled by default; no environment variable):
+
+```
+python main.py --export-dl-conditional-portfolio-timeline \
+    --output-dir results_archive/gen1_dl_on --behavioral-surface <surface>
+python main.py --export-dl-conditional-portfolio-timeline \
+    --output-dir results_archive/gen1_dl_off     # no-DL control (same settings, no DL surface)
+```
+
+Run both the DL-enabled experiment and its no-DL control with the flag. The
+file is written as `dl_conditional_portfolio_timeline.csv` (no mode-tag suffix)
+in each run's output directory, and recorded in `run_manifest.json` /
+`experiment_manifest.json` under `dl_conditional_portfolio_timeline`
+(`filename`, `schema_version`, `rows`, `written`). Without the flag nothing is
+written and the manifest is unchanged. Requires the dynamic selector to be
+active (otherwise the run fails with an explicit error). If no fold completes,
+no file is written and a warning is logged (manifest: `rows: 0`, `written: false`).
+
+Scope: one row per `(pair, fold, test-bar timestamp)` for **every** completed
+walk-forward test bar of every pair (no debug whitelist); training/validation
+bars are not exported. Rows are sorted by pair, fold, timestamp. Overlapping
+folds keep their repeated timestamps, distinguished by `fold`.
+
+| Column | Description |
+|---|---|
+| `timestamp` | Test-bar timestamp (ISO 8601) |
+| `pair` | Currency pair |
+| `fold` | Walk-forward fold id |
+| `selected_strategy` | Dynamic selector's strategy for the bar (signal-generation output; the signal is executed on the *next* bar) |
+| `dl_available` | True when any DL feature column is non-null on the bar (same rule as `selector_state_timeline.csv`); feature availability only, **not** evidence that a DL strategy was selected |
+| `executed_position` | End-of-bar executed position from the backtester (-1/0/1) |
+| `portfolio_equity` | End-of-bar realized capital from the backtester's equity curve |
+| `portfolio_pnl` | `equity[t] - equity[t-1]`; for the first bar of a fold, `equity[t] - initial_capital` |
+| `portfolio_return` | `portfolio_pnl / equity[t-1]` (same denominator convention) |
+
+Accounting notes (verified against `src/strategies.py::Backtester.run`):
+
+- The equity curve is **realized** capital: it changes only when an entry cost
+  is paid or a trade closes (SL/TP, signal exit, or forced close on the last
+  bar of the fold). Open positions are not marked to market, so
+  `portfolio_pnl` is the realized cash flow booked on that bar (zero while a
+  position is held), not mark-to-market PnL, and `portfolio_return` is not a
+  daily mark-to-market return. Per-bar mark-to-market would need additional
+  backtester instrumentation.
+- Costs are included (entry cost on the entry bar, exit cost in exit PnL).
+- Each fold is an independent backtest starting from `initial_capital`;
+  equity is not chained across folds. The final-bar equity includes the forced
+  end-of-fold close.
+- Missing equity values stay empty (never filled with zero); PnL/return of
+  affected bars are empty too.
+
+Treatment/control alignment: join the DL-enabled and no-DL runs on
+`(pair, fold, timestamp)`. When restricting to DL-available bars, apply the
+**DL-enabled run's** `dl_available` mask to both runs; the no-DL run's own
+`dl_available` must not be used as the comparison mask. Coverage and sample
+counts are computed downstream from the exported rows.
+
 ### Aggregate table columns
 
 The `comparisons.conditional.aggregate_table` list contains one row per
