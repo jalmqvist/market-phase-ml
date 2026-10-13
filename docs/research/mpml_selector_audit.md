@@ -65,6 +65,7 @@ Focused audit of the MPML selector stack covering feature-schema integrity, runt
 ### 6) Selector-state observability exists for diagnostics
 
 - `main.py` can export per-bar selector timeline (`selector_state_timeline.csv`) when `EXPORT_SELECTOR_STATE_TIMELINE=true`.
+- `main.py --export-dl-conditional-portfolio-timeline` (opt-in, default off) writes `dl_conditional_portfolio_timeline.csv` with realized dynamic-selector portfolio outcomes; see `analysis_framework_v2.md`.
 - This supports downstream conditional diagnostics in the analysis framework.
 
 ## Validation evidence
