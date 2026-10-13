@@ -1,8 +1,7 @@
 """Tests for the opt-in dl_conditional_portfolio_timeline export."""
 from __future__ import annotations
 
-import inspect
-from pathlib import Path
+import json
 
 import numpy as np
 import pandas as pd
@@ -40,12 +39,11 @@ def _rows(df, res, bt, fold=0, pair="EURUSD"):
     )
 
 
-def test_flag_default_false_and_parser_accepts_flag():
-    sig = inspect.signature(mpml_main.main)
-    assert sig.parameters["export_dl_conditional_portfolio_timeline"].default is False
-    src = Path(mpml_main.__file__).read_text()
-    assert '"--export-dl-conditional-portfolio-timeline"' in src
-    assert "default=False" in src.split('"--export-dl-conditional-portfolio-timeline"')[1][:200]
+def test_flag_default_false():
+    assert mpml_main.main.__defaults__ is None
+    assert mpml_main.main.__kwdefaults__[
+        "export_dl_conditional_portfolio_timeline"
+    ] is False
 
 
 def test_values_match_backtester_accounting():
@@ -154,79 +152,67 @@ def test_writer_rejects_duplicate_pair_fold_timestamp_keys(tmp_path, monkeypatch
         mpml_main._write_dl_conditional_portfolio_timeline(rows + rows)
 
 
-def test_default_path_has_no_export_hook():
-    src = inspect.getsource(mpml_main.main)
-    assert "_run_dynamic_selector_backtest(" in src
-    assert "if export_dl_conditional_portfolio_timeline:" in src
-
-
-def test_opt_in_dynamic_fold_path_writes_complete_artifact(tmp_path, monkeypatch):
-    monkeypatch.setattr(mpml_main, "_CURRENT_RUN_OUTPUT_DIR", tmp_path)
+def test_cli_flag_controls_export_and_manifest(tmp_path, monkeypatch):
     df = _fixture_df()
     signals = pd.Series(SIGNALS, index=df.index)
     selected = pd.Series(["TF"] * len(df), index=df.index)
+    observed_flags = []
 
-    default_bt = Backtester()
-    default_result, default_rows = mpml_main._run_dynamic_selector_backtest(
-        backtester=default_bt,
-        df_test=df,
-        signals=signals,
-        strategy_name="Dynamic",
-        sl_pct_series=pd.Series(0.0, index=df.index),
-        tp_pct_series=pd.Series(0.0, index=df.index),
-        export_timeline=False,
-        pair_name="EURUSD",
-        fold_id=0,
-        selected_s=selected,
-    )
-    assert "equity_curve_mtm" not in default_result
-    assert default_rows == []
-    assert mpml_main._write_dl_conditional_portfolio_timeline(default_rows) is None
-    assert not (tmp_path / "dl_conditional_portfolio_timeline.csv").exists()
+    def lightweight_main(*, output_dir, export_dl_conditional_portfolio_timeline, **kwargs):
+        observed_flags.append(export_dl_conditional_portfolio_timeline)
+        output_dir.mkdir(parents=True)
+        monkeypatch.setattr(mpml_main, "_CURRENT_RUN_OUTPUT_DIR", output_dir)
+        manifest = {}
+        if export_dl_conditional_portfolio_timeline:
+            result, rows = mpml_main._run_dynamic_selector_backtest(
+                backtester=Backtester(),
+                df_test=df,
+                signals=signals,
+                strategy_name="Dynamic",
+                sl_pct_series=pd.Series(0.0, index=df.index),
+                tp_pct_series=pd.Series(0.0, index=df.index),
+                export_timeline=True,
+                pair_name="EURUSD",
+                fold_id=0,
+                selected_s=selected,
+            )
+            assert "equity_curve_mtm" in result
+            path = mpml_main._write_dl_conditional_portfolio_timeline(rows)
+            assert path is not None
+            manifest["dl_conditional_portfolio_timeline"] = (
+                mpml_main._dl_conditional_portfolio_timeline_manifest(
+                    rows, written=True
+                )
+            )
+        (output_dir / "experiment_manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
 
-    opt_in_result, opt_in_rows = mpml_main._run_dynamic_selector_backtest(
-        backtester=Backtester(),
-        df_test=df,
-        signals=signals,
-        strategy_name="Dynamic",
-        sl_pct_series=pd.Series(0.0, index=df.index),
-        tp_pct_series=pd.Series(0.0, index=df.index),
-        export_timeline=True,
-        pair_name="EURUSD",
-        fold_id=0,
-        selected_s=selected,
+    monkeypatch.setattr(mpml_main, "main", lightweight_main)
+    disabled_dir = tmp_path / "default"
+    mpml_main._run_cli(["--output-dir", str(disabled_dir)])
+    assert observed_flags == [False]
+    assert not (disabled_dir / "dl_conditional_portfolio_timeline.csv").exists()
+    assert "dl_conditional_portfolio_timeline" not in json.loads(
+        (disabled_dir / "experiment_manifest.json").read_text()
     )
-    path = mpml_main._write_dl_conditional_portfolio_timeline(opt_in_rows)
-    assert path is not None
-    written = pd.read_csv(path)
+
+    enabled_dir = tmp_path / "enabled"
+    mpml_main._run_cli([
+        "--output-dir", str(enabled_dir),
+        "--export-dl-conditional-portfolio-timeline",
+    ])
+    assert observed_flags == [False, True]
+    written = pd.read_csv(enabled_dir / "dl_conditional_portfolio_timeline.csv")
     assert len(written) == len(df)
     assert list(written.columns) == mpml_main.DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS
-    assert "equity_curve_mtm" in opt_in_result
-    assert mpml_main.DL_CONDITIONAL_PORTFOLIO_TIMELINE_SCHEMA_VERSION == "1.1.0"
-    manifest_entry = mpml_main._dl_conditional_portfolio_timeline_manifest(
-        opt_in_rows, written=True
-    )
+    manifest_entry = json.loads(
+        (enabled_dir / "experiment_manifest.json").read_text()
+    )["dl_conditional_portfolio_timeline"]
     assert manifest_entry["filename"] == "dl_conditional_portfolio_timeline.csv"
     assert manifest_entry["schema_version"] == "1.1.0"
     assert "realized capital plus unrealized PnL" in manifest_entry["mtm_definition"]
     assert manifest_entry["rows"] == len(df) and manifest_entry["written"] is True
-
-    repeated, repeated_rows = mpml_main._run_dynamic_selector_backtest(
-        backtester=Backtester(),
-        df_test=df,
-        signals=signals,
-        strategy_name="Dynamic",
-        sl_pct_series=pd.Series(0.0, index=df.index),
-        tp_pct_series=pd.Series(0.0, index=df.index),
-        export_timeline=True,
-        pair_name="EURUSD",
-        fold_id=0,
-        selected_s=selected,
-    )
-    pd.testing.assert_series_equal(
-        opt_in_result["equity_curve_mtm"], repeated["equity_curve_mtm"]
-    )
-    assert opt_in_rows == repeated_rows
 
 
 @pytest.mark.parametrize("use_atr_sizing", [False, True])
@@ -306,7 +292,8 @@ def test_open_position_mtm_matches_mode_costs_and_direction(
 
 
 @pytest.mark.parametrize("exit_kind", ["signal", "SL", "TP"])
-def test_flat_and_exit_bars_reconcile_realized_and_mtm(exit_kind):
+@pytest.mark.parametrize("use_atr_sizing", [False, True])
+def test_flat_and_exit_bars_reconcile_realized_and_mtm(exit_kind, use_atr_sizing):
     df = _fixture_df(n=5)
     df["Close"] = 1.10
     df["Open"] = df["Close"]
@@ -324,10 +311,12 @@ def test_flat_and_exit_bars_reconcile_realized_and_mtm(exit_kind):
         tp.iloc[1] = 0.005
         df.loc[df.index[2], "High"] = 1.12
 
-    bt = Backtester()
+    bt = Backtester(use_atr_sizing=use_atr_sizing)
+    signals = pd.Series(signals, index=df.index)
     result = bt.run(
         df, pd.Series(signals, index=df.index), "T", sl, tp, include_mtm=True
     )
+    realized = bt.run(df, signals, "T", sl, tp)
     flat = result["execution_timeline"]["position"].to_numpy() == 0
     np.testing.assert_allclose(
         result["equity_curve_mtm"].to_numpy()[flat],
@@ -336,6 +325,14 @@ def test_flat_and_exit_bars_reconcile_realized_and_mtm(exit_kind):
     assert result["trades"][0].exit_reason == (
         "signal" if exit_kind == "signal" else exit_kind
     )
+    assert result["equity_curve"].iloc[2] == pytest.approx(
+        realized["equity_curve"].iloc[2]
+    )
+    np.testing.assert_allclose(
+        result["equity_curve_mtm"].iloc[2:],
+        result["equity_curve"].iloc[2:],
+    )
+    assert result["trades"] == realized["trades"]
     assert result["equity_curve_mtm"].iloc[-1] == result["equity_curve"].iloc[-1]
 
 

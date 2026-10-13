@@ -5189,7 +5189,7 @@ def main(
 
 
 
-if __name__ == '__main__':
+def _run_cli(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run MPML pipeline with run-owned output directories.")
     parser.add_argument(
         "--output-dir",
@@ -5315,7 +5315,7 @@ if __name__ == '__main__':
             "output directory. Disabled by default; does not change strategy behavior."
         ),
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.phaseaware_tf and len(args.phaseaware_tf) > 1:
         parser.error("--phaseaware-tf may be specified at most once")
     if args.phaseaware_mr and len(args.phaseaware_mr) > 1:
@@ -5334,3 +5334,7 @@ if __name__ == '__main__':
         debug=args.debug,
         export_dl_conditional_portfolio_timeline=args.export_dl_conditional_portfolio_timeline,
     )
+
+
+if __name__ == '__main__':
+    _run_cli()
