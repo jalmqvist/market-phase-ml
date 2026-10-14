@@ -29,6 +29,20 @@ def _run(df, signals):
 
 
 SIGNALS = [0, 1, 1, 1, 0, 0, -1, -1, 0, 0, 0, 0]
+EXPECTED_COLUMNS = [
+    "timestamp",
+    "pair",
+    "fold",
+    "selected_strategy",
+    "dl_available",
+    "executed_position",
+    "portfolio_equity",
+    "portfolio_pnl",
+    "portfolio_return",
+    "portfolio_equity_mtm",
+    "portfolio_pnl_mtm",
+    "portfolio_return_mtm",
+]
 
 
 def _rows(df, res, bt, fold=0, pair="EURUSD"):
@@ -60,6 +74,53 @@ def test_values_match_backtester_accounting():
     assert out["portfolio_pnl"].sum() == pytest.approx(eq[-1] - 10_000.0)
     # executed position is end-of-bar position from backtester
     np.testing.assert_array_equal(out["executed_position"], res["execution_timeline"]["position"])
+
+
+def test_forced_end_of_data_liquidation_flattens_exported_position():
+    df = _fixture_df(n=4)
+    signals = pd.Series([1, 1, 1, 1], index=df.index)
+    bt = Backtester(initial_capital=10_000.0)
+    result = bt.run(df, signals, "T", include_mtm=True)
+
+    positions = result["execution_timeline"]["position"].to_numpy()
+    assert np.any(positions[:-1] != 0)
+    assert result["trades"][-1].exit_reason == "end_of_data"
+    assert positions[-1] == 0
+    assert result["equity_curve"].iloc[-1] == pytest.approx(
+        result["equity_curve_mtm"].iloc[-1], rel=1e-12, abs=1e-9
+    )
+    assert result["execution_timeline"]["equity"].iloc[-1] == pytest.approx(
+        result["equity_curve"].iloc[-1], rel=1e-12, abs=1e-9
+    )
+    exported = pd.DataFrame(_rows(df, result, bt))
+    assert exported["executed_position"].iloc[-1] == 0
+    assert exported["portfolio_equity"].iloc[-1] == pytest.approx(
+        exported["portfolio_equity_mtm"].iloc[-1], rel=1e-12, abs=1e-9
+    )
+
+
+def test_flat_portfolio_mtm_and_timeline_returns_reconcile():
+    df = _fixture_df(n=4)
+    bt = Backtester(initial_capital=10_000.0)
+    result = bt.run(
+        df, pd.Series(0, index=df.index), "T", include_mtm=True
+    )
+    np.testing.assert_allclose(
+        result["equity_curve_mtm"], result["equity_curve"], rtol=1e-12, atol=1e-9
+    )
+    out = pd.DataFrame(_rows(df, result, bt))
+    for equity_col, pnl_col, return_col in (
+        ("portfolio_equity", "portfolio_pnl", "portfolio_return"),
+        ("portfolio_equity_mtm", "portfolio_pnl_mtm", "portfolio_return_mtm"),
+    ):
+        previous = out[equity_col].shift(1)
+        previous.iloc[0] = bt.initial_capital
+        expected_pnl = out[equity_col] - previous
+        np.testing.assert_allclose(out[pnl_col], expected_pnl, rtol=1e-12, atol=1e-9)
+        expected_return = expected_pnl / previous.where(previous != 0)
+        np.testing.assert_allclose(
+            out[return_col], expected_return, rtol=1e-12, atol=1e-12
+        )
 
 
 def test_export_does_not_mutate_backtest_result():
@@ -237,6 +298,30 @@ def test_mtm_is_opt_in_and_preserves_all_legacy_results(use_atr_sizing):
             np.testing.assert_equal(left, right)
 
 
+def test_reversal_marks_only_new_position_exit_cost():
+    df = _fixture_df(n=4)
+    df["Close"] = [1.10, 1.10, 1.12, 1.13]
+    df["Open"] = df["Close"]
+    df["High"] = df["Close"] + 0.001
+    df["Low"] = df["Close"] - 0.001
+    bt = Backtester(
+        initial_capital=10_000.0, spread_pips=2.0, slippage_pips=1.0
+    )
+    result = bt.run(
+        df, pd.Series([1, -1, -1, -1], index=df.index), "T", include_mtm=True
+    )
+
+    assert result["execution_timeline"]["position"].iloc[1] == 1
+    assert result["execution_timeline"]["position"].iloc[2] == -1
+    assert result["trades"][0].exit_reason == "signal"
+    assert result["equity_curve_mtm"].iloc[2] == pytest.approx(
+        result["equity_curve"].iloc[2]
+        - result["equity_curve"].iloc[2] * bt._calculate_trade_cost(1.12),
+        rel=1e-12,
+        abs=1e-9,
+    )
+
+
 @pytest.mark.parametrize("direction,valuation", [
     (1, 1.12),
     (1, 1.08),
@@ -347,6 +432,17 @@ def test_invalid_open_position_valuation_is_nan_without_fabricating_price():
     assert result["equity_curve_mtm"].iloc[-1] == result["equity_curve"].iloc[-1]
 
 
+def test_invalid_entry_price_does_not_produce_finite_mtm_value():
+    df = _fixture_df(n=4)
+    df.loc[df.index[1], "Close"] = np.nan
+    result = Backtester().run(
+        df, pd.Series([1, 1, 1, 1], index=df.index), "T", include_mtm=True
+    )
+
+    assert np.isnan(result["equity_curve_mtm"].iloc[1])
+    assert np.isnan(result["equity_curve_mtm"].iloc[2])
+
+
 def test_timeline_mtm_differences_ignore_dl_availability_transitions():
     df = _fixture_df()
     df[sorted(mpml_main.D1_FEATURE_COLS)[0]] = [
@@ -380,6 +476,67 @@ def test_timeline_rejects_missing_mtm_or_misaligned_required_series():
         _rows(df, misaligned, bt)
 
 
+def test_timeline_rejects_duplicate_or_misaligned_timestamps():
+    df = _fixture_df()
+    bt, result = _run(df, SIGNALS)
+    duplicate_df = pd.concat([df, df.iloc[[-1]]])
+    with pytest.raises(ValueError, match="timestamps must be unique"):
+        mpml_main._build_dl_conditional_portfolio_rows(
+            pair_name="EURUSD",
+            fold_id=0,
+            df_test=duplicate_df,
+            selected_s=pd.Series(["TF"] * len(duplicate_df), index=duplicate_df.index),
+            dyn_res=result,
+            initial_capital=bt.initial_capital,
+        )
+
+    misaligned_selection = pd.Series(
+        ["TF"] * len(df), index=df.index + pd.Timedelta(days=1)
+    )
+    with pytest.raises(ValueError, match="selected strategy state timestamps"):
+        mpml_main._build_dl_conditional_portfolio_rows(
+            pair_name="EURUSD",
+            fold_id=0,
+            df_test=df,
+            selected_s=misaligned_selection,
+            dyn_res=result,
+            initial_capital=bt.initial_capital,
+        )
+
+    duplicated_execution = dict(result)
+    timeline = result["execution_timeline"].copy()
+    timeline.loc[1, "timestamp"] = timeline.loc[0, "timestamp"]
+    duplicated_execution["execution_timeline"] = timeline
+    with pytest.raises(ValueError, match="execution_timeline index contains duplicates"):
+        _rows(df, duplicated_execution, bt)
+
+
+def test_writer_checks_required_columns_on_every_row(tmp_path, monkeypatch):
+    monkeypatch.setattr(mpml_main, "_CURRENT_RUN_OUTPUT_DIR", tmp_path)
+    df = _fixture_df()
+    bt, result = _run(df, SIGNALS)
+    rows = _rows(df, result, bt)
+    del rows[-1]["portfolio_return_mtm"]
+
+    with pytest.raises(ValueError, match="missing required columns"):
+        mpml_main._write_dl_conditional_portfolio_timeline(rows)
+
+
+def test_writer_has_exact_schema_and_sorts_timestamps_within_each_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(mpml_main, "_CURRENT_RUN_OUTPUT_DIR", tmp_path)
+    df = _fixture_df()
+    bt, result = _run(df, SIGNALS)
+    rows = _rows(df, result, bt, fold=0, pair="EURUSD")
+    path = mpml_main._write_dl_conditional_portfolio_timeline(
+        rows[2:] + rows[:2]
+    )
+    exported = pd.read_csv(path)
+
+    assert list(exported.columns) == EXPECTED_COLUMNS
+    assert list(exported["timestamp"]) == sorted(exported["timestamp"])
+    assert not exported.duplicated(["pair", "fold", "timestamp"]).any()
+
+
 def test_mtm_return_is_nan_when_previous_equity_is_zero_or_invalid():
     df = _fixture_df()
     bt, result = _run(df, SIGNALS)
@@ -392,3 +549,17 @@ def test_mtm_return_is_nan_when_previous_equity_is_zero_or_invalid():
 
     assert np.isnan(out["portfolio_return_mtm"].iloc[1])
     assert np.isnan(out["portfolio_return_mtm"].iloc[3])
+
+
+def test_realized_and_mtm_returns_are_nan_for_nonfinite_previous_equity():
+    df = _fixture_df()
+    bt, result = _run(df, SIGNALS)
+    result = dict(result)
+    result["equity_curve"] = result["equity_curve"].copy()
+    result["equity_curve_mtm"] = result["equity_curve_mtm"].copy()
+    result["equity_curve"].iloc[0] = np.inf
+    result["equity_curve_mtm"].iloc[0] = np.inf
+    out = pd.DataFrame(_rows(df, result, bt))
+
+    assert np.isnan(out["portfolio_return"].iloc[1])
+    assert np.isnan(out["portfolio_return_mtm"].iloc[1])

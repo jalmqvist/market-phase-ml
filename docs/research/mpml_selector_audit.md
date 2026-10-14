@@ -65,7 +65,7 @@ Focused audit of the MPML selector stack covering feature-schema integrity, runt
 ### 6) Selector-state observability exists for diagnostics
 
 - `main.py` can export per-bar selector timeline (`selector_state_timeline.csv`) when `EXPORT_SELECTOR_STATE_TIMELINE=true`.
-- `main.py --export-dl-conditional-portfolio-timeline` (opt-in, default off) writes schema 1.1.0 `dl_conditional_portfolio_timeline.csv` with realized and hypothetical liquidation-value outcomes; see `analysis_framework_v2.md`.
+- `main.py --export-dl-conditional-portfolio-timeline` (opt-in, default off) writes schema 1.1.0 `dl_conditional_portfolio_timeline.csv` with selector state, DL-feature availability, executed positions, realized-accounting equity changes, and hypothetical liquidation-value changes; see `analysis_framework_v2.md` for field semantics and limitations.
 - This supports downstream conditional diagnostics in the analysis framework.
 
 ## Validation evidence
@@ -82,6 +82,7 @@ Focused audit of the MPML selector stack covering feature-schema integrity, runt
 1. **Availability-learning risk:** missing indicators can encode DL coverage timing in sparse regimes.
 2. **Policy sensitivity:** routing behavior can materially shift with threshold/hysteresis/hold hyperparameters.
 3. **Volatility guard asymmetry:** USD-quote override may produce pair-group behavior divergence that should be monitored in per-pair diagnostics.
+4. **Timeline interpretation:** `dl_available` means at least one recognized feature is non-null, not full prediction readiness. Availability-conditioned outcomes are observational and do not establish that DL caused a performance change.
 
 ## Recommended follow-ups
 

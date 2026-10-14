@@ -726,24 +726,23 @@ folds keep their repeated timestamps, distinguished by `fold`.
 | `pair` | Currency pair |
 | `fold` | Walk-forward fold id |
 | `selected_strategy` | Dynamic selector's strategy for the bar (signal-generation output; the signal is executed on the *next* bar) |
-| `dl_available` | True when any DL feature column is non-null on the bar (same rule as `selector_state_timeline.csv`); feature availability only, **not** evidence that a DL strategy was selected |
-| `executed_position` | End-of-bar executed position from the backtester (-1/0/1) |
-| `portfolio_equity` | End-of-bar realized capital from the backtester's equity curve |
-| `portfolio_pnl` | `equity[t] - equity[t-1]`; for the first bar of a fold, `equity[t] - initial_capital` |
-| `portfolio_return` | `portfolio_pnl / equity[t-1]` (same denominator convention) |
-| `portfolio_equity_mtm` | Backtester's end-of-bar hypothetical liquidation-value equity |
-| `portfolio_pnl_mtm` | MTM equity change from the preceding test bar; first bar uses initial capital as baseline |
-| `portfolio_return_mtm` | MTM PnL divided by preceding MTM equity; first bar uses initial capital |
+| `dl_available` | True when at least one recognized DL feature column is non-null on the bar; this does not guarantee the complete feature set for a valid DL prediction |
+| `executed_position` | Position represented by the execution timeline (-1/0/1), including flat state after forced final-bar liquidation |
+| `portfolio_equity` | Existing realized-accounting equity curve |
+| `portfolio_pnl` | Change in `portfolio_equity` from the previous bar; first bar uses `initial_capital` as the preceding boundary |
+| `portfolio_return` | Corresponding equity change divided by the preceding equity when that denominator is finite and nonzero; first bar uses `initial_capital` |
+| `portfolio_equity_mtm` | Realized-accounting capital plus open-position unrealized directional PnL after estimated exit costs at the current bar close |
+| `portfolio_pnl_mtm` | Bar-to-bar change in MTM equity; first bar uses `initial_capital` as the preceding boundary |
+| `portfolio_return_mtm` | Corresponding MTM equity change divided by preceding MTM equity when that denominator is finite and nonzero; first bar uses `initial_capital` |
 
 Accounting notes (verified against `src/strategies.py::Backtester.run`):
 
 - The equity curve is **realized** capital: it changes only when an entry cost
   is paid or a trade closes (SL/TP, signal exit, or forced close on the last
-  bar of the fold). Open positions are not marked to market, so
-  `portfolio_pnl` is the realized cash flow booked on that bar (zero while a
-  position is held), not mark-to-market PnL, and `portfolio_return` is not a
-  daily mark-to-market return. These legacy columns retain this meaning in
-  schema 1.1.0.
+  bar of the fold). Therefore `portfolio_pnl` is bar-to-bar equity change, not
+  completed-trade PnL: it can include entry costs while the trade remains open.
+  `portfolio_return` uses that same equity change and preceding-equity
+  denominator; it is not a daily MTM return.
 - Costs are included (entry cost on the entry bar, exit cost in exit PnL).
 - MTM is calculated inside the backtest loop after current-bar stop/target,
   signal-exit, and entry events. While flat it equals realized capital; while
@@ -753,6 +752,11 @@ Accounting notes (verified against `src/strategies.py::Backtester.run`):
   exit cost is booked to realized capital. The existing sizing modes use
   different realized-PnL formulas, and MTM mirrors the matching mode rather
   than changing that accounting.
+- `include_mtm=False` remains the backtester's default. MTM is opt-in and kept
+  separate so the established realized-equity results, performance metrics,
+  trades, and other artifacts retain their existing contract. MTM is a
+  simplified hypothetical liquidation-value estimate under the backtest's
+  existing cost assumptions; it is not a reproduction of live FX execution.
 - Each pair/fold is an independent equity series. The first MTM PnL/return
   baseline is the backtest's `initial_capital`; a zero or non-finite previous
   equity produces an undefined (`NaN`/empty CSV) return. Invalid/non-positive
@@ -760,10 +764,25 @@ Accounting notes (verified against `src/strategies.py::Backtester.run`):
   no price is fabricated. PnL and returns are calculated across the complete
   test timeline before any downstream availability filter.
 - Each fold is an independent backtest starting from `initial_capital`;
-  equity is not chained across folds. The final-bar equity includes the forced
-  end-of-fold close.
+  equity is not chained across folds. A still-open position is forcibly closed
+  at the final test-bar close; final realized and MTM equity agree, and the
+  final `executed_position` is flat. This final equality is an accounting
+  boundary invariant, not evidence that MTM and realized performance are
+  interchangeable on intermediate open-position bars.
 - Missing equity values stay empty (never filled with zero); PnL/return of
   affected bars are empty too.
+
+This is an **observational analysis artifact**, not a causal treatment-effect
+estimate. Each row records distinct states and outcomes: `selected_strategy`
+is the selector state; `dl_available` is feature coverage; `executed_position`
+is the backtester's position; `portfolio_pnl` is realized-accounting equity
+change; and `portfolio_pnl_mtm` is estimated liquidation-value equity change.
+Comparing rows with and without DL availability does not establish that DL
+caused a performance change. Selector decisions, overlapping positions,
+signal timing, market conditions, and other dependencies can affect observed
+outcomes. In particular, `dl_available=True` means only that at least one
+recognized DL feature is non-null, not that a complete valid DL prediction can
+be produced.
 
 Treatment/control alignment: join the DL-enabled and no-DL runs on
 `(pair, fold, timestamp)`. When restricting to DL-available bars, apply the

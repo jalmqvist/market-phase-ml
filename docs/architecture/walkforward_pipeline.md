@@ -314,6 +314,30 @@ This enables:
 
 ---
 
+# Portfolio Timeline Accounting
+
+The opt-in `dl_conditional_portfolio_timeline.csv` records dynamic-selector
+state and portfolio outcomes for every walk-forward test bar. Its export turns
+on the backtester's separate MTM series; the default backtest remains
+realized-accounting only, and the timeline flag does not replace or change
+existing strategy artifacts.
+
+Realized equity changes when entry costs are paid or trades close. Its
+bar-to-bar PnL is therefore not necessarily completed-trade PnL. On an open
+position, MTM equity adds directional unrealized PnL to realized capital and
+subtracts estimated exit costs at the current close. The model follows the
+existing fixed-size or ATR-size accounting convention and is a simplified
+hypothetical liquidation estimate, not a live FX execution model.
+
+Any position still open at the end of a test fold is forcibly liquidated at
+the final bar close. The final execution position is flat and final realized
+and MTM equity agree; intermediate values are expected to differ while a
+position is open. See
+[`analysis_framework_v2.md`](../research/analysis_framework_v2.md) for the
+schema, field definitions, and observational-analysis limitations.
+
+---
+
 # Reproducibility Infrastructure
 
 A major engineering focus became:

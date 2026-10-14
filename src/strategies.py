@@ -1505,6 +1505,7 @@ class Backtester:
                 equity_curve_mtm[-1] = capital
 
             if execution_timeline:
+                execution_timeline[-1]['position'] = 0
                 execution_timeline[-1]['equity'] = capital
 
 
