@@ -646,7 +646,7 @@ def _build_dl_conditional_portfolio_rows(
     if len(prev_eq):
         prev_eq.iloc[0] = float(initial_capital)
     pnl = eq - prev_eq
-    ret = pnl / prev_eq.where(prev_eq != 0)
+    ret = pnl / prev_eq.where(np.isfinite(prev_eq) & prev_eq.ne(0))
 
     prev_eq_mtm = eq_mtm.shift(1)
     if len(prev_eq_mtm):
