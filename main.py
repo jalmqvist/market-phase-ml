@@ -735,25 +735,39 @@ def _write_dl_conditional_portfolio_timeline(rows: list[dict]) -> Path | None:
     """Write the artifact to the run output dir; returns the path or None if empty."""
     if not rows:
         return None
-    missing_columns = set(DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS).difference(rows[0])
-    if missing_columns or any(
-        set(DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS).difference(row)
-        for row in rows
-    ):
+
+    required_columns = set(DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS)
+    missing_columns = set().union(
+        *(required_columns.difference(row) for row in rows)
+    )
+
+    if missing_columns:
         raise ValueError(
             "DL-conditional timeline rows are missing required columns: "
-            f"{sorted(missing_columns or set().union(*(
-                set(DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS).difference(row)
-                for row in rows
-            )))}"
+            f"{sorted(missing_columns)}"
         )
-    df = pd.DataFrame(rows, columns=DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS)
+
+    df = pd.DataFrame(
+        rows,
+        columns=DL_CONDITIONAL_PORTFOLIO_TIMELINE_COLUMNS,
+    )
+
     if df.duplicated(["pair", "fold", "timestamp"]).any():
-        raise ValueError("DL-conditional timeline contains duplicate pair/fold/timestamp keys.")
-    df = df.sort_values(["pair", "fold", "timestamp"], kind="mergesort").reset_index(drop=True)
-    out = _resolve_output_path(f"results/{DL_CONDITIONAL_PORTFOLIO_TIMELINE_FILENAME}")
+        raise ValueError(
+            "DL-conditional timeline contains duplicate pair/fold/timestamp keys."
+        )
+
+    df = df.sort_values(
+        ["pair", "fold", "timestamp"],
+        kind="mergesort",
+    ).reset_index(drop=True)
+
+    out = _resolve_output_path(
+        f"results/{DL_CONDITIONAL_PORTFOLIO_TIMELINE_FILENAME}"
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out, index=False)
+
     return out
 
 
