@@ -412,7 +412,61 @@ class TestSelectorAwarenessToggle(unittest.TestCase):
 
         self.assertGreater(len(aware_indicators), 0)
         self.assertEqual(blind_indicators, [])
+        self.assertEqual(aware.dropped_constant_indicator_cols_, [])
+        self.assertEqual(blind.dropped_constant_indicator_cols_, [])
         self.assertNotEqual(aware.feature_schema_, blind.feature_schema_)
+
+    def test_constant_missing_indicators_are_dropped_and_inference_stays_schema_safe(self):
+        if not _DL_COLS:
+            self.skipTest("No DL feature columns available in this configuration")
+
+        training_df = _make_training_df(include_dl=False)
+        for col in _DL_COLS:
+            training_df[col] = np.nan  # every generated indicator is constant 1
+
+        with (
+            patch("src.models.DL_SIGNALS_ENABLED", True),
+            patch("src.models.DL_D1_FEATURE_COLS", frozenset(_DL_COLS)),
+            patch("src.models.OPTIONAL_DL_FEATURE_COLS", tuple(sorted(_DL_COLS))),
+        ):
+            aware = StrategySelector(seed=42, missing_indicators_enabled=True)
+            metrics = aware.train(
+                training_df, do_cv=False, diagnostics_label="test constant indicators"
+            )
+
+        self.assertTrue(metrics)
+        expected = {f"{col}_missing" for col in _DL_COLS}
+        self.assertEqual(set(aware.dropped_constant_indicator_cols_), expected)
+        self.assertFalse(any(c.endswith("_missing") for c in aware.feature_schema_))
+        self.assertEqual(list(aware.scaler.feature_names_in_), aware.feature_schema_)
+
+        # At inference, all DL values are unavailable, so the helper recreates
+        # the all-one indicators; the selector must drop the fit-time constants
+        # before enforcing exact schema equality.
+        row = _make_inference_row(include_dl=False)
+        probs = aware.predict_proba(row)
+        self.assertAlmostEqual(sum(probs.values()), 1.0, places=5)
+
+    def test_blind_mode_does_not_drop_or_add_missing_indicators(self):
+        if not _DL_COLS:
+            self.skipTest("No DL feature columns available in this configuration")
+
+        training_df = _make_training_df(include_dl=True)
+        with (
+            patch("src.models.DL_SIGNALS_ENABLED", True),
+            patch("src.models.DL_D1_FEATURE_COLS", frozenset(_DL_COLS)),
+            patch("src.models.OPTIONAL_DL_FEATURE_COLS", tuple(sorted(_DL_COLS))),
+        ):
+            blind = StrategySelector(seed=42, missing_indicators_enabled=False)
+            metrics = blind.train(
+                training_df, do_cv=False, diagnostics_label="test blind mode"
+            )
+
+        self.assertTrue(metrics)
+        self.assertEqual(blind.dropped_constant_indicator_cols_, [])
+        self.assertFalse(any(c.endswith("_missing") for c in blind.feature_schema_))
+        probs = blind.predict_proba(_make_inference_row(include_dl=False))
+        self.assertAlmostEqual(sum(probs.values()), 1.0, places=5)
 
 
 # ---------------------------------------------------------------------------
