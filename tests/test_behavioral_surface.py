@@ -29,6 +29,7 @@ from mpml.behavioral.base import BehavioralState, BehavioralSurface
 from mpml.behavioral.registry import BehavioralSurfaceRegistry, default_registry
 from mpml.behavioral.trend_vol import TrendVolSurface
 from mpml.behavioral.reactive_jpy import ReactiveJPYSurface
+from mpml.behavioral.persistent import PersistentSurface
 from mpml.behavioral.compat import (
     dl_regime_to_state,
     phase_label_to_state,
@@ -204,6 +205,80 @@ class TestReactiveJPYSurface(unittest.TestCase):
         for state in self.surface.states():
             self.assertEqual(state.surface_id, "reactive_jpy")
 
+# ---------------------------------------------------------------------------
+# PersistentSurface tests
+# ---------------------------------------------------------------------------
+
+class TestPersistentSurface(unittest.TestCase):
+
+    def setUp(self):
+        self.surface = PersistentSurface()
+
+    def test_surface_id(self):
+        self.assertEqual(self.surface.surface_id, "persistent")
+
+    def test_surface_version(self):
+        self.assertEqual(self.surface.surface_version, "0.1.0")
+
+    def test_display_name(self):
+        self.assertEqual(
+            self.surface.display_name,
+            "Persistent Commitment Lifecycle",
+        )
+
+    def test_states_returns_nine(self):
+        self.assertEqual(len(self.surface.states()), 9)
+
+    def test_state_ids_are_canonical(self):
+        expected = {
+            "PERSISTENT_LL",
+            "PERSISTENT_LM",
+            "PERSISTENT_LH",
+            "PERSISTENT_ML",
+            "PERSISTENT_MM",
+            "PERSISTENT_MH",
+            "PERSISTENT_HL",
+            "PERSISTENT_HM",
+            "PERSISTENT_HH",
+        }
+
+        self.assertEqual(set(self.surface.state_ids()), expected)
+
+    def test_get_state_all_valid(self):
+        for state_id in self.surface.state_ids():
+            state = self.surface.get_state(state_id)
+
+            self.assertEqual(state.state_id, state_id)
+            self.assertEqual(state.surface_id, "persistent")
+
+    def test_get_state_unknown_raises(self):
+        with self.assertRaises(KeyError):
+            self.surface.get_state("PERSISTENT_UNKNOWN")
+
+    def test_metadata_shape(self):
+        meta = self.surface.metadata()
+
+        for key in (
+            "surface_id",
+            "surface_version",
+            "display_name",
+            "description",
+            "state_ids",
+            "aliases",
+        ):
+            self.assertIn(key, meta)
+
+    def test_metadata_identity(self):
+        meta = self.surface.metadata()
+
+        self.assertEqual(meta["surface_id"], "persistent")
+        self.assertEqual(meta["surface_version"], "0.1.0")
+        self.assertEqual(len(meta["state_ids"]), 9)
+        self.assertEqual(meta["aliases"], {})
+
+    def test_all_states_have_surface_id(self):
+        for state in self.surface.states():
+            self.assertEqual(state.surface_id, "persistent")
 
 # ---------------------------------------------------------------------------
 # BehavioralSurfaceRegistry tests
@@ -291,6 +366,33 @@ class TestDefaultRegistry(unittest.TestCase):
         # mpml.behavioral exposes default_registry through the module-level
         # `registry` attribute; verify they are the same object.
         self.assertIs(global_registry, _default_registry)
+
+    def test_default_registry_has_persistent(self):
+        self.assertIn("persistent", default_registry)
+
+    def test_default_registry_loads_persistent(self):
+        surface = default_registry.load("persistent")
+        self.assertIsInstance(surface, PersistentSurface)
+
+    def test_default_registry_resolves_persistent_state(self):
+        state = default_registry.get_state(
+            "persistent",
+            "PERSISTENT_HH",
+        )
+        self.assertEqual(state.state_id, "PERSISTENT_HH")
+        self.assertEqual(state.surface_id, "persistent")
+
+    def _fresh_registry(self):
+        reg = BehavioralSurfaceRegistry()
+        reg.register(TrendVolSurface())
+        reg.register(ReactiveJPYSurface())
+        reg.register(PersistentSurface())
+        return reg
+
+    def test_load_persistent(self):
+        reg = self._fresh_registry()
+        surface = reg.load("persistent")
+        self.assertIsInstance(surface, PersistentSurface)
 
 
 # ---------------------------------------------------------------------------
