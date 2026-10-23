@@ -1,6 +1,8 @@
 # src/strategies.py
 import pandas as pd
 import numpy as np
+import json
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -2068,6 +2070,84 @@ class StrategySelector_Dynamic:
             if self.use_max_hold and current_type != "PhaseAware":
                 if bars_in_state >= self.max_hold_bars and pos == 0:
                     next_type = "PhaseAware"
+
+            # Optional, single-bar selector trace for targeted A/C diagnostics.
+            # Disabled unless MPML_SELECTOR_TRACE_PATH is set.
+            trace_path = os.environ.get("MPML_SELECTOR_TRACE_PATH")
+            trace_pair = os.environ.get("MPML_SELECTOR_TRACE_PAIR", "")
+            trace_timestamp = os.environ.get("MPML_SELECTOR_TRACE_TIMESTAMP", "")
+            if trace_path and pair_name == trace_pair:
+                bar_timestamp = pd.Timestamp(df.index[i]).isoformat()
+            else:
+                bar_timestamp = None
+            if trace_path and bar_timestamp == trace_timestamp:
+                raw_row = df.iloc[i]
+                raw_values = {}
+                for col, value in raw_row.items():
+                    if pd.isna(value):
+                        raw_values[str(col)] = None
+                    elif isinstance(value, (np.integer, int)):
+                        raw_values[str(col)] = int(value)
+                    elif isinstance(value, (np.floating, float)):
+                        raw_values[str(col)] = float(value)
+                    elif isinstance(value, (np.bool_, bool)):
+                        raw_values[str(col)] = bool(value)
+                    else:
+                        raw_values[str(col)] = str(value)
+
+                # Re-run the deterministic preparation only for this one requested
+                # bar so the trace records the exact scaled vector/schema consumed
+                # by the classifier. This does not alter the selection decision.
+                scaled_features = None
+                feature_schema = []
+                if selector is not None and getattr(selector, "feature_schema_", None):
+                    feature_schema = list(selector.feature_schema_)
+                    scaled = selector._prepare_inference_matrix(
+                        df.loc[df.index[[i]]],
+                        context=f"selector-trace:{pair_name}:{bar_timestamp}",
+                    )[0]
+                    scaled_features = {
+                        name: float(value)
+                        for name, value in zip(feature_schema, scaled)
+                    }
+
+                dl_cols_present = [c for c in _DL_D1_FEATURE_COLS if c in raw_row.index]
+                dl_available_at_bar = bool(
+                    dl_cols_present and raw_row[dl_cols_present].notna().any()
+                )
+                trace_record = {
+                    "pair": pair_name,
+                    "timestamp": bar_timestamp,
+                    "dl_available": dl_available_at_bar,
+                    "raw_dl_features": {
+                        c: raw_values.get(c) for c in dl_cols_present
+                    },
+                    "raw_features": raw_values,
+                    "feature_schema": feature_schema,
+                    "scaled_model_input": scaled_features,
+                    "probabilities": {
+                        str(k): float(v) for k, v in (probs.items() if selector is not None and pred_type is not None else [])
+                    },
+                    "predicted_type": pred_type,
+                    "pmax": pmax,
+                    "p2": p2,
+                    "tau_enter": self.tau_enter,
+                    "tau_exit": self.tau_exit,
+                    "p_margin": self.p_margin,
+                    "use_prob_margin": self.use_prob_margin,
+                    "margin_ok": margin_ok,
+                    "use_hysteresis": self.use_hysteresis,
+                    "use_min_hold": self.use_min_hold,
+                    "min_hold_bars": self.min_hold_bars,
+                    "bars_in_state_before_decision": bars_in_state,
+                    "current_type_before_decision": current_type,
+                    "proposed_type_after_gating": proposed_type,
+                    "selected_type_after_hold_policy": next_type,
+                    "previous_signal": int(signals[i - 1]) if i > 0 else None,
+                    "dl_feature_columns_present": dl_cols_present,
+                }
+                with open(trace_path, "a", encoding="utf-8") as trace_file:
+                    trace_file.write(json.dumps(trace_record, sort_keys=True) + "\n")
 
             # 5) Bookkeeping
             if next_type != current_type:
