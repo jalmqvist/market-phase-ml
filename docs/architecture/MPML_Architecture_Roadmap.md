@@ -1,6 +1,6 @@
 # MPML Architecture Roadmap
 
-**Status:** Living Architecture (July 2026)
+**Status:** Living Architecture (updated 2026-10-23)
 
 This document describes both the long-term architecture and the current implementation state of MPML.
 
@@ -9,6 +9,8 @@ Completed phases represent architectural milestones that have been implemented a
 ---
 
 # Current Implementation Status
+
+---
 
 The foundational architectural migration of MPML is complete.
 
@@ -31,8 +33,12 @@ MPML now exposes three stable research artifacts:
 - StrategyEvaluation artifacts (produced by MPML)
 - Recommendation artifacts (produced by MPML, public MPML→MRML interface)
 
-StrategyEvaluation remains the canonical evidence layer.
-Recommendation is the canonical repository boundary between MPML and MRML.
+StrategyEvaluation remains the canonical historical evidence layer.
+Recommendation is the canonical public **research-artifact** interface between
+MPML and MRML, accompanied by the versioned manifest/provenance needed to validate
+and interpret the bundle. This artifact boundary is distinct from any separately
+versioned strategy-runtime code interface that MRML may require for forward
+operation.
 
 No further architectural work is currently planned for Behavioral Surface integration, StrategyEvaluation representation, or Recommendation representation.
 
@@ -173,6 +179,12 @@ Whenever practical:
 - consumers validate rather than reconstruct metadata
 - compatibility adapters remain isolated
 - canonical identities flow unchanged across repository boundaries
+
+For research data, this means consuming the published artifact contracts rather
+than importing internal evaluation objects. If MRML also needs MPML strategy logic
+to produce a current per-decision signal, that is a separate, version-pinned
+runtime-code dependency—not an extension of the Recommendation artifact schema.
+Its causal inputs and supported entry point must be documented explicitly.
 
 This principle allows Behavioral Surfaces to evolve independently of MPML while preserving reproducibility and backward compatibility.
 
@@ -614,8 +626,19 @@ MPML therefore exposes two complementary representations:
 - StrategyEvaluation — stable historical evidence
 - Recommendation — interpreted ranking of that evidence
 
-Only Recommendation objects cross the repository boundary into MRML.
-StrategyEvaluation remains the canonical evidence layer within MPML.
+For the **research-artifact interface**, Recommendation is the public MPML→MRML
+domain object; the exported bundle also carries the manifest/provenance and other
+artifacts required to validate and interpret it. StrategyEvaluation remains the
+canonical historical evidence layer within MPML and is not a replacement for the
+Recommendation interface.
+
+MRML v0 also proposes a separate pinned dependency on MPML strategy logic to obtain
+current signals for a fixed PhaseAware composition. This runtime-code interface
+must be explicitly supported and versioned; it is not a research artifact and
+must not run walk-forward evaluation, training, ranking, Recommendation generation,
+or the historical Backtester in MRML's daily loop. The canonical standalone
+`PhaseAwareStrategy` + `Backtester` historical path must not be assumed to be a
+per-decision runtime API without a demonstrated causal contract.
 
 # 11. Recommendation Philosophy
 
@@ -672,6 +695,32 @@ MPML remains completely unaware of
 - portfolio exposure
 
 This separation greatly simplifies both repositories.
+
+---
+
+## MRML v0 runtime boundary (clarification)
+
+The MPML→MRML research-artifact interface and any MPML strategy-runtime interface
+serve different purposes:
+
+- **Research artifacts:** MPML performs walk-forward evaluation, builds
+  `StrategyEvaluation` evidence, ranks evaluations, and exports Recommendations
+  plus manifest/provenance. MRML validates and consumes these artifacts; it does
+  not repeat those research steps.
+- **Strategy runtime:** if MRML needs the current signal from MPML's canonical
+  strategy logic, the supported entry point, causal input requirements, version
+  pin, and execution semantics must be explicitly defined. A runtime call must
+  not invoke walk-forward evaluation, training, ranking, Recommendation generation,
+  or the historical `Backtester` as part of MRML's daily loop.
+
+The frozen standalone `PhaseAwareStrategy` + `Backtester` path is a historical
+replay reference, not proof of a per-decision API. If it cannot support causal
+per-decision decisions without changing its semantics, the runtime contract must
+be resolved as MPML-owned work before MRML implements an adapter. MRML must not
+copy strategy rules into its own repository.
+
+This clarification does not move portfolio risk, position sizing, broker
+execution, or operational reconciliation into MPML; those remain MRML-owned.
 
 ---
 
@@ -734,6 +783,14 @@ Recommendation
 ```
 
 No walk-forward computation occurs during live execution.
+
+The lifecycle above describes MPML's generic offline research and recommendation
+process; it does not mean that MRML v0 resolves a live Behavioral Surface/State.
+MRML v0 uses its preconfigured PhaseAware composition and treats state information
+as shadow/diagnostic data unless a later model-serving design explicitly changes
+that scope. If MRML invokes MPML strategy logic for a current signal, that is a
+separate pinned runtime interface—not an online walk-forward or recommendation
+generation step.
 
 Future recommendation engines should remain entirely metadata-driven. Their
 responsibility is to compose information provided by registries rather than to
@@ -823,7 +880,12 @@ Each repository owns exactly one architectural layer.
 - **MPML** transforms those artifacts into features suitable for walk-forward trading evaluation.
 - **MRML** consumes MPML recommendations for portfolio construction and execution.
 
-The Behavioral Aggregation Layer forms MPML's adaptation boundary between hourly behavioral predictions and daily trading models. It is an internal MPML component and is not part of the external MSML artifact contract.
+The Behavioral Aggregation Layer forms MPML's adaptation boundary between hourly
+behavioral predictions and daily trading models. It is an internal MPML component
+and is not part of the external MSML artifact contract. It is also distinct from
+MRML's broker-facing H1→D1 **price-bar construction**: MRML must match MPML's
+agreed D1 market-bar boundaries for execution parity, but must not recreate
+MPML's behavioral-prediction aggregation or behavioral-feature generation.
 
 ## Repository Boundary
 
