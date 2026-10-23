@@ -453,6 +453,92 @@ This reflects a deliberate anti-corruption design choice:
 
 ---
 
+## Constant missing-indicator handling and A/C regression (October 2026)
+
+A targeted A-blind versus C-aware investigation found that the C-aware selector
+could produce different probabilities from A at a bar where every optional DL
+feature was unavailable. The investigation focused on EURAUD at
+`2012-02-27T00:00:00`, using the `PERSISTENT_HH` surface and the TF4/MR42
+selector configuration.
+
+### Root cause
+
+In the relevant C-aware training fold, five generated `*_missing` indicators
+were constant at `1` because their corresponding optional DL features were
+unavailable throughout the training matrix. Constant columns cannot provide a
+split, but their presence changes the feature pool used by XGBoost's
+`colsample_bytree` sampling. A controlled ablation reproduced the original
+A and C probability vectors exactly, isolating the feature-set change as the
+cause of the target-event discrepancy.
+
+This is a fold-specific model-construction effect, not evidence that DL was
+available at the target bar or that missingness awareness improves performance.
+
+### Selector contract
+
+`StrategySelector.train()` now records and removes only generated missing
+indicators whose values are constant in that fit's training matrix:
+
+- Constant `*_missing` indicators are excluded from the scaler and classifier.
+- Indicators that vary in the training matrix are retained.
+- The underlying optional DL feature columns are not removed by this rule.
+- A/blind fits are unchanged when they do not contain generated missing
+  indicators.
+- At inference, the selector removes the same fit-time constant indicators
+  before strict feature-schema validation. This keeps the inference matrix
+  aligned with the fitted schema without weakening the schema check.
+
+The fitted feature schema remains the source of truth for feature order. The
+feature-importance report also uses `feature_schema_`, ensuring positional
+importance values are labelled with the exact fit-time column order rather
+than an independently sorted feature list.
+
+### Targeted validation
+
+The schema regression tests passed with **24 passed, 9 skipped**. The targeted
+A/C rerun then passed its explicit probability-equality assertion for the
+second matching trace record at the target timestamp:
+
+| Strategy | Original A probability | Patched C probability | Difference |
+|---|---:|---:|---:|
+| MeanReversion | 0.6774810553 | 0.6774810553 | 0 |
+| PhaseAware | 0.1791861802 | 0.1791861802 | 0 |
+| TrendFollowing | 0.1433327943 | 0.1433327943 | 0 |
+
+Both target records reported `dl_available=False`; the maximum absolute
+probability difference was `0`, against a tolerance of `1e-6`. The first
+matching trace record still had different probabilities, so the assertion
+specifically compares the final matching record corresponding to the original
+discrepancy.
+
+The run was produced from Git commit
+`90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d` with a dirty worktree. Its outputs
+are under:
+
+`results_archive/mpml_selector_trace_assert__A-blind_vs_C-aware__PERSISTENT_HH__20261022T161945Z/`
+
+This validates the targeted regression only. It does not establish that A and
+C are equivalent at other timestamps or folds, or that either variant has
+better trading performance.
+
+### Targeted diagnostic instrumentation
+
+The investigation also added opt-in trace output in
+`StrategySelector_Dynamic.generate_signals()`. When
+`MPML_SELECTOR_TRACE_PATH`, `MPML_SELECTOR_TRACE_PAIR`, and
+`MPML_SELECTOR_TRACE_TIMESTAMP` are set, the requested bar is written to JSONL
+with raw features, DL availability, fitted feature schema, scaled inputs,
+probabilities, gating state, and final selected strategy. The trace is disabled
+when the path variable is unset.
+
+The current working diff also contains a one-shot ablation-matrix export and
+EURAUD/fold-0-specific feature/scaler logging in `src/models.py`. These are
+investigation aids rather than selector architecture contracts; remove them or
+explicitly retain and test them as supported diagnostics before treating the
+change set as production-ready.
+
+---
+
 # Selector Lifecycle
 
 ## Training Phase
