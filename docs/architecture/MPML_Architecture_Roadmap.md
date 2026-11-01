@@ -40,6 +40,11 @@ and interpret the bundle. This artifact boundary is distinct from any separately
 versioned strategy-runtime code interface that MRML may require for forward
 operation.
 
+The fixed, causal `PhaseAware_TF4_MR42` runtime is documented separately in
+[`phaseaware_runtime.md`](phaseaware_runtime.md). It is an additive code
+interface for one latest completed D1 bar, not a replacement for research
+preparation, historical evaluation, or the serialized Recommendation contract.
+
 No further architectural work is currently planned for Behavioral Surface integration, StrategyEvaluation representation, or Recommendation representation.
 
 ---

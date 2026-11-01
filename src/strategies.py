@@ -10,7 +10,6 @@ from ta.volatility import BollingerBands
 from ta.trend import SMAIndicator, ADXIndicator
 from ta.momentum import StochasticOscillator, RSIIndicator
 
-from src.dl_daily_features import D1_FEATURE_COLS as _DL_D1_FEATURE_COLS
 from src.strategy_registry import (
     DEFAULT_PHASEAWARE_POLICY_ID,
     ResolvedPhaseAwareComposition,
@@ -19,6 +18,19 @@ from src.strategy_registry import (
     resolve_phaseaware_configuration,
     resolve_phaseaware_strategy_pair,
 )
+
+def _dl_d1_feature_cols() -> tuple:
+    """Lazily resolve DL D1 feature column names (keeps the DL loader off the import path)."""
+    from src.dl_daily_features import D1_FEATURE_COLS
+    return D1_FEATURE_COLS
+
+
+def __getattr__(name):
+    # Backward compatibility: ``src.strategies._DL_D1_FEATURE_COLS`` stays importable.
+    if name == "_DL_D1_FEATURE_COLS":
+        return _dl_d1_feature_cols()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 _DEFAULT_EVALUATED_TF_STRATEGY_IDS = ("TF1", "TF2", "TF3", "TF4", "TF5")
 _DEFAULT_EVALUATED_MR_STRATEGY_IDS = ("MR1", "MR2", "MR32", "MR42", "MR5")
@@ -1947,7 +1959,7 @@ class StrategySelector_Dynamic:
 
         # --- DL feature surface diagnostics (only when dl_debug_verbose=True) ---
         if self.dl_debug_verbose:
-            dl_cols_in_df = [c for c in _DL_D1_FEATURE_COLS if c in df.columns]
+            dl_cols_in_df = [c for c in _dl_d1_feature_cols() if c in df.columns]
             selector_feat_count = len(selector.feature_cols) if selector is not None else 0
             if dl_cols_in_df:
                 any_dl_pct = (
@@ -2111,7 +2123,7 @@ class StrategySelector_Dynamic:
                         for name, value in zip(feature_schema, scaled)
                     }
 
-                dl_cols_present = [c for c in _DL_D1_FEATURE_COLS if c in raw_row.index]
+                dl_cols_present = [c for c in _dl_d1_feature_cols() if c in raw_row.index]
                 dl_available_at_bar = bool(
                     dl_cols_present and raw_row[dl_cols_present].notna().any()
                 )

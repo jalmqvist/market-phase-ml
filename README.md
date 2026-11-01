@@ -412,6 +412,29 @@ python main.py
 
 Outputs are written into immutable run-owned directories under: `results_archive/`
 
+### Causal PhaseAware runtime
+
+For a live-style decision at the close of a completed D1 bar, MPML also
+provides a lightweight fixed-composition runtime. It accepts completed OHLCV
+history and evaluates the canonical `MarketPhaseDetector` and
+`PhaseAwareStrategy("TF4", "MR42")`; it does not run research preparation,
+training, or a historical backtest:
+
+```python
+from mpml.runtime.phaseaware import latest_decision
+
+decision = latest_decision(completed_d1_ohlcv)
+print(decision.timestamp, decision.phase, decision.signal)
+```
+
+The decision is unshifted and all returned values refer to the latest
+completed bar. Importing the runtime does not load MPML's research pipeline.
+The fixed input, warm-up, history-start, timing, signal and stop/target
+contracts are documented in
+[`docs/runtime/phaseaware_runtime.md`](docs/runtime/phaseaware_runtime.md).
+This Python interface supplements rather than replaces the serialized
+research-artifact contract described below.
+
 Canonical artifacts produced by every experiment:
 
 - `strategy_evaluations.parquet` — canonical evaluation evidence
