@@ -10,7 +10,6 @@ from ta.volatility import BollingerBands
 from ta.trend import SMAIndicator, ADXIndicator
 from ta.momentum import StochasticOscillator, RSIIndicator
 
-from src.dl_daily_features import D1_FEATURE_COLS as _DL_D1_FEATURE_COLS
 from src.strategy_registry import (
     DEFAULT_PHASEAWARE_POLICY_ID,
     ResolvedPhaseAwareComposition,
@@ -19,6 +18,19 @@ from src.strategy_registry import (
     resolve_phaseaware_configuration,
     resolve_phaseaware_strategy_pair,
 )
+
+def _dl_d1_feature_cols() -> tuple:
+    """Lazily resolve DL D1 feature column names (keeps the DL loader off the import path)."""
+    from src.dl_daily_features import D1_FEATURE_COLS
+    return D1_FEATURE_COLS
+
+
+def __getattr__(name):
+    # Backward compatibility: ``src.strategies._DL_D1_FEATURE_COLS`` stays importable.
+    if name == "_DL_D1_FEATURE_COLS":
+        return _dl_d1_feature_cols()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 _DEFAULT_EVALUATED_TF_STRATEGY_IDS = ("TF1", "TF2", "TF3", "TF4", "TF5")
 _DEFAULT_EVALUATED_MR_STRATEGY_IDS = ("MR1", "MR2", "MR32", "MR42", "MR5")
@@ -1032,25 +1044,35 @@ class PhaseAwareStrategy:
                               One of: MR1, MR2, MR3, MR32, MR42, MR5
                               Default: MR3 (RSI crossover — most robust baseline)
         """
-        registry = get_default_strategy_registry()
-        trend_strategy_ids = [definition.strategy_id for definition in registry.by_family("TrendFollowing")]
-        mean_reversion_strategy_ids = [definition.strategy_id for definition in registry.by_family("MeanReversion")]
+        trend_strategies = {
+            "TF1": TF1Strategy,
+            "TF2": TF2Strategy,
+            "TF3": TF3Strategy,
+            "TF4": TF4Strategy,
+            "TF5": TF5Strategy,
+        }
+        mean_reversion_strategies = {
+            "MR1": MR1Strategy,
+            "MR2": MR2Strategy,
+            "MR3": MR3Strategy,
+            "MR32": MR32Strategy,
+            "MR42": MR42Strategy,
+            "MR5": MR5Strategy,
+        }
 
-        if tf_strategy_name not in trend_strategy_ids:
+        if tf_strategy_name not in trend_strategies:
             raise ValueError(
                 f"Unknown TF strategy '{tf_strategy_name}'. "
-                f"Choose from: {trend_strategy_ids}"
+                f"Choose from: {list(trend_strategies)}"
             )
-        if mr_strategy_name not in mean_reversion_strategy_ids:
+        if mr_strategy_name not in mean_reversion_strategies:
             raise ValueError(
                 f"Unknown MR strategy '{mr_strategy_name}'. "
-                f"Choose from: {mean_reversion_strategy_ids}"
+                f"Choose from: {list(mean_reversion_strategies)}"
             )
 
-        tf_definition = registry.get(tf_strategy_name)
-        mr_definition = registry.get(mr_strategy_name)
-        self.tf_strategy = tf_definition.instantiate()
-        self.mr_strategy = mr_definition.instantiate()
+        self.tf_strategy = trend_strategies[tf_strategy_name]()
+        self.mr_strategy = mean_reversion_strategies[mr_strategy_name]()
         self.tf_strategy_name = tf_strategy_name
         self.mr_strategy_name = mr_strategy_name
         self.name = f'PhaseAware_{tf_strategy_name}_{mr_strategy_name}'
@@ -1947,7 +1969,7 @@ class StrategySelector_Dynamic:
 
         # --- DL feature surface diagnostics (only when dl_debug_verbose=True) ---
         if self.dl_debug_verbose:
-            dl_cols_in_df = [c for c in _DL_D1_FEATURE_COLS if c in df.columns]
+            dl_cols_in_df = [c for c in _dl_d1_feature_cols() if c in df.columns]
             selector_feat_count = len(selector.feature_cols) if selector is not None else 0
             if dl_cols_in_df:
                 any_dl_pct = (
@@ -2111,7 +2133,7 @@ class StrategySelector_Dynamic:
                         for name, value in zip(feature_schema, scaled)
                     }
 
-                dl_cols_present = [c for c in _DL_D1_FEATURE_COLS if c in raw_row.index]
+                dl_cols_present = [c for c in _dl_d1_feature_cols() if c in raw_row.index]
                 dl_available_at_bar = bool(
                     dl_cols_present and raw_row[dl_cols_present].notna().any()
                 )
