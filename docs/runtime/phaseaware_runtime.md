@@ -55,23 +55,25 @@ evidence.
 
 ## Warm-up and supplied-history start
 
-The current detector and selected strategies imply a minimum of **139
+The current detector and selected strategies imply a minimum of **126
 bars**:
 
 | Dependency | Required observations |
 |---|---:|
 | ADX(14), including its `ta` startup placeholders | 28 |
 | ATR(14) | 14 |
-| ATR%-median classification | 13 startup bars + rolling `min_periods` 126 = 139 |
+| ATR%-median classification | rolling `min_periods` 126 = 126 |
 | TF4 LWMA(40) and its previous value | 41 |
 | TF4 Stochastic %K(5) | 5 |
 | MR42 Bollinger Bands(20) | 20 |
 | MR42 previous close | 2 |
 
-The maximum is 139. The volatility rolling window is 252, but its actual
-`min_periods` is 126; 252 bars are therefore not required. RSI is excluded:
-neither this phase detector nor TF4/MR42 consumes it. Warm-up counts
-observations; it does not truncate or reset state.
+The maximum is 126. The volatility rolling window is 252, but its actual
+`min_periods` is 126; pandas counts the canonical numeric ATR startup
+placeholders toward that threshold, so the 13 ATR startup bars are not added
+again. The 252-bar window is not required. RSI is excluded: neither this phase
+detector nor TF4/MR42 consumes it. Warm-up counts observations; it does not
+truncate or reset state.
 
 TF4/MR42 forward-fill a position-like signal state. Consequently a later
 decision can depend on an entry (or exit) earlier in the supplied history.

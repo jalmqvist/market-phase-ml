@@ -117,17 +117,16 @@ def required_history() -> int:
     """
     Minimum number of bars, derived from the canonical dependency chain.
 
-    Each term is the number of bars after which the latest bar's value is
-    first a real (non-NaN, non-placeholder) value:
+    Each term is the number of bars after which the canonical dependency
+    provides the latest bar's required value:
 
     * ADX(adx_period): ``ta`` emits 0.0 placeholders for the first
       ``2*adx_period - 1`` bars -> ``2 * adx_period`` bars.
-    * ATR(atr_period) / ATR%: placeholders for ``atr_period - 1`` bars ->
-      ``atr_period`` bars.
+    * ATR(atr_period): ``atr_period`` bars.
     * Volatility classifier: rolling median of ATR% with
-      ``min_periods = vol_rolling_window // 2``; it needs that many *real*
-      ATR% observations -> ``(atr_period - 1) + min_periods`` bars. The
-      252-bar window length itself is not required.
+      ``min_periods = vol_rolling_window // 2``. Pandas counts the canonical
+      numeric startup placeholders toward ``min_periods``, so this requires
+      ``min_periods`` bars. The 252-bar window length itself is not required.
     * TF4: LWMA(lwma_period) and its one-bar lag -> ``lwma_period + 1``;
       Stochastic %K -> ``stoch_k``.
     * MR42: Bollinger(bb_period) -> ``bb_period``; ``prev_close`` -> 2.
@@ -140,7 +139,7 @@ def required_history() -> int:
     terms = (
         2 * detector.adx_period,
         detector.atr_period,
-        (detector.atr_period - 1) + median_min_periods,
+        median_min_periods,
         tf.lwma_period + 1,
         tf.stoch_k,
         mr.bb_period,

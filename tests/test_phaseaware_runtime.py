@@ -62,8 +62,8 @@ def hist():
 HEAVY = [
     "main", "src.models", "src.visualization", "src.data", "src.data_sources",
     "src.dl_daily_features", "src.dl_surface_loader", "src.evaluation_scope",
-    "schemas", "sklearn", "matplotlib", "seaborn", "scipy", "xgboost",
-    "yfinance", "torch",
+    "mpml.behavioral", "mpml.behavioral.registry", "schemas", "sklearn",
+    "matplotlib", "seaborn", "scipy", "xgboost", "yfinance", "torch",
 ]
 
 
@@ -209,7 +209,7 @@ def test_timezone_aware_input_preserves_timestamp(hist):
 # 4/5. Warm-up --------------------------------------------------------------
 
 def test_required_history_derivation():
-    assert required_history() == 139  # (atr 14 - 1) + median min_periods 126
+    assert required_history() == 126  # canonical ATR%-median min_periods
     assert required_history() < 252
 
 
@@ -254,7 +254,7 @@ def test_success_at_threshold(hist):
 
 # 6/7/8. Causality ----------------------------------------------------------
 
-CUTOFFS = [139, 140, 200, 253, 400, 777, 1199]  # inclusive row positions (1199 = full history)
+CUTOFFS = [126, 127, 200, 253, 400, 777, 1199]  # inclusive row positions (1199 = full history)
 
 
 @pytest.fixture(scope="module")

@@ -4,8 +4,6 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, Iterable
 
-from mpml.behavioral import registry as behavioral_registry
-
 DEFAULT_PHASEAWARE_POLICY_ID = "phaseaware_default"
 
 
@@ -93,6 +91,8 @@ class StrategyRegistry:
     def _validate_capabilities(definition: StrategyDefinition) -> None:
         capabilities = definition.capabilities
         for surface_id in capabilities.supported_surfaces:
+            from mpml.behavioral import registry as behavioral_registry
+
             try:
                 behavioral_registry.load(surface_id)
             except KeyError as exc:
