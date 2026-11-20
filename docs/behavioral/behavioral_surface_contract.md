@@ -161,6 +161,30 @@ JPY_CONSENSUS_MATURE
 
 ---
 
+## Persistent
+
+Surface ID
+
+```
+persistent
+```
+
+Canonical states
+
+```
+PERSISTENT_HH
+PERSISTENT_HM
+PERSISTENT_HL
+PERSISTENT_MH
+PERSISTENT_MM
+PERSISTENT_ML
+PERSISTENT_LH
+PERSISTENT_LM
+PERSISTENT_LL
+```
+
+---
+
 # Compatibility
 
 Behavioral State identifiers constitute stable external interfaces.
