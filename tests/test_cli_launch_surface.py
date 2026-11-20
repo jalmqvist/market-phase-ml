@@ -338,7 +338,7 @@ def test_dl_strict_boolean_is_characterized_in_both_importers(
         (None, None),
         ("", None),
         ("   ", None),
-        ("EURUSD, unknown, gbpusd", ["EURUSD", "UNKNOWN", "GBPUSD"]),
+        ("EURUSD, unknown, gbpusd", ["EURUSD", "GBPUSD", "UNKNOWN"]),
         ("eurusd,,  ", ["EURUSD"]),
     ],
 )
