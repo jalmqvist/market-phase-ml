@@ -1,5 +1,4 @@
 # main.py
-import argparse
 import sys
 import importlib.metadata as importlib_metadata
 import traceback
@@ -86,11 +85,13 @@ from src.recommendation import (
 from mpml.behavioral import registry as behavioral_registry
 from mpml.behavioral.compat import build_behavioral_surface_manifest_block
 from experiment_semantics import (
+    VALID_EXPERIMENT_GENERATIONS,
     VALID_EXPERIMENT_VARIANTS,
     build_experiment_metadata_from_variant,
     infer_imputation_awareness_from_name,
     normalize_variant,
 )
+from mpml.cli import build_parser
 
 
 # ─────────────────────────────────────────
@@ -123,7 +124,6 @@ def _stable_feature_columns(cols: list[str] | tuple[str, ...]) -> list[str]:
 # clear_cache('ml_results')
 # clear_cache('ml_predicted_phases')
 # clear_cache('ml_backtest_results')
-clear_cache()   # clears everything
 # ─────────────────────────────────────────
 WF_TRAIN_YEARS = 7
 WF_TEST_MONTHS = 6
@@ -218,17 +218,16 @@ def filter_pair_universe(raw_data: dict) -> dict:
 RUN_ID = None  # set to a string to force a specific id; otherwise auto-generated
 _CURRENT_RUN_OUTPUT_DIR: Path | None = None
 
-_VALID_EXPERIMENT_GENERATIONS = {"gen1", "gen2"}
 _LEGACY_RESULTS_DIR = "results"
 _DEFAULT_RUNS_ROOT = "results_archive"
 
 
 def _validate_experiment_generation(value: str) -> str:
     gen = str(value).strip().lower()
-    if gen not in _VALID_EXPERIMENT_GENERATIONS:
+    if gen not in VALID_EXPERIMENT_GENERATIONS:
         raise ValueError(
             f"Invalid experiment generation: {value!r}. "
-            f"Allowed values={sorted(_VALID_EXPERIMENT_GENERATIONS)}"
+            f"Allowed values={sorted(VALID_EXPERIMENT_GENERATIONS)}"
         )
     return gen
 
@@ -333,10 +332,6 @@ EXPORT_SELECTOR_STATE_TIMELINE = (
 
 START_DATE = os.environ.get("MPML_START_DATE", "2005-01-01")
 END_DATE = os.environ.get("MPML_END_DATE", "2026-04-01")
-print(
-    f"[CONFIG] START_DATE={START_DATE} "
-    f"END_DATE={END_DATE}"
-)
 INITIAL_CAPITAL     = 10000.0
 MIN_PHASE_SAMPLES   = 100       # Minimum samples per phase for ML
 USE_ATR_SIZING      = False     # Set True to compare ATR-based sizing
@@ -5204,136 +5199,17 @@ def main(
 
 
 def _run_cli(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Run MPML pipeline with run-owned output directories.")
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=None,
-        help=(
-            "Explicit run output directory (writes all run artifacts here). "
-            "If omitted, MPML creates results_archive/<gen>_<variant>__<timestamp>/."
-        ),
-    )
-    parser.add_argument(
-        "--experiment-generation",
-        type=str,
-        default=None,
-        choices=sorted(_VALID_EXPERIMENT_GENERATIONS),
-        help="Optional generation consistency hint (gen1|gen2). Must match selected variant semantics if provided.",
-    )
-    parser.add_argument(
-        "--experiment-variant",
-        type=str,
-        default=None,
-        choices=sorted(VALID_EXPERIMENT_VARIANTS),
-        help=(
-            "Canonical experiment variant (A|B|C|D|E|F). "
-            "Precedence: --experiment-variant > EXPERIMENT_VARIANT env > default A."
-        ),
-    )
-    parser.add_argument(
-        "--experiment-seed",
-        type=int,
-        default=None,
-        help=(
-            "Experiment RNG seed. Precedence: --experiment-seed > EXPERIMENT_SEED env "
-            f"> default ({DEFAULT_EXPERIMENT_SEED})."
-        ),
-    )
-    parser.add_argument(
-        "--behavioral-surface",
-        type=str,
-        default=None,
-        choices=behavioral_registry.available(),
-        help=(
-            "Behavioral Surface to use for this run. "
-            "Precedence: --behavioral-surface > BEHAVIORAL_SURFACE env > 'trend_vol'. "
-            f"Available: {behavioral_registry.available()}. "
-            "Trend/Vol (trend_vol) is the default and preserves existing run behaviour."
-        ),
-    )
-    parser.add_argument(
-        "--recommendations-per-pair",
-        action="store_true",
-        default=False,
-        help="Generate recommendations_per_pair.parquet from pair-scoped walk-forward evidence.",
-    )
-    parser.add_argument(
-        "--recommendation-top-n",
-        type=int,
-        default=None,
-        dest="recommendation_top_n",
-        help=(
-            "Return only the top N recommendations ordered by the default recommendation policy "
-            "(sharpe_rank_v1). If omitted, all recommendations are returned. "
-            "N must be a positive integer."
-        ),
-    )
-    parser.add_argument(
-        "--strategy",
-        action="append",
-        dest="strategy",
-        default=None,
-        metavar="STRATEGY_ID",
-        help=(
-            "Evaluate only this strategy ID. Repeatable: --strategy TF4 --strategy MR42. "
-            "When omitted, the default evaluation scope from the active EvaluationPolicy "
-            "is used (backward-compatible). "
-            "IDs are validated against the Strategy Registry. "
-            f"Available: {get_default_strategy_registry().available()}"
-        ),
-    )
-    parser.add_argument(
-        "--phaseaware-tf",
-        action="append",
-        dest="phaseaware_tf",
-        default=None,
-        metavar="STRATEGY_ID",
-        help=(
-            "Override the TrendFollowing representative used by PhaseAware for this run. "
-            "Must be a Strategy Registry TrendFollowing ID, e.g. TF2. "
-            "May be provided at most once."
-        ),
-    )
-    parser.add_argument(
-        "--phaseaware-mr",
-        action="append",
-        dest="phaseaware_mr",
-        default=None,
-        metavar="STRATEGY_ID",
-        help=(
-            "Override the MeanReversion representative used by PhaseAware for this run. "
-            "Must be a Strategy Registry MeanReversion ID, e.g. MR2. "
-            "May be provided at most once."
-        ),
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        dest="debug",
-        default=False,
-        help=(
-            "Enable verbose debug output: [AWARENESS], [TRAINING DIAGNOSTICS], "
-            "[DL FEATURE USAGE], and other detailed per-fold diagnostics that are "
-            "suppressed by default for concise normal output."
-        ),
-    )
-    parser.add_argument(
-        "--export-dl-conditional-portfolio-timeline",
-        action="store_true",
-        dest="export_dl_conditional_portfolio_timeline",
-        default=False,
-        help=(
-            "Opt-in: write dl_conditional_portfolio_timeline.csv (per pair/fold/test-bar "
-            "realized dynamic-selector portfolio outcomes with dl_available) to the run "
-            "output directory. Disabled by default; does not change strategy behavior."
-        ),
-    )
+    parser = build_parser()
     args = parser.parse_args(argv)
     if args.phaseaware_tf and len(args.phaseaware_tf) > 1:
         parser.error("--phaseaware-tf may be specified at most once")
     if args.phaseaware_mr and len(args.phaseaware_mr) > 1:
         parser.error("--phaseaware-mr may be specified at most once")
+    clear_cache()
+    print(
+        f"[CONFIG] START_DATE={START_DATE} "
+        f"END_DATE={END_DATE}"
+    )
     main(
         output_dir=args.output_dir,
         experiment_generation=args.experiment_generation,

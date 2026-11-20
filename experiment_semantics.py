@@ -25,6 +25,7 @@ CURRENT_EXPERIMENT_SEMANTICS_VERSION = 3
 EXPERIMENT_SURFACE_VERSION = 5
 LEGACY_VARIANT = "U"
 VALID_EXPERIMENT_VARIANTS = {"A", "B", "C", "D", "E", "F"}
+VALID_EXPERIMENT_GENERATIONS = {"gen1", "gen2"}
 EXPERIMENT_RUN_FAMILY = "factorial_v1"
 
 # Runtime factor keys — describe runtime architecture configuration.
