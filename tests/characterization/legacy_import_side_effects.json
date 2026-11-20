@@ -1,0 +1,9 @@
+{
+  "cache_after_import": [
+    "pr1_keep.txt"
+  ],
+  "import_stderr": "",
+  "import_stdout": "  \u2713 Cleared 1 cache file(s)\n[CONFIG] START_DATE=2005-01-01 END_DATE=2026-04-01\n",
+  "non_pkl_preserved": true,
+  "probe_pkl_removed": true
+}

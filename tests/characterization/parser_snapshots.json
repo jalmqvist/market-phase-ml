@@ -1,0 +1,157 @@
+[
+  {
+    "name": "no_arguments",
+    "result": {
+      "kwargs": {
+        "behavioral_surface": null,
+        "debug": false,
+        "experiment_generation": null,
+        "experiment_seed": null,
+        "experiment_variant": null,
+        "export_dl_conditional_portfolio_timeline": false,
+        "output_dir": null,
+        "phaseaware_mr": null,
+        "phaseaware_tf": null,
+        "recommendation_top_n": null,
+        "recommendations_per_pair": false,
+        "strategy": null
+      }
+    }
+  },
+  {
+    "name": "all_flags",
+    "result": {
+      "kwargs": {
+        "behavioral_surface": "trend_vol",
+        "debug": true,
+        "experiment_generation": "gen1",
+        "experiment_seed": 123,
+        "experiment_variant": "A",
+        "export_dl_conditional_portfolio_timeline": true,
+        "output_dir": "relative/path",
+        "phaseaware_mr": "MR2",
+        "phaseaware_tf": "TF2",
+        "recommendation_top_n": 3,
+        "recommendations_per_pair": true,
+        "strategy": [
+          "TF4"
+        ]
+      }
+    }
+  },
+  {
+    "name": "repeated_strategy_duplicates",
+    "result": {
+      "kwargs": {
+        "behavioral_surface": null,
+        "debug": false,
+        "experiment_generation": null,
+        "experiment_seed": null,
+        "experiment_variant": null,
+        "export_dl_conditional_portfolio_timeline": false,
+        "output_dir": null,
+        "phaseaware_mr": null,
+        "phaseaware_tf": null,
+        "recommendation_top_n": null,
+        "recommendations_per_pair": false,
+        "strategy": [
+          "TF4",
+          "TF4"
+        ]
+      }
+    }
+  },
+  {
+    "name": "repeated_phaseaware_tf",
+    "result": {
+      "system_exit": 2
+    }
+  },
+  {
+    "name": "repeated_phaseaware_mr",
+    "result": {
+      "system_exit": 2
+    }
+  },
+  {
+    "name": "invalid_behavioral_surface",
+    "result": {
+      "system_exit": 2
+    }
+  },
+  {
+    "name": "invalid_experiment_variant",
+    "result": {
+      "system_exit": 2
+    }
+  },
+  {
+    "name": "invalid_experiment_generation",
+    "result": {
+      "system_exit": 2
+    }
+  },
+  {
+    "name": "invalid_experiment_seed",
+    "result": {
+      "system_exit": 2
+    }
+  },
+  {
+    "name": "recommendation_top_n_zero",
+    "result": {
+      "kwargs": {
+        "behavioral_surface": null,
+        "debug": false,
+        "experiment_generation": null,
+        "experiment_seed": null,
+        "experiment_variant": null,
+        "export_dl_conditional_portfolio_timeline": false,
+        "output_dir": null,
+        "phaseaware_mr": null,
+        "phaseaware_tf": null,
+        "recommendation_top_n": 0,
+        "recommendations_per_pair": false,
+        "strategy": null
+      }
+    }
+  },
+  {
+    "name": "output_dir_relative",
+    "result": {
+      "kwargs": {
+        "behavioral_surface": null,
+        "debug": false,
+        "experiment_generation": null,
+        "experiment_seed": null,
+        "experiment_variant": null,
+        "export_dl_conditional_portfolio_timeline": false,
+        "output_dir": "relative/path",
+        "phaseaware_mr": null,
+        "phaseaware_tf": null,
+        "recommendation_top_n": null,
+        "recommendations_per_pair": false,
+        "strategy": null
+      }
+    }
+  },
+  {
+    "name": "store_true_flags",
+    "result": {
+      "kwargs": {
+        "behavioral_surface": null,
+        "debug": true,
+        "experiment_generation": null,
+        "experiment_seed": null,
+        "experiment_variant": null,
+        "export_dl_conditional_portfolio_timeline": true,
+        "output_dir": null,
+        "phaseaware_mr": null,
+        "phaseaware_tf": null,
+        "recommendation_top_n": null,
+        "recommendations_per_pair": true,
+        "strategy": null
+      }
+    }
+  }
+]

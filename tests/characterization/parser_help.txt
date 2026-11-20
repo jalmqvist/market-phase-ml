@@ -1,0 +1,57 @@
+usage: mpml [-h] [--output-dir OUTPUT_DIR] [--experiment-generation {gen1,gen2}]
+            [--experiment-variant {A,B,C,D,E,F}] [--experiment-seed EXPERIMENT_SEED]
+            [--behavioral-surface {persistent,reactive_jpy,trend_vol}]
+            [--recommendations-per-pair] [--recommendation-top-n RECOMMENDATION_TOP_N]
+            [--strategy STRATEGY_ID] [--phaseaware-tf STRATEGY_ID] [--phaseaware-mr STRATEGY_ID]
+            [--debug] [--export-dl-conditional-portfolio-timeline]
+
+Run MPML pipeline with run-owned output directories.
+
+options:
+  -h, --help            show this help message and exit
+  --output-dir OUTPUT_DIR
+                        Explicit run output directory (writes all run artifacts here). If omitted,
+                        MPML creates results_archive/<gen>_<variant>__<timestamp>/.
+  --experiment-generation {gen1,gen2}
+                        Optional generation consistency hint (gen1|gen2). Must match selected
+                        variant semantics if provided.
+  --experiment-variant {A,B,C,D,E,F}
+                        Canonical experiment variant (A|B|C|D|E|F). Precedence: --experiment-
+                        variant > EXPERIMENT_VARIANT env > default A.
+  --experiment-seed EXPERIMENT_SEED
+                        Experiment RNG seed. Precedence: --experiment-seed > EXPERIMENT_SEED env >
+                        default (42).
+  --behavioral-surface {persistent,reactive_jpy,trend_vol}
+                        Behavioral Surface to use for this run. Precedence: --behavioral-surface >
+                        BEHAVIORAL_SURFACE env > 'trend_vol'. Available: ['persistent',
+                        'reactive_jpy', 'trend_vol']. Trend/Vol (trend_vol) is the default and
+                        preserves existing run behaviour.
+  --recommendations-per-pair
+                        Generate recommendations_per_pair.parquet from pair-scoped walk-forward
+                        evidence.
+  --recommendation-top-n RECOMMENDATION_TOP_N
+                        Return only the top N recommendations ordered by the default
+                        recommendation policy (sharpe_rank_v1). If omitted, all recommendations
+                        are returned. N must be a positive integer.
+  --strategy STRATEGY_ID
+                        Evaluate only this strategy ID. Repeatable: --strategy TF4 --strategy
+                        MR42. When omitted, the default evaluation scope from the active
+                        EvaluationPolicy is used (backward-compatible). IDs are validated against
+                        the Strategy Registry. Available: ['MR1', 'MR2', 'MR3', 'MR32', 'MR42',
+                        'MR5', 'TF1', 'TF2', 'TF3', 'TF4', 'TF5']
+  --phaseaware-tf STRATEGY_ID
+                        Override the TrendFollowing representative used by PhaseAware for this
+                        run. Must be a Strategy Registry TrendFollowing ID, e.g. TF2. May be
+                        provided at most once.
+  --phaseaware-mr STRATEGY_ID
+                        Override the MeanReversion representative used by PhaseAware for this run.
+                        Must be a Strategy Registry MeanReversion ID, e.g. MR2. May be provided at
+                        most once.
+  --debug               Enable verbose debug output: [AWARENESS], [TRAINING DIAGNOSTICS], [DL
+                        FEATURE USAGE], and other detailed per-fold diagnostics that are
+                        suppressed by default for concise normal output.
+  --export-dl-conditional-portfolio-timeline
+                        Opt-in: write dl_conditional_portfolio_timeline.csv (per pair/fold/test-
+                        bar realized dynamic-selector portfolio outcomes with dl_available) to the
+                        run output directory. Disabled by default; does not change strategy
+                        behavior.
