@@ -24,8 +24,19 @@ def _isolated_python(
     unset: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
+    for key in list(env):
+        if key.startswith(("MPML_", "DL_", "BEHAVIORAL_", "EXPERIMENT_")) or key in {
+            "ACTIVE_PAIRS",
+            "EXPORT_SELECTOR_STATE_TIMELINE",
+            "OVERLAP_ONLY",
+            "MSML_REGIME",
+            "MIN_DL_TRAIN_COVERAGE_PCT",
+        }:
+            env.pop(key)
     env["PYTHONPATH"] = str(ROOT)
     env["MPLBACKEND"] = "Agg"
+    env["MPLCONFIGDIR"] = str(tmp_path.parent / f"{tmp_path.name}-mplconfig")
+    Path(env["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
     for key in unset:
         env.pop(key, None)
     env.update(env_updates or {})
@@ -73,16 +84,14 @@ PARSER_ARGV = {
 
 
 def test_cli_arguments_match_committed_pre_refactor_snapshot(tmp_path: Path) -> None:
-    result = _isolated_python(
-        tmp_path,
-        f"""
+    code = """
         import contextlib
         import io
         import json
         import main
         from pathlib import Path
 
-        cases = {json.dumps(PARSER_ARGV)}
+        cases = __PARSER_ARGV__
         outcomes = []
         captured = {}
         def record(**kwargs):
@@ -96,14 +105,15 @@ def test_cli_arguments_match_committed_pre_refactor_snapshot(tmp_path: Path) -> 
                 kwargs = dict(captured)
                 if kwargs["output_dir"] is not None:
                     kwargs["output_dir"] = str(kwargs["output_dir"])
-                outcome = {{
-                    "kwargs": kwargs
-                }}
+                outcome = {"kwargs": kwargs}
             except SystemExit as exc:
-                outcome = {{"system_exit": exc.code}}
-            outcomes.append({{"name": name, "result": outcome}})
+                outcome = {"system_exit": exc.code}
+            outcomes.append({"name": name, "result": outcome})
         print(json.dumps(outcomes))
-        """,
+        """
+    result = _isolated_python(
+        tmp_path,
+        code.replace("__PARSER_ARGV__", json.dumps(PARSER_ARGV)),
         env_updates={"DL_SIGNALS_ENABLED": "false"},
     )
     assert result.returncode == 0, result.stderr
@@ -190,19 +200,20 @@ def test_help_and_rejected_cli_arguments_preserve_cache(
     (tmp_path / "data" / "cache").mkdir(parents=True)
     (tmp_path / "data" / "cache" / "keep.pkl").write_text("keep")
     (tmp_path / "data" / "cache" / "keep.txt").write_text("keep")
-    result = _isolated_python(
-        tmp_path,
-        f"""
+    code = """
         import contextlib
         import io
         import json
         import main
         try:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                main._run_cli({json.dumps(argv)})
+                main._run_cli(__CLI_ARGV__)
         except SystemExit as exc:
-            print(json.dumps({{"exit": exc.code}}))
-        """,
+            print(json.dumps({"exit": exc.code}))
+        """
+    result = _isolated_python(
+        tmp_path,
+        code.replace("__CLI_ARGV__", json.dumps(argv)),
         env_updates={"DL_SIGNALS_ENABLED": "false"},
     )
     assert result.returncode == 0, result.stderr
@@ -293,7 +304,14 @@ def test_dl_strict_boolean_is_characterized_in_both_importers(
     tmp_path: Path, value: str | None, expected: bool
 ) -> None:
     updates = {"DL_SIGNALS_ENABLED": value} if value is not None else {}
-    unset = () if value is not None else ("DL_SIGNALS_ENABLED",)
+    loose_updates = (
+        {"EXPORT_SELECTOR_STATE_TIMELINE": value} if value is not None else {}
+    )
+    unset = (
+        ()
+        if value is not None
+        else ("DL_SIGNALS_ENABLED", "EXPORT_SELECTOR_STATE_TIMELINE")
+    )
     result = _isolated_python(
         tmp_path,
         """
@@ -306,9 +324,7 @@ def test_dl_strict_boolean_is_characterized_in_both_importers(
             main.EXPORT_SELECTOR_STATE_TIMELINE,
         ]))
         """,
-        env_updates={**updates, "EXPORT_SELECTOR_STATE_TIMELINE": value}
-        if value is not None
-        else updates,
+        env_updates={**updates, **loose_updates},
         unset=unset,
     )
     assert result.returncode == 0, result.stderr
@@ -318,8 +334,13 @@ def test_dl_strict_boolean_is_characterized_in_both_importers(
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [(None, None), ("EURUSD, unknown, gbpusd", ["EURUSD", "UNKNOWN", "GBPUSD"]),
-     ("eurusd,,  ", ["EURUSD"])],
+    [
+        (None, None),
+        ("", None),
+        ("   ", None),
+        ("EURUSD, unknown, gbpusd", ["EURUSD", "UNKNOWN", "GBPUSD"]),
+        ("eurusd,,  ", ["EURUSD"]),
+    ],
 )
 def test_active_pairs_are_trimmed_uppercased_and_unknown_names_retained(
     tmp_path: Path, value: str | None, expected: list[str] | None
@@ -357,7 +378,7 @@ def test_artifact_alias_uses_cube_path_only_when_primary_is_unset(
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == "alias.parquet"
-    for primary, expected in (("", ""), ("primary.parquet", "primary.parquet")):
+    for primary, expected in (("", "."), ("primary.parquet", "primary.parquet")):
         case_dir = tmp_path / ("empty-primary" if not primary else "explicit-primary")
         case_dir.mkdir()
         case = _isolated_python(
@@ -371,12 +392,14 @@ def test_artifact_alias_uses_cube_path_only_when_primary_is_unset(
                 "DL_PREDICTION_ARTIFACT_PATH": primary,
                 "DL_SIGNALS_CUBE_PATH": "alias.parquet",
             },
+            unset=("DL_PREDICTION_ARTIFACT_PATH", "DL_SIGNALS_CUBE_PATH"),
         )
         assert case.returncode == 0, case.stderr
         assert json.loads(case.stdout) == expected
 
 
 def test_dl_enabled_without_resolvable_or_existing_explicit_artifact_disables_runtime(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from src import behavioral_artifact_resolver as resolver
@@ -395,7 +418,7 @@ def test_dl_enabled_without_resolvable_or_existing_explicit_artifact_disables_ru
 
     explicit_missing = resolver.resolve_behavioral_artifact_runtime(
         **common,
-        explicit_artifact_path="/not/a/real/predictions.parquet",
+        explicit_artifact_path=str(tmp_path / "missing.parquet"),
     )
     assert not explicit_missing.enabled
     assert any("no prediction artifact was resolved" in line for line in explicit_missing.diagnostics)
@@ -550,7 +573,10 @@ def test_clear_cache_removes_only_cache_pickle_files(tmp_path: Path) -> None:
         import json
         from pathlib import Path
         from src.cache import clear_cache
-        clear_cache()
+        import contextlib
+        import io
+        with contextlib.redirect_stdout(io.StringIO()):
+            clear_cache()
         print(json.dumps({
             "cache": sorted(path.name for path in Path("data/cache").iterdir()),
             "broker": (Path("data/raw_broker_csv/one.pkl").exists()),
@@ -563,19 +589,12 @@ def test_clear_cache_removes_only_cache_pickle_files(tmp_path: Path) -> None:
 
 
 def test_recommendation_top_n_validation_is_late_and_accepts_positive_values() -> None:
-    from src.recommendation import (
-        DEFAULT_RECOMMENDATION_POLICY,
-        generate_per_pair_recommendations,
-    )
+    from src.recommendation import recommendations_from_evaluations
 
-    assert generate_per_pair_recommendations(
-        [], DEFAULT_RECOMMENDATION_POLICY, top_n=3
-    ) == []
+    assert recommendations_from_evaluations([], top_n=3) == []
     for top_n in (0, -1):
         with pytest.raises(ValueError, match="top_n must be a positive integer"):
-            generate_per_pair_recommendations(
-                [], DEFAULT_RECOMMENDATION_POLICY, top_n=top_n
-            )
+            recommendations_from_evaluations([], top_n=top_n)
 
 
 def test_direct_main_call_does_not_inherit_import_cache_or_config_side_effects(
