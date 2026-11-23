@@ -25,6 +25,11 @@ RECOMMENDATION_PER_PAIR_SCHEMA_VERSION = RECOMMENDATION_SCHEMA_VERSION
 DEFAULT_RECOMMENDATION_POLICY = "sharpe_rank_v1"
 
 
+def validate_recommendation_top_n(top_n: int | None) -> None:
+    if top_n is not None and top_n <= 0:
+        raise ValueError(f"top_n must be a positive integer, got {top_n!r}")
+
+
 def _stable_json(payload: Mapping[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
@@ -260,8 +265,7 @@ def generate_per_pair_recommendations(
     top_n: int | None = None,
 ) -> list[RecommendationPerPair]:
     """Rank pair-scoped evaluations independently using an existing policy."""
-    if top_n is not None and top_n <= 0:
-        raise ValueError(f"top_n must be a positive integer, got {top_n!r}")
+    validate_recommendation_top_n(top_n)
     if policy != DEFAULT_RECOMMENDATION_POLICY:
         raise ValueError(f"Unsupported recommendation policy: {policy!r}")
 
@@ -492,8 +496,7 @@ def recommendations_from_evaluations(
         rank assignment are always performed over the full set before
         truncation so that rank values remain consistent.
     """
-    if top_n is not None and top_n <= 0:
-        raise ValueError(f"top_n must be a positive integer, got {top_n!r}")
+    validate_recommendation_top_n(top_n)
 
     active_policy = policy if policy is not None else DEFAULT_POLICY
     all_evals = list(evaluations)

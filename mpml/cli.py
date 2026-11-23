@@ -13,6 +13,13 @@ from src.repro import DEFAULT_EXPERIMENT_SEED
 from src.strategy_registry import get_default_strategy_registry
 
 
+def validate_phaseaware_repetitions(args: argparse.Namespace) -> None:
+    if args.phaseaware_tf and len(args.phaseaware_tf) > 1:
+        raise ValueError("--phaseaware-tf may be specified at most once")
+    if args.phaseaware_mr and len(args.phaseaware_mr) > 1:
+        raise ValueError("--phaseaware-mr may be specified at most once")
+
+
 def build_parser(
     parser_class: Type[argparse.ArgumentParser] = argparse.ArgumentParser,
 ) -> argparse.ArgumentParser:

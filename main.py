@@ -2,8 +2,9 @@
 import sys
 import importlib.metadata as importlib_metadata
 import traceback
-import matplotlib
 import platform
+from typing import Any
+import matplotlib
 matplotlib.use('Agg')
 
 import pandas as pd
@@ -45,6 +46,7 @@ from src.repro import (
     set_global_seed,
     write_manifest,
 )
+from src.launch_env import min_dl_train_coverage_pct
 from src.dl_config import (
     infer_dl_feature_set_from_artifact_path,
 )
@@ -91,7 +93,7 @@ from experiment_semantics import (
     infer_imputation_awareness_from_name,
     normalize_variant,
 )
-from mpml.cli import build_parser
+from mpml.cli import build_parser, validate_phaseaware_repetitions
 
 
 # ─────────────────────────────────────────
@@ -147,7 +149,7 @@ DL_SIGNAL_SURFACE = {
 
 # DL debug verbosity (controls noisy per-pair diagnostics)
 DL_DEBUG_VERBOSE = False
-MIN_DL_TRAIN_COVERAGE_PCT = float(os.environ.get("MIN_DL_TRAIN_COVERAGE_PCT", "5.0"))
+MIN_DL_TRAIN_COVERAGE_PCT = min_dl_train_coverage_pct()
 
 # Expensive sweeps (disable by default)
 RUN_TAU_SWEEP = False
@@ -251,6 +253,35 @@ def _build_experiment_metadata(
         _validate_experiment_variant(variant),
         factor_overrides=factor_overrides,
     )
+
+
+def _validate_generation_for_variant(
+    generation_hint: str,
+    experiment_meta: dict[str, Any],
+) -> str:
+    normalized_generation = _validate_experiment_generation(generation_hint)
+    if normalized_generation != experiment_meta["generation"]:
+        raise ValueError(
+            "Conflicting experiment semantic inputs: "
+            f"variant={experiment_meta['variant']} implies generation={experiment_meta['generation']}, "
+            f"but generation hint was {normalized_generation}."
+        )
+    return normalized_generation
+
+
+def _resolve_behavioral_surface(
+    behavioral_surface: str | None,
+) -> tuple[str, Any]:
+    surface_id = (
+        behavioral_surface
+        or os.getenv("BEHAVIORAL_SURFACE", "trend_vol").strip()
+    )
+    if surface_id not in behavioral_registry:
+        raise ValueError(
+            f"Unknown --behavioral-surface {surface_id!r}. "
+            f"Available: {behavioral_registry.available()}"
+        )
+    return surface_id, behavioral_registry.load(surface_id)
 
 
 def _set_run_output_dir(path: Path) -> None:
@@ -2477,16 +2508,9 @@ def main(
     # Precedence: CLI --behavioral-surface > BEHAVIORAL_SURFACE env > "trend_vol"
     # Trend/Vol remains the default; existing runs are unaffected.
     # ------------------------------------------------------------------
-    _resolved_behavioral_surface_id = (
-        behavioral_surface
-        or os.getenv("BEHAVIORAL_SURFACE", "trend_vol").strip()
+    _resolved_behavioral_surface_id, _resolved_behavioral_surface = (
+        _resolve_behavioral_surface(behavioral_surface)
     )
-    if _resolved_behavioral_surface_id not in behavioral_registry:
-        raise ValueError(
-            f"Unknown --behavioral-surface {_resolved_behavioral_surface_id!r}. "
-            f"Available: {behavioral_registry.available()}"
-        )
-    _resolved_behavioral_surface = behavioral_registry.load(_resolved_behavioral_surface_id)
     # ----------------------------------------------------------
     # Behavioral prediction artifact resolution (Phase C)
     # ----------------------------------------------------------
@@ -2637,13 +2661,7 @@ def main(
         else os.getenv("EXPERIMENT_GENERATION")
     )
     if generation_hint is not None:
-        normalized_generation_hint = _validate_experiment_generation(generation_hint)
-        if normalized_generation_hint != experiment_meta["generation"]:
-            raise ValueError(
-                "Conflicting experiment semantic inputs: "
-                f"variant={experiment_meta['variant']} implies generation={experiment_meta['generation']}, "
-                f"but generation hint was {normalized_generation_hint}."
-            )
+        _validate_generation_for_variant(generation_hint, experiment_meta)
     run_ts = run_cfg.run_id.replace("run_", "")
     computed_default_output_dir = Path(
         os.getenv("MPML_RUNS_ROOT", _DEFAULT_RUNS_ROOT)
@@ -5201,10 +5219,10 @@ def main(
 def _run_cli(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.phaseaware_tf and len(args.phaseaware_tf) > 1:
-        parser.error("--phaseaware-tf may be specified at most once")
-    if args.phaseaware_mr and len(args.phaseaware_mr) > 1:
-        parser.error("--phaseaware-mr may be specified at most once")
+    try:
+        validate_phaseaware_repetitions(args)
+    except ValueError as exc:
+        parser.error(str(exc))
     clear_cache()
     print(
         f"[CONFIG] START_DATE={START_DATE} "

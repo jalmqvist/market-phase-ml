@@ -107,9 +107,11 @@ def resolve_dl_prediction_artifact_path(path: Path | None = None) -> Path | None
 # for canonical Behavioral Identity selection (Phase C and later).
 # target_horizon is the number of H1 bars (Int64).
 # ---------------------------------------------------------------------------
+from src.launch_env import dl_surface_target_horizon
+
 DL_SIGNAL_SURFACE: dict = {
     "model": os.environ.get("DL_SURFACE_MODEL", "lstm"),
-    "target_horizon": int(os.environ.get("DL_SURFACE_TARGET_HORIZON", "24")),
+    "target_horizon": dl_surface_target_horizon(),
     "feature_set": os.environ.get("DL_SURFACE_FEATURE_SET", "price_trend"),
     "dl_regime": os.environ.get("DL_SURFACE_REGIME", "HVTF"),
 }
