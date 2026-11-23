@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from textwrap import dedent
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -276,7 +277,7 @@ def test_preflight_does_not_create_files_or_construct_pipeline(tmp_path: Path) -
         print(json.dumps({"status": status, **result}))
     """
     completed = subprocess.run(
-        [sys.executable, "-c", code],
+        [sys.executable, "-c", dedent(code)],
         cwd=tmp_path,
         env=env,
         text=True,
