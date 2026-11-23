@@ -21,6 +21,24 @@ from src.launch_env import (
     min_dl_train_coverage_pct,
 )
 
+ISSUE_CODE_SUMMARIES = {
+    "ACTIVE_PAIRS_UNKNOWN": "Configured pair names are not in the supported pair universe.",
+    "ARGPARSE": "Arguments are not accepted by the MPML command-line parser.",
+    "DL_ALIAS_SUPPRESSED": "The primary prediction artifact setting suppresses its legacy alias.",
+    "DL_ARTIFACT_PATH_MISSING": "The explicitly configured prediction artifact does not exist.",
+    "ENV_BOOL_PARSED_FALSE": "A DL boolean value looks truthy but is parsed as false.",
+    "ENV_INVALID_VALUE": "An environment value cannot be parsed or is unsupported.",
+    "GENERATION_VARIANT_MISMATCH": "The requested generation conflicts with the selected variant.",
+    "OUTPUT_DIR_EXISTS": "The selected run output directory already exists.",
+    "OUTPUT_NAME_INFERS_AWARENESS": "The output name supplies an imputation-awareness hint.",
+    "PHASEAWARE_REPEATED": "A PhaseAware representative option was specified more than once.",
+    "PHASEAWARE_ROLE_INVALID": "A PhaseAware representative does not match its required role.",
+    "STRATEGY_UNKNOWN": "A requested strategy ID is not in the strategy registry.",
+    "SURFACE_UNKNOWN": "The requested behavioral surface is not registered.",
+    "TIMELINE_NEEDS_DYNAMIC_SELECTOR": "Timeline export requires an active dynamic selector.",
+    "TOP_N_NOT_POSITIVE": "The recommendation limit must be a positive integer.",
+}
+
 
 class _ArgumentError(Exception):
     pass

@@ -1,0 +1,891 @@
+{
+  "arguments": [
+    {
+      "action": "store",
+      "choices": null,
+      "choices_source": null,
+      "default": null,
+      "dest": "output_dir",
+      "flags": [
+        "--output-dir"
+      ],
+      "help": "Explicit run output directory (writes all run artifacts here). If omitted, MPML creates results_archive/<gen>_<variant>__<timestamp>/.",
+      "nargs": null,
+      "type": "Path"
+    },
+    {
+      "action": "store",
+      "choices": [
+        "gen1",
+        "gen2"
+      ],
+      "choices_source": "static",
+      "default": null,
+      "dest": "experiment_generation",
+      "flags": [
+        "--experiment-generation"
+      ],
+      "help": "Optional generation consistency hint (gen1|gen2). Must match selected variant semantics if provided.",
+      "nargs": null,
+      "type": "str"
+    },
+    {
+      "action": "store",
+      "choices": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F"
+      ],
+      "choices_source": "static",
+      "default": null,
+      "dest": "experiment_variant",
+      "flags": [
+        "--experiment-variant"
+      ],
+      "help": "Canonical experiment variant (A|B|C|D|E|F). Precedence: --experiment-variant > EXPERIMENT_VARIANT env > default A.",
+      "nargs": null,
+      "type": "str"
+    },
+    {
+      "action": "store",
+      "choices": null,
+      "choices_source": null,
+      "default": null,
+      "dest": "experiment_seed",
+      "flags": [
+        "--experiment-seed"
+      ],
+      "help": "Experiment RNG seed. Precedence: --experiment-seed > EXPERIMENT_SEED env > default (42).",
+      "nargs": null,
+      "type": "int"
+    },
+    {
+      "action": "store",
+      "choices": [
+        "persistent",
+        "reactive_jpy",
+        "trend_vol"
+      ],
+      "choices_source": "behavioral_registry",
+      "default": null,
+      "dest": "behavioral_surface",
+      "flags": [
+        "--behavioral-surface"
+      ],
+      "help": "Behavioral Surface to use for this run. Precedence: --behavioral-surface > BEHAVIORAL_SURFACE env > 'trend_vol'. Available: ['persistent', 'reactive_jpy', 'trend_vol']. Trend/Vol (trend_vol) is the default and preserves existing run behaviour.",
+      "nargs": null,
+      "type": "str"
+    },
+    {
+      "action": "store_true",
+      "choices": null,
+      "choices_source": null,
+      "default": false,
+      "dest": "recommendations_per_pair",
+      "flags": [
+        "--recommendations-per-pair"
+      ],
+      "help": "Generate recommendations_per_pair.parquet from pair-scoped walk-forward evidence.",
+      "nargs": 0,
+      "type": null
+    },
+    {
+      "action": "store",
+      "choices": null,
+      "choices_source": null,
+      "default": null,
+      "dest": "recommendation_top_n",
+      "flags": [
+        "--recommendation-top-n"
+      ],
+      "help": "Return only the top N recommendations ordered by the default recommendation policy (sharpe_rank_v1). If omitted, all recommendations are returned. N must be a positive integer.",
+      "nargs": null,
+      "type": "int"
+    },
+    {
+      "action": "append",
+      "choices": null,
+      "choices_source": null,
+      "default": null,
+      "dest": "strategy",
+      "flags": [
+        "--strategy"
+      ],
+      "help": "Evaluate only this strategy ID. Repeatable: --strategy TF4 --strategy MR42. When omitted, the default evaluation scope from the active EvaluationPolicy is used (backward-compatible). IDs are validated against the Strategy Registry. Available: ['MR1', 'MR2', 'MR3', 'MR32', 'MR42', 'MR5', 'TF1', 'TF2', 'TF3', 'TF4', 'TF5']",
+      "nargs": null,
+      "post_parse_choices": [
+        "MR1",
+        "MR2",
+        "MR3",
+        "MR32",
+        "MR42",
+        "MR5",
+        "TF1",
+        "TF2",
+        "TF3",
+        "TF4",
+        "TF5"
+      ],
+      "post_parse_choices_source": "strategy_registry",
+      "type": null
+    },
+    {
+      "action": "append",
+      "choices": null,
+      "choices_source": null,
+      "default": null,
+      "dest": "phaseaware_tf",
+      "flags": [
+        "--phaseaware-tf"
+      ],
+      "help": "Override the TrendFollowing representative used by PhaseAware for this run. Must be a Strategy Registry TrendFollowing ID, e.g. TF2. May be provided at most once.",
+      "nargs": null,
+      "post_parse_choices": [
+        "TF1",
+        "TF2",
+        "TF3",
+        "TF4",
+        "TF5"
+      ],
+      "post_parse_choices_source": "strategy_registry",
+      "type": null
+    },
+    {
+      "action": "append",
+      "choices": null,
+      "choices_source": null,
+      "default": null,
+      "dest": "phaseaware_mr",
+      "flags": [
+        "--phaseaware-mr"
+      ],
+      "help": "Override the MeanReversion representative used by PhaseAware for this run. Must be a Strategy Registry MeanReversion ID, e.g. MR2. May be provided at most once.",
+      "nargs": null,
+      "post_parse_choices": [
+        "MR1",
+        "MR2",
+        "MR3",
+        "MR32",
+        "MR42",
+        "MR5"
+      ],
+      "post_parse_choices_source": "strategy_registry",
+      "type": null
+    },
+    {
+      "action": "store_true",
+      "choices": null,
+      "choices_source": null,
+      "default": false,
+      "dest": "debug",
+      "flags": [
+        "--debug"
+      ],
+      "help": "Enable verbose debug output: [AWARENESS], [TRAINING DIAGNOSTICS], [DL FEATURE USAGE], and other detailed per-fold diagnostics that are suppressed by default for concise normal output.",
+      "nargs": 0,
+      "type": null
+    },
+    {
+      "action": "store_true",
+      "choices": null,
+      "choices_source": null,
+      "default": false,
+      "dest": "export_dl_conditional_portfolio_timeline",
+      "flags": [
+        "--export-dl-conditional-portfolio-timeline"
+      ],
+      "help": "Opt-in: write dl_conditional_portfolio_timeline.csv (per pair/fold/test-bar realized dynamic-selector portfolio outcomes with dl_available) to the run output directory. Disabled by default; does not change strategy behavior.",
+      "nargs": 0,
+      "type": null
+    }
+  ],
+  "env": [
+    {
+      "alias_of": null,
+      "default": "all registered pairs",
+      "name": "ACTIVE_PAIRS",
+      "parser": "csv",
+      "read_in": [
+        "main.py",
+        "src/behavioral_artifact_resolver.py",
+        "src/experiment_surface_runtime.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Comma-separated pair names; values are stripped and uppercased. Empty selects all pairs. The import-time filter and later metadata inference also read the process environment.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": null,
+      "name": "BEHAVIORAL_STATE_ID",
+      "parser": "str",
+      "read_in": [
+        "main.py",
+        "src/dl_config.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Stripped at the runtime read; blank becomes unset. Also snapshotted by src.dl_config for canonical identity helpers.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": "trend_vol",
+      "name": "BEHAVIORAL_SURFACE",
+      "parser": "enum",
+      "read_in": [
+        "main.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "CLI --behavioral-surface takes precedence; otherwise stripped environment value, then trend_vol.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": null,
+      "name": "BEHAVIORAL_SURFACE_ID",
+      "parser": "str",
+      "read_in": [
+        "src/dl_config.py"
+      ],
+      "scope": "metadata",
+      "semantics": "Empty string becomes unset; part of canonical behavioral identity.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": null,
+      "name": "BEHAVIORAL_SURFACE_VERSION",
+      "parser": "str",
+      "read_in": [
+        "src/dl_config.py"
+      ],
+      "scope": "metadata",
+      "semantics": "Empty string becomes unset; part of canonical behavioral identity.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": "price_trend",
+      "name": "DL_FEATURE_SET",
+      "parser": "str",
+      "read_in": [
+        "main.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Snapshotted in main.DL_SIGNAL_SURFACE; a runtime check also tests whether the environment value is blank when resolving an artifact.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": "mlp",
+      "name": "DL_MODEL",
+      "parser": "str",
+      "read_in": [
+        "main.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Snapshotted into main.DL_SIGNAL_SURFACE.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": "sibling market-sentiment-ml artifact directory",
+      "name": "DL_PREDICTION_ARTIFACT_PATH",
+      "parser": "path",
+      "read_in": [
+        "main.py",
+        "src/dl_config.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "src.dl_config snapshots this at import. If unset (not empty), DL_SIGNALS_CUBE_PATH is used; main.py also reads it at runtime.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": "",
+      "name": "DL_REGIME",
+      "parser": "str",
+      "read_in": [
+        "main.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Snapshotted into main.DL_SIGNAL_SURFACE.",
+      "timing": "import"
+    },
+    {
+      "alias_of": "DL_PREDICTION_ARTIFACT_PATH",
+      "default": "sibling market-sentiment-ml artifact directory",
+      "name": "DL_SIGNALS_CUBE_PATH",
+      "parser": "path",
+      "read_in": [
+        "src/dl_config.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Legacy path alias used only if DL_PREDICTION_ARTIFACT_PATH is unset. An empty primary value suppresses this alias.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": false,
+      "name": "DL_SIGNALS_ENABLED",
+      "parser": "bool_strict",
+      "read_in": [
+        "main.py",
+        "src/dl_config.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Only case-insensitive exact text true enables; 1, yes, on, empty, and other values are false.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": "price_trend",
+      "name": "DL_SURFACE_FEATURE_SET",
+      "parser": "str",
+      "read_in": [
+        "src/dl_config.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Snapshotted in the legacy DL surface selector.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": "lstm",
+      "name": "DL_SURFACE_MODEL",
+      "parser": "str",
+      "read_in": [
+        "src/dl_config.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Snapshotted in the legacy DL surface selector.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": "HVTF",
+      "name": "DL_SURFACE_REGIME",
+      "parser": "str",
+      "read_in": [
+        "src/dl_config.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Snapshotted in the legacy DL surface selector.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": 24,
+      "name": "DL_SURFACE_TARGET_HORIZON",
+      "parser": "int",
+      "read_in": [
+        "src/dl_config.py",
+        "src/launch_env.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Parsed with int() when the legacy DL surface is imported; malformed input fails import.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": null,
+      "name": "EXPERIMENT_GENERATION",
+      "parser": "enum",
+      "read_in": [
+        "main.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "CLI hint takes precedence; when supplied, it must agree with the selected variant.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": 42,
+      "name": "EXPERIMENT_SEED",
+      "parser": "int",
+      "read_in": [
+        "src/repro.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "CLI seed wins. Environment text is stripped; blank uses 42 and malformed nonempty text raises ValueError.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": "A",
+      "name": "EXPERIMENT_VARIANT",
+      "parser": "enum",
+      "read_in": [
+        "main.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "CLI value takes precedence; otherwise environment value, then A.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": false,
+      "name": "EXPORT_SELECTOR_STATE_TIMELINE",
+      "parser": "bool_loose",
+      "read_in": [
+        "main.py"
+      ],
+      "scope": "diagnostic",
+      "semantics": "Case-insensitive 1, true, yes, or on are true; every other value is false.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": 5.0,
+      "name": "MIN_DL_TRAIN_COVERAGE_PCT",
+      "parser": "float",
+      "read_in": [
+        "main.py",
+        "src/launch_env.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Parsed with float() when main is imported; malformed input fails import. Preflight invokes the same converter.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": null,
+      "name": "MPML_ARTIFACT_SOURCE",
+      "parser": "str",
+      "read_in": [
+        "src/experiment_surface_runtime.py"
+      ],
+      "scope": "metadata",
+      "semantics": "Stripped non-empty value supplies artifact-source metadata when artifact metadata is absent.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": true,
+      "name": "MPML_AUTO_ANALYZE",
+      "parser": "bool_loose",
+      "read_in": [
+        "main.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Case-insensitive 1, true, yes, or on are true; every other value is false.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": "sibling market-sentiment-ml input directory",
+      "name": "MPML_BROKER_DATA_DIR",
+      "parser": "path",
+      "read_in": [
+        "src/data.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Trimmed and expanded when constructing a broker_csv pipeline; blank uses the sibling-repository default.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": "yfinance",
+      "name": "MPML_DATA_SOURCE",
+      "parser": "enum",
+      "read_in": [
+        "src/data.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Trimmed and lowercased; supported values are yfinance and broker_csv. Invalid values raise ValueError.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": "2026-04-01",
+      "name": "MPML_END_DATE",
+      "parser": "str",
+      "read_in": [
+        "main.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Snapshotted as a string when main is imported.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": null,
+      "name": "MPML_EVALUATION_PAIR_FAMILY",
+      "parser": "str",
+      "read_in": [
+        "src/experiment_surface_runtime.py"
+      ],
+      "scope": "metadata",
+      "semantics": "Stripped non-empty value supplies evaluation-pair-family metadata when artifact metadata is absent.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": null,
+      "name": "MPML_FEATURE_SURFACE",
+      "parser": "str",
+      "read_in": [
+        "src/experiment_surface_runtime.py"
+      ],
+      "scope": "metadata",
+      "semantics": "Stripped non-empty value supplies feature-surface metadata before the DL surface fallback.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": null,
+      "name": "MPML_OUTPUT_DIR",
+      "parser": "path",
+      "read_in": [
+        "main.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "CLI --output-dir wins. Also supplies the output-name hint used by imputation-awareness inference.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": null,
+      "name": "MPML_REVISION",
+      "parser": "str",
+      "read_in": [
+        "mpml/runtime/phaseaware.py"
+      ],
+      "scope": "metadata",
+      "semantics": "Optional revision/provenance value.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": "results_archive",
+      "name": "MPML_RUNS_ROOT",
+      "parser": "path",
+      "read_in": [
+        "main.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Used as the parent for generated run output paths when no explicit output directory is selected.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": "",
+      "name": "MPML_SELECTOR_TRACE_PAIR",
+      "parser": "str",
+      "read_in": [
+        "src/strategies.py"
+      ],
+      "scope": "diagnostic",
+      "semantics": "Pair selector for optional single-bar trace output; only used with MPML_SELECTOR_TRACE_PATH.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": null,
+      "name": "MPML_SELECTOR_TRACE_PATH",
+      "parser": "path",
+      "read_in": [
+        "src/strategies.py"
+      ],
+      "scope": "diagnostic",
+      "semantics": "Enables optional selector tracing for the matching pair and timestamp.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": "",
+      "name": "MPML_SELECTOR_TRACE_TIMESTAMP",
+      "parser": "str",
+      "read_in": [
+        "src/strategies.py"
+      ],
+      "scope": "diagnostic",
+      "semantics": "Timestamp selector for optional single-bar trace output.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": null,
+      "name": "MPML_SENTIMENT_SURFACE",
+      "parser": "str",
+      "read_in": [
+        "src/experiment_surface_runtime.py"
+      ],
+      "scope": "metadata",
+      "semantics": "Stripped surface value; supported normalized values are sentiment, no_sentiment, and none.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": "2005-01-01",
+      "name": "MPML_START_DATE",
+      "parser": "str",
+      "read_in": [
+        "main.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Snapshotted as a string when main is imported.",
+      "timing": "import"
+    },
+    {
+      "alias_of": null,
+      "default": null,
+      "name": "MPML_TRAINING_PAIR_FAMILY",
+      "parser": "str",
+      "read_in": [
+        "src/experiment_surface_runtime.py"
+      ],
+      "scope": "metadata",
+      "semantics": "Stripped non-empty value supplies training-pair-family metadata when artifact metadata is absent.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": "selected DL regime or unknown",
+      "name": "MSML_REGIME",
+      "parser": "str",
+      "read_in": [
+        "main.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Trimmed and uppercased; fallback depends on the selected behavioral surface and resolved state.",
+      "timing": "runtime"
+    },
+    {
+      "alias_of": null,
+      "default": false,
+      "name": "OVERLAP_ONLY",
+      "parser": "bool_loose",
+      "read_in": [
+        "main.py"
+      ],
+      "scope": "launch_selector",
+      "semantics": "Case-insensitive 1, true, yes, or on are true; every other value is false.",
+      "timing": "runtime"
+    }
+  ],
+  "precedence": [
+    {
+      "order": [
+        "--behavioral-surface",
+        "BEHAVIORAL_SURFACE",
+        "trend_vol"
+      ],
+      "setting": "behavioral_surface"
+    },
+    {
+      "order": [
+        "--experiment-seed",
+        "EXPERIMENT_SEED",
+        "42"
+      ],
+      "setting": "experiment_seed"
+    },
+    {
+      "order": [
+        "--experiment-variant",
+        "EXPERIMENT_VARIANT",
+        "A"
+      ],
+      "setting": "experiment_variant"
+    },
+    {
+      "order": [
+        "--output-dir",
+        "MPML_OUTPUT_DIR",
+        "MPML_RUNS_ROOT/results_archive default"
+      ],
+      "setting": "output_directory"
+    }
+  ],
+  "registries": {
+    "behavioral_surfaces": {
+      "choices_source": "behavioral_registry",
+      "ids": [
+        "persistent",
+        "reactive_jpy",
+        "trend_vol"
+      ]
+    },
+    "strategies": {
+      "choices_source": "strategy_registry",
+      "ids": [
+        "MR1",
+        "MR2",
+        "MR3",
+        "MR32",
+        "MR42",
+        "MR5",
+        "TF1",
+        "TF2",
+        "TF3",
+        "TF4",
+        "TF5"
+      ]
+    }
+  },
+  "rules": [
+    {
+      "code": "ACTIVE_PAIRS_UNKNOWN",
+      "summary": "Configured pair names are not in the supported pair universe."
+    },
+    {
+      "code": "ARGPARSE",
+      "summary": "Arguments are not accepted by the MPML command-line parser."
+    },
+    {
+      "code": "DL_ALIAS_SUPPRESSED",
+      "summary": "The primary prediction artifact setting suppresses its legacy alias."
+    },
+    {
+      "code": "DL_ARTIFACT_PATH_MISSING",
+      "summary": "The explicitly configured prediction artifact does not exist."
+    },
+    {
+      "code": "ENV_BOOL_PARSED_FALSE",
+      "summary": "A DL boolean value looks truthy but is parsed as false."
+    },
+    {
+      "code": "ENV_INVALID_VALUE",
+      "summary": "An environment value cannot be parsed or is unsupported."
+    },
+    {
+      "code": "GENERATION_VARIANT_MISMATCH",
+      "summary": "The requested generation conflicts with the selected variant."
+    },
+    {
+      "code": "OUTPUT_DIR_EXISTS",
+      "summary": "The selected run output directory already exists."
+    },
+    {
+      "code": "OUTPUT_NAME_INFERS_AWARENESS",
+      "summary": "The output name supplies an imputation-awareness hint."
+    },
+    {
+      "code": "PHASEAWARE_REPEATED",
+      "summary": "A PhaseAware representative option was specified more than once."
+    },
+    {
+      "code": "PHASEAWARE_ROLE_INVALID",
+      "summary": "A PhaseAware representative does not match its required role."
+    },
+    {
+      "code": "STRATEGY_UNKNOWN",
+      "summary": "A requested strategy ID is not in the strategy registry."
+    },
+    {
+      "code": "SURFACE_UNKNOWN",
+      "summary": "The requested behavioral surface is not registered."
+    },
+    {
+      "code": "TIMELINE_NEEDS_DYNAMIC_SELECTOR",
+      "summary": "Timeline export requires an active dynamic selector."
+    },
+    {
+      "code": "TOP_N_NOT_POSITIVE",
+      "summary": "The recommendation limit must be a positive integer."
+    }
+  ],
+  "schema_version": 1,
+  "source_edit_only": [
+    {
+      "category": "experiment toggles",
+      "name": "RUN_IN_SAMPLE_ABLATION"
+    },
+    {
+      "category": "experiment toggles",
+      "name": "RUN_WALKFORWARD"
+    },
+    {
+      "category": "experiment toggles",
+      "name": "RUN_TAU_SWEEP"
+    },
+    {
+      "category": "experiment toggles",
+      "name": "RUN_POLICY_SWEEP"
+    },
+    {
+      "category": "debug toggles",
+      "name": "DL_DEBUG_VERBOSE"
+    },
+    {
+      "category": "debug toggles",
+      "name": "DEBUG_BASELINE_KEYS"
+    },
+    {
+      "category": "debug toggles",
+      "name": "DEBUG_FEATURE_COLUMNS"
+    },
+    {
+      "category": "debug toggles",
+      "name": "DEBUG_SIGNAL_TYPES"
+    },
+    {
+      "category": "debug toggles",
+      "name": "DEBUG_VOL_GUARD"
+    },
+    {
+      "category": "debug toggles",
+      "name": "DEBUG_SAVE_SELECTED_SERIES"
+    },
+    {
+      "category": "debug toggles",
+      "name": "DEBUG_SAVE_EQUITY_SERIES"
+    },
+    {
+      "category": "debug toggles",
+      "name": "DEBUG_SELECTED_PAIRS"
+    },
+    {
+      "category": "debug toggles",
+      "name": "DEBUG_SELECTED_MAX_FOLDS_PER_PAIR"
+    },
+    {
+      "category": "transaction costs",
+      "name": "SPREAD_PIPS"
+    },
+    {
+      "category": "transaction costs",
+      "name": "SLIPPAGE_PIPS"
+    },
+    {
+      "category": "transaction costs",
+      "name": "COMMISSION_PER_TRADE"
+    },
+    {
+      "category": "walk-forward selector",
+      "name": "WF_TAU"
+    },
+    {
+      "category": "walk-forward selector",
+      "name": "DYNAMIC_POLICY_KWARGS"
+    },
+    {
+      "category": "volatility guard",
+      "name": "USE_VOL_GUARD"
+    },
+    {
+      "category": "volatility guard",
+      "name": "VOL_GUARD_Q"
+    },
+    {
+      "category": "volatility guard",
+      "name": "VOL_GUARD_MODE"
+    },
+    {
+      "category": "volatility guard",
+      "name": "VOL_FEATURE"
+    },
+    {
+      "category": "volatility guard",
+      "name": "USD_QUOTE_VOL_SPIKE_OVERRIDE"
+    },
+    {
+      "category": "volatility guard",
+      "name": "VOL_GUARD_NEAR_MULT"
+    }
+  ]
+}
