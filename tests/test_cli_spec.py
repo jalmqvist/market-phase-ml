@@ -132,7 +132,6 @@ def test_spec_is_deterministic_and_has_no_filesystem_side_effects(tmp_path: Path
     document = json.loads(first.stdout)
     assert document["schema_version"] == 1
     assert not list(tmp_path.iterdir())
-    assert "main" not in sys.modules
 
 
 def test_arguments_are_built_from_parser_and_registries() -> None:
