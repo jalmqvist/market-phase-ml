@@ -167,8 +167,16 @@ def test_environment_inventory_covers_static_reads_and_documents_dynamic_lookup(
     documented = {entry["name"] for entry in build_spec()["env"]}
     assert _undocumented_environment_reads(ROOT, documented) == set()
 
-    missing = _undocumented_environment_reads(ROOT, documented - {"EXPERIMENT_SEED"})
-    assert missing == {"EXPERIMENT_SEED"}
+    # Verify that removing a statically read variable is detected.
+    missing = _undocumented_environment_reads(
+        ROOT, documented - {"DL_SIGNALS_ENABLED"}
+    )
+    assert missing == {"DL_SIGNALS_ENABLED"}
+
+    # EXPERIMENT_SEED is read dynamically through resolve_experiment_seed()
+    # in src/repro.py, so the AST scanner cannot detect its literal name.
+    # Ensure that it remains explicitly documented in the inventory.
+    assert "EXPERIMENT_SEED" in documented
 
 
 def test_preflight_issue_code_inventory_matches_implemented_codes() -> None:
